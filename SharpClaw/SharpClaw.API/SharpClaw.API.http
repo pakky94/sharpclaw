@@ -1,0 +1,6 @@
+@SharpClaw.API_HostAddress = http://localhost:5223
+
+GET {{SharpClaw.API_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
