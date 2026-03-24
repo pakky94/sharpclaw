@@ -49,6 +49,18 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context)
         );
 
         var sb = new StringBuilder();
+        var messageUpdates = new List<ChatResponseUpdate>();
+        string? currentMessageId = null;
+
+        void FlushMessageUpdates()
+        {
+            if (messageUpdates.Count == 0)
+                return;
+
+            context.Messages.AddMessages(messageUpdates);
+            messageUpdates.Clear();
+            currentMessageId = null;
+        }
 
         await foreach (var update in agent.RunStreamingAsync(
                            context.Messages,
@@ -60,11 +72,31 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context)
                                }
                            }))
         {
+            var chatUpdate = update.AsChatResponseUpdate();
+
+            var hasNewMessageBoundary = messageUpdates.Count > 0 &&
+                                        !string.IsNullOrEmpty(chatUpdate.MessageId) &&
+                                        !string.IsNullOrEmpty(currentMessageId) &&
+                                        !string.Equals(chatUpdate.MessageId, currentMessageId, StringComparison.Ordinal);
+
+            if (hasNewMessageBoundary)
+                FlushMessageUpdates();
+
+            if (!string.IsNullOrEmpty(chatUpdate.MessageId))
+                currentMessageId ??= chatUpdate.MessageId;
+
+            messageUpdates.Add(chatUpdate);
+
             if (!string.IsNullOrEmpty(update.Text))
                 sb.Append(update.Text);
 
             Console.WriteLine(JsonSerializer.Serialize(update, _jsonOptions));
+
+            if (chatUpdate.FinishReason is not null)
+                FlushMessageUpdates();
         }
+
+        FlushMessageUpdates();
 
         return sb.ToString();
     }

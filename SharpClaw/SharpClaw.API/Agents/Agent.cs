@@ -26,12 +26,13 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
 
         var agent = chatProvider.GetClient(_context);
 
-        var response = await agent.GetResponse([
+        var response = await agent.GetStreamingResponse([
             AIFunctionFactory.Create(Tooling.ListFiles, "list_files", "Lists all files in your workspace"),
             AIFunctionFactory.Create(Tooling.ReadFile, "read_file", "Read a file from your workspace"),
             AIFunctionFactory.Create(Tooling.WriteFile, "write_file", "Write a file in your workspace, overwriting if it exists"),
             AIFunctionFactory.Create(Tooling.DeleteFile, "delete_file", "Delete a file from your workspace"),
         ]);
+
         return response;
     }
 
