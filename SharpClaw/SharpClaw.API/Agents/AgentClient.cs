@@ -38,7 +38,7 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context)
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
-    public async Task<string> GetStreamingResponse(List<AIFunction> tools)
+    public async Task<string> GetStreamingResponse(List<AIFunction> tools, Func<ChatResponseUpdate, Task>? onUpdate = null)
     {
         var agent = chatClient.AsAIAgent(
             instructions: "you are a helpful assistant, follow the .md files instructions and try to help the user.",
@@ -89,6 +89,9 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context)
 
             if (!string.IsNullOrEmpty(update.Text))
                 sb.Append(update.Text);
+
+            if (onUpdate is not null)
+                await onUpdate(chatUpdate);
 
             Console.WriteLine(JsonSerializer.Serialize(update, _jsonOptions));
 

@@ -1,11 +1,11 @@
 info:
-  name: Chat
+  name: Chat to session
   type: http
-  seq: 1
+  seq: 6
 
 http:
   method: POST
-  url: "{{baseUrl}}/chat"
+  url: "{{baseUrl}}/sessions/{{sessionId}}/messages"
   body:
     type: json
     data: |-
@@ -15,10 +15,18 @@ http:
         //"message": "I'm a software developer mainly focusing on backend development in C#, I will ask you to help me in my work and day to day tasks. I live in Trieste (Italy)"
         //"message": "I think the setup is complete, you can persist what you learned into your memory"
         
-        "message": "Who are you?"
-        //"message": "I'm trying to build your system (a personal assistant with memory about past conversations, tools, external integrations, ecc...). I have a basic file structure and need your help to build all the tools, memory structure and UI you might need to help me as best as possibe, where should I start?"
+        //"message": "Who are you?"
+        "message": "I'm trying to build your system (a personal assistant with memory about past conversations, tools, external integrations, ecc...). I have a basic file structure and need your help to build all the tools, memory structure and UI you might need to help me as best as possibe, where should I start?"
       }
   auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        let data = res.getBody();
+        bru.setEnvVar("sessionId", data.sessionId);
+        bru.setEnvVar("runId", data.runId);
 
 settings:
   encodeUrl: true
