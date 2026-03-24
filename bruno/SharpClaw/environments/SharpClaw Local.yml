@@ -3,8 +3,8 @@ variables:
   - name: baseUrl
     value: http://localhost:5223
   - name: sessionId
-    value: 95a998f3-8fb5-4699-99fb-0b789ad0ddd2
+    value: ca263a18-a083-4919-88f1-5674499357b8
   - name: runId
-    value: a801721d-b7b2-4a4c-8f8a-e92f8130a951
+    value: 014cc6a4-b0ae-480f-bfbd-85fbc0b4b356
   - name: agentId
     value: "1"

@@ -33,8 +33,16 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
         if (!_sessions.TryGetValue(sessionId, out var session))
             throw new KeyNotFoundException($"Session {sessionId} was not found.");
 
-        var run = new AgentRunState(Guid.NewGuid(), sessionId);
-        session.Runs[run.RunId] = run;
+        AgentRunState run;
+        lock (session.RunsLock)
+        {
+            var hasActiveRun = session.Runs.Values.Any(r => r.Status is AgentRunStatus.Pending or AgentRunStatus.Running);
+            if (hasActiveRun)
+                throw new InvalidOperationException($"Session {sessionId} already has an active run.");
+
+            run = new AgentRunState(Guid.NewGuid(), sessionId);
+            session.Runs[run.RunId] = run;
+        }
 
         _ = Task.Run(async () =>
         {
@@ -141,6 +149,7 @@ public class AgentSessionState(Guid sessionId, AgentExecutionContext context)
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
     public AgentExecutionContext Context { get; } = context;
     public SemaphoreSlim Mutex { get; } = new(1, 1);
+    public object RunsLock { get; } = new();
     public ConcurrentDictionary<Guid, AgentRunState> Runs { get; } = new();
 }
 

@@ -11,6 +11,16 @@ builder.Services.AddTransient<DatabaseSeeder>();
 builder.Services.Configure<LmStudioConfiguration>(builder.Configuration.GetSection("LmStudio"));
 builder.Services.AddSingleton<ChatProvider>();
 builder.Services.AddSingleton<Agent>();
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("WebClient", policy =>
+    {
+        policy
+            .WithOrigins("http://localhost:5173", "https://localhost:5173")
+            .AllowAnyMethod()
+            .AllowAnyHeader();
+    });
+});
 
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
@@ -30,6 +40,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseCors("WebClient");
 
 app.MapPost("/chat", async (
     [FromBody] MessageRequest request,
@@ -81,6 +92,10 @@ app.MapPost("/sessions/{sessionId:guid}/messages", async (
             sessionId = run.SessionId,
             status = run.Status.ToString().ToLowerInvariant(),
         });
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { error = ex.Message });
     }
     catch (KeyNotFoundException ex)
     {
