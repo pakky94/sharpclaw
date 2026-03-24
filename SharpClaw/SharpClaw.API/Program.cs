@@ -30,10 +30,18 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-app.MapGet("/test", async ([FromServices] Agent agent) =>
+app.MapPost("/chat", async (
+    [FromBody] MessageRequest request,
+    [FromServices] Agent agent
+) =>
 {
-    var r = await agent.GetResponse("Hello");
+    var r = await agent.GetResponse(request.Message);
     return r;
 });
 
 app.Run();
+
+public class MessageRequest
+{
+    public required string Message { get; set; }
+}

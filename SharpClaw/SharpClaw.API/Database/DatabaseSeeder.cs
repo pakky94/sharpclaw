@@ -43,7 +43,6 @@ public class DatabaseSeeder(IConfiguration configuration)
                     ),
                     documents_id as (
                         insert into documents (name, content)
-                        --values ('AGENTS.md', 'ciao')
                         values ('AGENTS.md', @AgentsMd),
                                ('BOOTSTRAP.md', @BootstrapMd),
                                ('HEARTBEAT.md', @HeartbeatMd),
