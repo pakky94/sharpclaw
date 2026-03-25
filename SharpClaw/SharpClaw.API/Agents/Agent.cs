@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Dapper;
 using Microsoft.Extensions.AI;
 using Npgsql;
@@ -28,7 +29,7 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
         return sessionId;
     }
 
-    public async Task<AgentRunState> EnqueueMessage(Guid sessionId, string prompt)
+    public Task<AgentRunState> EnqueueMessage(Guid sessionId, string prompt)
     {
         if (!_sessions.TryGetValue(sessionId, out var session))
             throw new KeyNotFoundException($"Session {sessionId} was not found.");
@@ -58,6 +59,24 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
                     if (!string.IsNullOrEmpty(update.Text))
                         run.AppendDelta(update.Text);
 
+                    foreach (var content in update.Contents)
+                    {
+                        switch (content)
+                        {
+                            case FunctionCallContent functionCall:
+                                run.AppendToolCall(
+                                    functionCall.CallId,
+                                    functionCall.Name,
+                                    SerializeToolPayload(functionCall.Arguments));
+                                break;
+                            case FunctionResultContent functionResult:
+                                run.AppendToolResult(
+                                    functionResult.CallId,
+                                    SerializeToolPayload(functionResult.Result));
+                                break;
+                        }
+                    }
+
                     return Task.CompletedTask;
                 });
 
@@ -73,7 +92,7 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
             }
         });
 
-        return run;
+        return Task.FromResult(run);
     }
 
     public SessionHistoryDto GetHistory(Guid sessionId)
@@ -110,6 +129,7 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
             messages.Add(new SessionMessageDto(
                 Role: message.Role.Value,
                 Text: message.Text,
+                Contents: GetMessageContents(message),
                 AuthorName: message.AuthorName,
                 RunId: messageRunId,
                 RunStatus: runStatus
@@ -157,6 +177,70 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
         AIFunctionFactory.Create(Tooling.DeleteFile, "delete_file", "Delete a file from your workspace"),
     ];
 
+    private static string? SerializeToolPayload(object? payload)
+    {
+        if (payload is null)
+            return null;
+
+        if (payload is string text)
+            return text;
+
+        try
+        {
+            return JsonSerializer.Serialize(payload);
+        }
+        catch
+        {
+            return payload.ToString();
+        }
+    }
+
+    private static IReadOnlyList<SessionMessageContentDto> GetMessageContents(ChatMessage message)
+    {
+        if (message.Contents.Count == 0)
+        {
+            return string.IsNullOrWhiteSpace(message.Text)
+                ? []
+                : [new SessionMessageContentDto(Type: "text", Text: message.Text)];
+        }
+
+        var hasTextContent = message.Contents.Any(c => c is TextContent);
+        var contents = new List<SessionMessageContentDto>(message.Contents.Count + 1);
+
+        if (!hasTextContent && !string.IsNullOrWhiteSpace(message.Text))
+            contents.Add(new SessionMessageContentDto(Type: "text", Text: message.Text));
+
+        foreach (var content in message.Contents)
+        {
+            switch (content)
+            {
+                case TextContent textContent when !string.IsNullOrWhiteSpace(textContent.Text):
+                    contents.Add(new SessionMessageContentDto(Type: "text", Text: textContent.Text));
+                    break;
+                case FunctionCallContent functionCall:
+                    contents.Add(new SessionMessageContentDto(
+                        Type: "tool_call",
+                        CallId: functionCall.CallId,
+                        ToolName: functionCall.Name,
+                        Arguments: SerializeToolPayload(functionCall.Arguments)));
+                    break;
+                case FunctionResultContent functionResult:
+                    contents.Add(new SessionMessageContentDto(
+                        Type: "tool_result",
+                        CallId: functionResult.CallId,
+                        Result: SerializeToolPayload(functionResult.Result)));
+                    break;
+                default:
+                    contents.Add(new SessionMessageContentDto(
+                        Type: "unknown",
+                        Payload: SerializeToolPayload(content)));
+                    break;
+            }
+        }
+
+        return contents;
+    }
+
     private async Task<string?> GetAgentMd(long agentId)
     {
         await using var connection = new NpgsqlConnection(configuration.GetConnectionString("sharpclaw"));
@@ -195,7 +279,7 @@ public enum AgentRunStatus
     Failed,
 }
 
-public record AgentRunEvent(long Sequence, string Type, string? Text, DateTimeOffset Timestamp);
+public record AgentRunEvent(long Sequence, string Type, string? Text, DateTimeOffset Timestamp, object? Data = null);
 
 public class AgentRunState(Guid runId, Guid sessionId)
 {
@@ -227,6 +311,20 @@ public class AgentRunState(Guid runId, Guid sessionId)
     }
 
     public void AppendDelta(string text) => AddEvent("delta", text);
+    public void AppendToolCall(string? callId, string? toolName, string? arguments) =>
+        AddEvent("tool_call", null, new
+        {
+            callId,
+            toolName,
+            arguments,
+        });
+
+    public void AppendToolResult(string? callId, string? result) =>
+        AddEvent("tool_result", null, new
+        {
+            callId,
+            result,
+        });
 
     public void MarkCompleted()
     {
@@ -243,12 +341,12 @@ public class AgentRunState(Guid runId, Guid sessionId)
         AddEvent("failed", error);
     }
 
-    private void AddEvent(string type, string? text)
+    private void AddEvent(string type, string? text, object? data = null)
     {
         lock (_eventsLock)
         {
             _sequence += 1;
-            _events.Add(new AgentRunEvent(_sequence, type, text, DateTimeOffset.UtcNow));
+            _events.Add(new AgentRunEvent(_sequence, type, text, DateTimeOffset.UtcNow, data));
         }
     }
 }
@@ -264,7 +362,18 @@ public record SessionHistoryDto(
 public record SessionMessageDto(
     string Role,
     string? Text,
+    IReadOnlyList<SessionMessageContentDto> Contents,
     string? AuthorName,
     Guid? RunId,
     string? RunStatus
+);
+
+public record SessionMessageContentDto(
+    string Type,
+    string? Text = null,
+    string? CallId = null,
+    string? ToolName = null,
+    string? Arguments = null,
+    string? Result = null,
+    string? Payload = null
 );

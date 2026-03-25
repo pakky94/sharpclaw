@@ -12,9 +12,20 @@ type SessionSummary = {
 type SessionHistoryMessage = {
   role: string
   text: string | null
+  contents: SessionMessageContent[]
   authorName: string | null
   runId: string | null
   runStatus: RunStatus | null
+}
+
+type SessionMessageContent = {
+  type: string
+  text?: string | null
+  callId?: string | null
+  toolName?: string | null
+  arguments?: string | null
+  result?: string | null
+  payload?: string | null
 }
 
 type SessionHistoryResponse = {
@@ -30,18 +41,32 @@ type StreamEvent = {
   runId: string
   sessionId: string
   sequence: number
-  type: 'started' | 'delta' | 'completed' | 'failed'
+  type: 'started' | 'delta' | 'completed' | 'failed' | 'tool_call' | 'tool_result'
   text: string | null
+  data?: unknown
   timestamp: string
   status: RunStatus
 }
 
 type ChatBubble = {
   id: string
-  role: 'user' | 'assistant' | 'system'
+  role: 'user' | 'assistant' | 'system' | 'tool'
   text: string
   isStreaming?: boolean
   runId?: string | null
+  toolEventType?: 'tool_call' | 'tool_result'
+  toolCallId?: string | null
+}
+
+type ToolCallEventData = {
+  callId?: string | null
+  toolName?: string | null
+  arguments?: string | null
+}
+
+type ToolResultEventData = {
+  callId?: string | null
+  result?: string | null
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'https://localhost:7063'
@@ -53,6 +78,7 @@ function App() {
   const [messages, setMessages] = useState<ChatBubble[]>([])
   const [prompt, setPrompt] = useState('')
   const [isSending, setIsSending] = useState(false)
+  const [showToolEvents, setShowToolEvents] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeRun, setActiveRun] = useState<{ sessionId: string; runId: string; status: RunStatus } | null>(null)
   const streamRef = useRef<{ sessionId: string; runId: string; source: EventSource } | null>(null)
@@ -66,6 +92,7 @@ function App() {
     selectedSessionId !== null &&
     activeRun.sessionId === selectedSessionId &&
     (activeRun.status === 'pending' || activeRun.status === 'running')
+  const visibleMessages = messages.filter((message) => message.role !== 'system' && (showToolEvents || message.role !== 'tool'))
 
   useEffect(() => {
     void refreshSessions(agentId)
@@ -139,14 +166,9 @@ function App() {
       closeStream()
       const data = await fetchJson<SessionHistoryResponse>(`${API_BASE_URL}/sessions/${sessionId}/history`)
 
-      const mapped: ChatBubble[] = data.messages
-        .map((message, index) => ({
-          id: `${sessionId}-${index}`,
-          role: normalizeRole(message.role),
-          text: message.text ?? '',
-          runId: message.runId,
-        }))
-        .filter((message) => message.role !== 'system')
+      const mapped: ChatBubble[] = data.messages.flatMap((message, index) =>
+        mapHistoryMessageToBubbles(sessionId, index, message),
+      )
 
       let assistantMessageId: string | null = null
       const hasActiveRun = data.activeRunId !== null && (data.activeRunStatus === 'pending' || data.activeRunStatus === 'running')
@@ -290,6 +312,49 @@ function App() {
         )
       })
 
+      source.addEventListener('tool_call', (event) => {
+        const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
+        const data = payload.data as ToolCallEventData | undefined
+
+        setActiveRun({ sessionId, runId, status: payload.status })
+
+        const lines = [`name: ${data?.toolName ?? 'unknown'}`]
+        if (data?.arguments) {
+          lines.push(`arguments:\n${formatToolPayload(data.arguments)}`)
+        }
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'tool',
+            text: lines.join('\n'),
+            runId,
+            toolEventType: 'tool_call',
+            toolCallId: data?.callId ?? null,
+          },
+        ])
+      })
+
+      source.addEventListener('tool_result', (event) => {
+        const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
+        const data = payload.data as ToolResultEventData | undefined
+
+        setActiveRun({ sessionId, runId, status: payload.status })
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'tool',
+            text: `result:\n${formatToolPayload(data?.result ?? null)}`,
+            runId,
+            toolEventType: 'tool_result',
+            toolCallId: data?.callId ?? null,
+          },
+        ])
+      })
+
       source.addEventListener('completed', () => {
         close()
         setActiveRun(null)
@@ -383,20 +448,35 @@ function App() {
             <h2>{selectedSession ? `Session ${selectedSession.sessionId.slice(0, 8)}` : 'No Session Selected'}</h2>
             <p>{selectedSession ? `Agent ${selectedSession.agentId}` : 'Create a session to start chatting.'}</p>
           </div>
-          <code>{API_BASE_URL}</code>
+          <div className="chat-controls">
+            <label className="tool-toggle">
+              <input
+                type="checkbox"
+                checked={showToolEvents}
+                onChange={(event) => setShowToolEvents(event.target.checked)}
+              />
+              Show tool calls/results
+            </label>
+            <code>{API_BASE_URL}</code>
+          </div>
         </header>
 
         <section className="messages-view">
-          {messages
-            .filter((message) => message.role !== 'system')
-            .map((message) => (
-              <article key={message.id} className={`bubble ${message.role}`}>
-                <div className="bubble-role">{message.role}</div>
-                <div className="bubble-text">{message.text || (message.isStreaming ? '...' : '')}</div>
-              </article>
-            ))}
+          {visibleMessages.map((message) => (
+            <article key={message.id} className={`bubble ${message.role}`}>
+              <div className="bubble-role">
+                {message.role === 'tool'
+                  ? message.toolEventType === 'tool_result'
+                    ? 'tool result'
+                    : 'tool call'
+                  : message.role}
+              </div>
+              {message.role === 'tool' && message.toolCallId && <div className="bubble-meta">call id: {message.toolCallId}</div>}
+              <div className="bubble-text">{message.text || (message.isStreaming ? '...' : '')}</div>
+            </article>
+          ))}
 
-          {messages.length === 0 && <div className="empty-state">No messages in this session.</div>}
+          {visibleMessages.length === 0 && <div className="empty-state">No messages in this session.</div>}
         </section>
 
         <form className="composer" onSubmit={sendMessage}>
@@ -438,6 +518,122 @@ function asErrorMessage(error: unknown): string {
   }
 
   return 'Unknown error.'
+}
+
+function formatToolPayload(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '(empty)'
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      return '(empty)'
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed)
+      return JSON.stringify(parsed, null, 2)
+    } catch {
+      return value
+    }
+  }
+
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function mapHistoryMessageToBubbles(sessionId: string, messageIndex: number, message: SessionHistoryMessage): ChatBubble[] {
+  const role = normalizeRole(message.role)
+  const contents = message.contents ?? []
+
+  if (contents.length > 0) {
+    const bubbles = contents
+      .map((content, contentIndex) => mapHistoryContentToBubble(sessionId, messageIndex, contentIndex, role, message.runId, content))
+      .filter((bubble): bubble is ChatBubble => bubble !== null)
+
+    if (bubbles.length > 0) {
+      return bubbles
+    }
+  }
+
+  if (!message.text) {
+    return []
+  }
+
+  return [
+    {
+      id: `${sessionId}-${messageIndex}`,
+      role,
+      text: message.text,
+      runId: message.runId,
+    },
+  ]
+}
+
+function mapHistoryContentToBubble(
+  sessionId: string,
+  messageIndex: number,
+  contentIndex: number,
+  role: 'user' | 'assistant' | 'system',
+  runId: string | null,
+  content: SessionMessageContent,
+): ChatBubble | null {
+  const id = `${sessionId}-${messageIndex}-${contentIndex}`
+
+  if (content.type === 'text') {
+    if (!content.text) {
+      return null
+    }
+
+    return {
+      id,
+      role,
+      text: content.text,
+      runId,
+    }
+  }
+
+  if (content.type === 'tool_call') {
+    const lines = [`name: ${content.toolName ?? 'unknown'}`]
+    if (content.arguments) {
+      lines.push(`arguments:\n${formatToolPayload(content.arguments)}`)
+    }
+
+    return {
+      id,
+      role: 'tool',
+      text: lines.join('\n'),
+      runId,
+      toolEventType: 'tool_call',
+      toolCallId: content.callId ?? null,
+    }
+  }
+
+  if (content.type === 'tool_result') {
+    return {
+      id,
+      role: 'tool',
+      text: `result:\n${formatToolPayload(content.result ?? null)}`,
+      runId,
+      toolEventType: 'tool_result',
+      toolCallId: content.callId ?? null,
+    }
+  }
+
+  if (!content.payload) {
+    return null
+  }
+
+  return {
+    id,
+    role: 'tool',
+    text: `payload:\n${formatToolPayload(content.payload)}`,
+    runId,
+  }
 }
 
 export default App

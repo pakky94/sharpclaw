@@ -56,7 +56,8 @@ app.MapPost("/chat", async (
     if (run.Status == AgentRunStatus.Failed)
         return Results.Problem(run.Error ?? "Agent run failed.");
 
-    var text = string.Concat(run.GetEventsAfter(0)
+    var events = run.GetEventsAfter(0);
+    var text = string.Concat(events
         .Where(e => e.Type == "delta")
         .Select(e => e.Text));
 
@@ -65,6 +66,7 @@ app.MapPost("/chat", async (
         sessionId,
         runId = run.RunId,
         response = text,
+        events,
     });
 });
 
@@ -201,6 +203,7 @@ app.MapGet("/sessions/{sessionId:guid}/runs/{runId:guid}/stream", async (
                 sequence = ev.Sequence,
                 type = ev.Type,
                 text = ev.Text,
+                data = ev.Data,
                 timestamp = ev.Timestamp,
                 status = run.Status.ToString().ToLowerInvariant(),
             });

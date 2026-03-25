@@ -157,6 +157,21 @@
   font-size: 0.8rem;
 }
 
+.chat-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.tool-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: #4b5366;
+}
+
 .messages-view {
   margin: 14px 0;
   overflow: auto;
@@ -186,6 +201,15 @@
   border: 1px solid #d8cdbd;
 }
 
+.bubble.tool {
+  align-self: center;
+  max-width: 94%;
+  width: 94%;
+  background: #f4f7fb;
+  color: #1d2233;
+  border: 1px dashed #afbdd4;
+}
+
 .bubble.system {
   align-self: center;
   background: #ece9e2;
@@ -202,6 +226,13 @@
 .bubble-text {
   white-space: pre-wrap;
   line-height: 1.4;
+}
+
+.bubble-meta {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.72rem;
+  color: #5f6780;
+  margin-bottom: 4px;
 }
 
 .composer {
