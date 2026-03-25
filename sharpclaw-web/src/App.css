@@ -235,6 +235,72 @@
   margin-bottom: 4px;
 }
 
+.tool-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tool-summary-button {
+  border: 1px solid #afbdd4;
+  background: #edf3fb;
+  color: #23314f;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tool-summary-button.result {
+  background: #eef6ef;
+  border-color: #a7c9ac;
+  color: #203f28;
+}
+
+.tool-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tool-summary-main {
+  flex: 0 0 auto;
+}
+
+.tool-summary-inline {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.82;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+.tool-result-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tool-block {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #ffffff;
+  border: 1px solid #d2dceb;
+  border-radius: 8px;
+  padding: 8px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: #1d2233;
+}
+
 .composer {
   border-top: 1px solid #dbcfbe;
   padding-top: 12px;

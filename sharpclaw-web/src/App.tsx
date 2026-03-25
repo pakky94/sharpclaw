@@ -56,6 +56,11 @@ type ChatBubble = {
   runId?: string | null
   toolEventType?: 'tool_call' | 'tool_result'
   toolCallId?: string | null
+  toolName?: string | null
+  toolArguments?: string | null
+  toolResult?: string | null
+  toolExpanded?: boolean
+  toolResultExpanded?: boolean
 }
 
 type ToolCallEventData = {
@@ -169,17 +174,18 @@ function App() {
       const mapped: ChatBubble[] = data.messages.flatMap((message, index) =>
         mapHistoryMessageToBubbles(sessionId, index, message),
       )
+      const mergedMapped = mergeToolResultBubbles(mapped)
 
       let assistantMessageId: string | null = null
       const hasActiveRun = data.activeRunId !== null && (data.activeRunStatus === 'pending' || data.activeRunStatus === 'running')
 
       if (hasActiveRun) {
         assistantMessageId =
-          mapped.findLast((message) => message.role === 'assistant' && message.runId === data.activeRunId)?.id ?? null
+          mergedMapped.findLast((message) => message.role === 'assistant' && message.runId === data.activeRunId)?.id ?? null
 
         if (!assistantMessageId) {
           assistantMessageId = crypto.randomUUID()
-          mapped.push({
+          mergedMapped.push({
             id: assistantMessageId,
             role: 'assistant',
             text: '',
@@ -187,7 +193,7 @@ function App() {
             runId: data.activeRunId,
           })
         } else {
-          for (const message of mapped) {
+          for (const message of mergedMapped) {
             if (message.id === assistantMessageId) {
               message.isStreaming = true
               break
@@ -196,7 +202,7 @@ function App() {
         }
       }
 
-      setMessages(mapped)
+      setMessages(mergedMapped)
 
       if (hasActiveRun && data.activeRunId && data.activeRunStatus && assistantMessageId) {
         setActiveRun({ sessionId, runId: data.activeRunId, status: data.activeRunStatus })
@@ -318,20 +324,19 @@ function App() {
 
         setActiveRun({ sessionId, runId, status: payload.status })
 
-        const lines = [`name: ${data?.toolName ?? 'unknown'}`]
-        if (data?.arguments) {
-          lines.push(`arguments:\n${formatToolPayload(data.arguments)}`)
-        }
-
         setMessages((prev) => [
           ...prev,
           {
             id: crypto.randomUUID(),
             role: 'tool',
-            text: lines.join('\n'),
+            text: '',
             runId,
             toolEventType: 'tool_call',
             toolCallId: data?.callId ?? null,
+            toolName: data?.toolName ?? null,
+            toolArguments: formatToolPayload(data?.arguments ?? null),
+            toolExpanded: false,
+            toolResultExpanded: false,
           },
         ])
       })
@@ -342,17 +347,18 @@ function App() {
 
         setActiveRun({ sessionId, runId, status: payload.status })
 
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: 'tool',
-            text: `result:\n${formatToolPayload(data?.result ?? null)}`,
-            runId,
-            toolEventType: 'tool_result',
-            toolCallId: data?.callId ?? null,
-          },
-        ])
+        const resultBubble: ChatBubble = {
+          id: crypto.randomUUID(),
+          role: 'tool',
+          text: '',
+          runId,
+          toolEventType: 'tool_result',
+          toolCallId: data?.callId ?? null,
+          toolResult: formatToolPayload(data?.result ?? null),
+          toolExpanded: false,
+        }
+
+        setMessages((prev) => mergeToolResultBubble(prev, resultBubble))
       })
 
       source.addEventListener('completed', () => {
@@ -385,6 +391,32 @@ function App() {
       streamRef.current.source.close()
       streamRef.current = null
     }
+  }
+
+  function toggleToolExpanded(messageId: string) {
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.id === messageId && message.role === 'tool'
+          ? {
+              ...message,
+              toolExpanded: !message.toolExpanded,
+            }
+          : message,
+      ),
+    )
+  }
+
+  function toggleToolResultExpanded(messageId: string) {
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.id === messageId && message.role === 'tool'
+          ? {
+              ...message,
+              toolResultExpanded: !message.toolResultExpanded,
+            }
+          : message,
+      ),
+    )
   }
 
   return (
@@ -464,15 +496,57 @@ function App() {
         <section className="messages-view">
           {visibleMessages.map((message) => (
             <article key={message.id} className={`bubble ${message.role}`}>
-              <div className="bubble-role">
-                {message.role === 'tool'
-                  ? message.toolEventType === 'tool_result'
-                    ? 'tool result'
-                    : 'tool call'
-                  : message.role}
-              </div>
-              {message.role === 'tool' && message.toolCallId && <div className="bubble-meta">call id: {message.toolCallId}</div>}
-              <div className="bubble-text">{message.text || (message.isStreaming ? '...' : '')}</div>
+              {message.role === 'tool' ? (
+                <>
+                  {message.toolEventType === 'tool_call' ? (
+                    <div className="tool-card">
+                      <button type="button" className="tool-summary-button" onClick={() => toggleToolExpanded(message.id)}>
+                        <span className="tool-summary-main">
+                          {message.toolExpanded ? '▼' : '▶'} call: {message.toolName ?? 'unknown'}
+                          {message.toolCallId ? ` (${shortenCallId(message.toolCallId)})` : ''}
+                        </span>
+                        {!message.toolExpanded && (
+                          <span className="tool-summary-inline">{summarizeJsonInline(message.toolArguments)}</span>
+                        )}
+                      </button>
+
+                      {message.toolExpanded && (
+                        <div className="tool-details">
+                          <div className="bubble-meta">call id: {message.toolCallId ?? 'n/a'}</div>
+                          <pre className="tool-block">{message.toolArguments ?? '(empty)'}</pre>
+                        </div>
+                      )}
+
+                      {message.toolResult && (
+                        <div className="tool-result-section">
+                          <button type="button" className="tool-summary-button result" onClick={() => toggleToolResultExpanded(message.id)}>
+                            {message.toolResultExpanded ? '▼' : '▶'} result: {summarizeInline(message.toolResult)}
+                          </button>
+                          {message.toolResultExpanded && <pre className="tool-block">{message.toolResult}</pre>}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="tool-card">
+                      <button type="button" className="tool-summary-button result" onClick={() => toggleToolExpanded(message.id)}>
+                        {message.toolExpanded ? '▼' : '▶'} result
+                        {message.toolCallId ? ` (${shortenCallId(message.toolCallId)})` : ''}: {summarizeInline(message.toolResult)}
+                      </button>
+                      {message.toolExpanded && (
+                        <div className="tool-details">
+                          {message.toolCallId && <div className="bubble-meta">call id: {message.toolCallId}</div>}
+                          <pre className="tool-block">{message.toolResult ?? '(empty)'}</pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="bubble-role">{message.role}</div>
+                  <div className="bubble-text">{message.text || (message.isStreaming ? '...' : '')}</div>
+                </>
+              )}
             </article>
           ))}
 
@@ -598,18 +672,17 @@ function mapHistoryContentToBubble(
   }
 
   if (content.type === 'tool_call') {
-    const lines = [`name: ${content.toolName ?? 'unknown'}`]
-    if (content.arguments) {
-      lines.push(`arguments:\n${formatToolPayload(content.arguments)}`)
-    }
-
     return {
       id,
       role: 'tool',
-      text: lines.join('\n'),
+      text: '',
       runId,
       toolEventType: 'tool_call',
       toolCallId: content.callId ?? null,
+      toolName: content.toolName ?? null,
+      toolArguments: formatToolPayload(content.arguments ?? null),
+      toolExpanded: false,
+      toolResultExpanded: false,
     }
   }
 
@@ -617,10 +690,12 @@ function mapHistoryContentToBubble(
     return {
       id,
       role: 'tool',
-      text: `result:\n${formatToolPayload(content.result ?? null)}`,
+      text: '',
       runId,
       toolEventType: 'tool_result',
       toolCallId: content.callId ?? null,
+      toolResult: formatToolPayload(content.result ?? null),
+      toolExpanded: false,
     }
   }
 
@@ -631,8 +706,81 @@ function mapHistoryContentToBubble(
   return {
     id,
     role: 'tool',
-    text: `payload:\n${formatToolPayload(content.payload)}`,
+    text: '',
     runId,
+    toolEventType: 'tool_result',
+    toolResult: formatToolPayload(content.payload),
+    toolExpanded: false,
+  }
+}
+
+function mergeToolResultBubbles(bubbles: ChatBubble[]): ChatBubble[] {
+  return bubbles.reduce<ChatBubble[]>((acc, bubble) => {
+    if (bubble.role === 'tool' && bubble.toolEventType === 'tool_result') {
+      return mergeToolResultBubble(acc, bubble)
+    }
+
+    acc.push(bubble)
+    return acc
+  }, [])
+}
+
+function mergeToolResultBubble(messages: ChatBubble[], resultBubble: ChatBubble): ChatBubble[] {
+  const callId = resultBubble.toolCallId
+  if (!callId) {
+    return [...messages, resultBubble]
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const candidate = messages[index]
+    if (
+      candidate.role === 'tool' &&
+      candidate.toolEventType === 'tool_call' &&
+      candidate.toolCallId === callId &&
+      candidate.runId === resultBubble.runId &&
+      !candidate.toolResult
+    ) {
+      const next = [...messages]
+      next[index] = {
+        ...candidate,
+        toolResult: resultBubble.toolResult ?? '(empty)',
+        toolResultExpanded: false,
+      }
+      return next
+    }
+  }
+
+  return [...messages, resultBubble]
+}
+
+function shortenCallId(callId: string): string {
+  return callId.length > 12 ? callId.slice(0, 12) : callId
+}
+
+function summarizeInline(value: string | null | undefined): string {
+  if (!value) {
+    return '(empty)'
+  }
+
+  const compact = value.replace(/\s+/g, ' ').trim()
+  if (!compact) {
+    return '(empty)'
+  }
+
+  return compact.length > 60 ? `${compact.slice(0, 60)}...` : compact
+}
+
+function summarizeJsonInline(value: string | null | undefined): string {
+  if (!value) {
+    return 'args: (empty)'
+  }
+
+  try {
+    const parsed = JSON.parse(value)
+    return `args: ${JSON.stringify(parsed)}`
+  } catch {
+    const compact = value.replace(/\s+/g, ' ').trim()
+    return `args: ${compact || '(empty)'}`
   }
 }
 
