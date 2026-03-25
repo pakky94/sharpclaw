@@ -76,18 +76,52 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
         return run;
     }
 
-    public IReadOnlyList<SessionMessageDto> GetHistory(Guid sessionId)
+    public SessionHistoryDto GetHistory(Guid sessionId)
     {
         if (!_sessions.TryGetValue(sessionId, out var session))
             throw new KeyNotFoundException($"Session {sessionId} was not found.");
 
-        return session.Context.Messages
-            .Select(message => new SessionMessageDto(
+        var runsByCreatedAt = session.Runs.Values
+            .OrderBy(r => r.CreatedAt)
+            .ToArray();
+
+        var runsById = session.Runs.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+        var activeRun = runsByCreatedAt.LastOrDefault(r => r.Status is AgentRunStatus.Pending or AgentRunStatus.Running);
+
+        var messages = new List<SessionMessageDto>(session.Context.Messages.Count);
+        var runCursor = -1;
+        Guid? currentRunId = null;
+
+        foreach (var message in session.Context.Messages)
+        {
+            if (message.Role == ChatRole.User)
+            {
+                runCursor += 1;
+                currentRunId = runCursor < runsByCreatedAt.Length
+                    ? runsByCreatedAt[runCursor].RunId
+                    : null;
+            }
+
+            var messageRunId = message.Role == ChatRole.System ? null : currentRunId;
+            var runStatus = messageRunId is not null && runsById.TryGetValue(messageRunId.Value, out var run)
+                ? run.Status.ToString().ToLowerInvariant()
+                : null;
+
+            messages.Add(new SessionMessageDto(
                 Role: message.Role.Value,
                 Text: message.Text,
-                AuthorName: message.AuthorName
-            ))
-            .ToArray();
+                AuthorName: message.AuthorName,
+                RunId: messageRunId,
+                RunStatus: runStatus
+            ));
+        }
+
+        return new SessionHistoryDto(
+            SessionId: sessionId,
+            ActiveRunId: activeRun?.RunId,
+            ActiveRunStatus: activeRun?.Status.ToString().ToLowerInvariant(),
+            Messages: messages
+        );
     }
 
     public IReadOnlyList<AgentSessionDto> GetSessions(long agentId)
@@ -220,4 +254,17 @@ public class AgentRunState(Guid runId, Guid sessionId)
 }
 
 public record AgentSessionDto(Guid SessionId, long AgentId, DateTimeOffset CreatedAt, int MessagesCount);
-public record SessionMessageDto(string Role, string? Text, string? AuthorName);
+public record SessionHistoryDto(
+    Guid SessionId,
+    Guid? ActiveRunId,
+    string? ActiveRunStatus,
+    IReadOnlyList<SessionMessageDto> Messages
+);
+
+public record SessionMessageDto(
+    string Role,
+    string? Text,
+    string? AuthorName,
+    Guid? RunId,
+    string? RunStatus
+);

@@ -126,8 +126,10 @@ app.MapGet("/sessions/{sessionId:guid}/history", (
         var history = agent.GetHistory(sessionId);
         return Results.Ok(new
         {
-            sessionId,
-            messages = history,
+            sessionId = history.SessionId,
+            activeRunId = history.ActiveRunId,
+            activeRunStatus = history.ActiveRunStatus,
+            messages = history.Messages,
         });
     }
     catch (KeyNotFoundException ex)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 
@@ -13,7 +13,18 @@ type SessionHistoryMessage = {
   role: string
   text: string | null
   authorName: string | null
+  runId: string | null
+  runStatus: RunStatus | null
 }
+
+type SessionHistoryResponse = {
+  sessionId: string
+  activeRunId: string | null
+  activeRunStatus: RunStatus | null
+  messages: SessionHistoryMessage[]
+}
+
+type RunStatus = 'pending' | 'running' | 'completed' | 'failed'
 
 type StreamEvent = {
   runId: string
@@ -22,7 +33,7 @@ type StreamEvent = {
   type: 'started' | 'delta' | 'completed' | 'failed'
   text: string | null
   timestamp: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
+  status: RunStatus
 }
 
 type ChatBubble = {
@@ -30,6 +41,7 @@ type ChatBubble = {
   role: 'user' | 'assistant' | 'system'
   text: string
   isStreaming?: boolean
+  runId?: string | null
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'https://localhost:7063'
@@ -42,15 +54,28 @@ function App() {
   const [prompt, setPrompt] = useState('')
   const [isSending, setIsSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [activeRun, setActiveRun] = useState<{ sessionId: string; runId: string; status: RunStatus } | null>(null)
+  const streamRef = useRef<{ sessionId: string; runId: string; source: EventSource } | null>(null)
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.sessionId === selectedSessionId) ?? null,
     [selectedSessionId, sessions],
   )
+  const isSessionProcessing =
+    activeRun !== null &&
+    selectedSessionId !== null &&
+    activeRun.sessionId === selectedSessionId &&
+    (activeRun.status === 'pending' || activeRun.status === 'running')
 
   useEffect(() => {
     void refreshSessions(agentId)
   }, [agentId])
+
+  useEffect(() => {
+    return () => {
+      closeStream()
+    }
+  }, [])
 
   async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     const response = await fetch(url, {
@@ -111,19 +136,57 @@ function App() {
   async function loadHistory(sessionId: string) {
     try {
       setError(null)
-      const data = await fetchJson<{ sessionId: string; messages: SessionHistoryMessage[] }>(
-        `${API_BASE_URL}/sessions/${sessionId}/history`,
-      )
+      closeStream()
+      const data = await fetchJson<SessionHistoryResponse>(`${API_BASE_URL}/sessions/${sessionId}/history`)
 
-      const mapped = data.messages
+      const mapped: ChatBubble[] = data.messages
         .map((message, index) => ({
           id: `${sessionId}-${index}`,
           role: normalizeRole(message.role),
           text: message.text ?? '',
+          runId: message.runId,
         }))
         .filter((message) => message.role !== 'system')
 
+      let assistantMessageId: string | null = null
+      const hasActiveRun = data.activeRunId !== null && (data.activeRunStatus === 'pending' || data.activeRunStatus === 'running')
+
+      if (hasActiveRun) {
+        assistantMessageId =
+          mapped.findLast((message) => message.role === 'assistant' && message.runId === data.activeRunId)?.id ?? null
+
+        if (!assistantMessageId) {
+          assistantMessageId = crypto.randomUUID()
+          mapped.push({
+            id: assistantMessageId,
+            role: 'assistant',
+            text: '',
+            isStreaming: true,
+            runId: data.activeRunId,
+          })
+        } else {
+          for (const message of mapped) {
+            if (message.id === assistantMessageId) {
+              message.isStreaming = true
+              break
+            }
+          }
+        }
+      }
+
       setMessages(mapped)
+
+      if (hasActiveRun && data.activeRunId && data.activeRunStatus && assistantMessageId) {
+        setActiveRun({ sessionId, runId: data.activeRunId, status: data.activeRunStatus })
+        void streamRun(sessionId, data.activeRunId, assistantMessageId)
+          .then(async () => {
+            await loadHistory(sessionId)
+            await refreshSessions(agentId)
+          })
+          .catch((e) => setError(asErrorMessage(e)))
+      } else {
+        setActiveRun(null)
+      }
     } catch (e) {
       setError(asErrorMessage(e))
     }
@@ -133,7 +196,7 @@ function App() {
     event.preventDefault()
 
     const text = prompt.trim()
-    if (!text || isSending) {
+    if (!text || isSending || isSessionProcessing) {
       return
     }
 
@@ -167,6 +230,7 @@ function App() {
         body: JSON.stringify({ message: text }),
       })
 
+      setActiveRun({ sessionId, runId: run.runId, status: 'pending' })
       await streamRun(sessionId, run.runId, localAssistantId)
       await loadHistory(sessionId)
       await refreshSessions(agentId)
@@ -180,17 +244,29 @@ function App() {
 
   function streamRun(sessionId: string, runId: string, assistantMessageId: string) {
     return new Promise<void>((resolve, reject) => {
+      closeStream()
+
       const streamUrl = `${API_BASE_URL}/sessions/${sessionId}/runs/${runId}/stream`
       const source = new EventSource(streamUrl)
+      streamRef.current = { sessionId, runId, source }
 
       const close = () => {
         source.close()
+        if (streamRef.current?.runId === runId && streamRef.current?.sessionId === sessionId) {
+          streamRef.current = null
+        }
       }
 
       source.onerror = () => {
         close()
+        setActiveRun(null)
         reject(new Error('Streaming connection closed unexpectedly.'))
       }
+
+      source.addEventListener('started', (event) => {
+        const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
+        setActiveRun({ sessionId, runId, status: payload.status })
+      })
 
       source.addEventListener('delta', (event) => {
         const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
@@ -198,6 +274,8 @@ function App() {
         if (!delta) {
           return
         }
+
+        setActiveRun({ sessionId, runId, status: payload.status })
 
         setMessages((prev) =>
           prev.map((message) =>
@@ -214,6 +292,7 @@ function App() {
 
       source.addEventListener('completed', () => {
         close()
+        setActiveRun(null)
         setMessages((prev) =>
           prev.map((message) =>
             message.id === assistantMessageId
@@ -229,10 +308,18 @@ function App() {
 
       source.addEventListener('failed', (event) => {
         close()
+        setActiveRun(null)
         const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
         reject(new Error(payload.text || 'Run failed.'))
       })
     })
+  }
+
+  function closeStream() {
+    if (streamRef.current) {
+      streamRef.current.source.close()
+      streamRef.current = null
+    }
   }
 
   return (
@@ -319,11 +406,16 @@ function App() {
             onChange={(e) => setPrompt(e.target.value)}
             placeholder="Write a message to the agent..."
             rows={3}
+            disabled={isSessionProcessing}
           />
           <div className="composer-footer">
             {error && <span className="error-text">{error}</span>}
-            <button type="submit" className="button primary" disabled={isSending || prompt.trim().length === 0}>
-              {isSending ? 'Sending...' : 'Send'}
+            <button
+              type="submit"
+              className="button primary"
+              disabled={isSending || isSessionProcessing || prompt.trim().length === 0}
+            >
+              {isSending ? 'Sending...' : isSessionProcessing ? 'Processing...' : 'Send'}
             </button>
           </div>
         </form>
