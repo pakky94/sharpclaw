@@ -1,4 +1,5 @@
 import type { ChatBubble } from '../types/chat'
+import { MarkdownContent } from './MarkdownContent'
 import { shortenCallId, summarizeInline, summarizeJsonInline } from '../utils/chatUtils'
 
 type MessagesViewProps = {
@@ -42,7 +43,12 @@ export function MessagesView({ messages, onToggleToolExpanded, onToggleToolResul
                       >
                         {message.toolResultExpanded ? '▼' : '▶'} result: {summarizeInline(message.toolResult)}
                       </button>
-                      {message.toolResultExpanded && <pre className="tool-block">{message.toolResult}</pre>}
+                      {message.toolResultExpanded &&
+                        (message.toolResultFormat === 'structured' ? (
+                          <pre className="tool-block">{message.toolResult}</pre>
+                        ) : (
+                          <MarkdownContent className="tool-markdown markdown-content" content={message.toolResult ?? '(empty)'} />
+                        ))}
                     </div>
                   )}
                 </div>
@@ -55,7 +61,11 @@ export function MessagesView({ messages, onToggleToolExpanded, onToggleToolResul
                   {message.toolExpanded && (
                     <div className="tool-details">
                       {message.toolCallId && <div className="bubble-meta">call id: {message.toolCallId}</div>}
-                      <pre className="tool-block">{message.toolResult ?? '(empty)'}</pre>
+                      {message.toolResultFormat === 'structured' ? (
+                        <pre className="tool-block">{message.toolResult ?? '(empty)'}</pre>
+                      ) : (
+                        <MarkdownContent className="tool-markdown markdown-content" content={message.toolResult ?? '(empty)'} />
+                      )}
                     </div>
                   )}
                 </div>
@@ -64,7 +74,7 @@ export function MessagesView({ messages, onToggleToolExpanded, onToggleToolResul
           ) : (
             <>
               <div className="bubble-role">{message.role}</div>
-              <div className="bubble-text">{message.text || (message.isStreaming ? '...' : '')}</div>
+              <MarkdownContent className="bubble-text markdown-content" content={message.text || (message.isStreaming ? '...' : '')} />
             </>
           )}
         </article>

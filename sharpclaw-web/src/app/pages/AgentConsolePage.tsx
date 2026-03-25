@@ -14,7 +14,14 @@ import type {
   ToolCallEventData,
   ToolResultEventData,
 } from '../types/chat'
-import { asErrorMessage, formatToolPayload, mapHistoryMessageToBubbles, mergeToolResultBubble, mergeToolResultBubbles } from '../utils/chatUtils'
+import {
+  asErrorMessage,
+  formatToolPayload,
+  formatToolResult,
+  mapHistoryMessageToBubbles,
+  mergeToolResultBubble,
+  mergeToolResultBubbles,
+} from '../utils/chatUtils'
 import './AgentConsolePage.css'
 
 export function AgentConsolePage() {
@@ -270,6 +277,7 @@ export function AgentConsolePage() {
         const data = payload.data as ToolResultEventData | undefined
 
         setActiveRun({ sessionId, runId, status: payload.status })
+        const formattedResult = formatToolResult(data?.result ?? null)
 
         const resultBubble: ChatBubble = {
           id: crypto.randomUUID(),
@@ -278,7 +286,8 @@ export function AgentConsolePage() {
           runId,
           toolEventType: 'tool_result',
           toolCallId: data?.callId ?? null,
-          toolResult: formatToolPayload(data?.result ?? null),
+          toolResult: formattedResult.text,
+          toolResultFormat: formattedResult.format,
           toolExpanded: false,
         }
 

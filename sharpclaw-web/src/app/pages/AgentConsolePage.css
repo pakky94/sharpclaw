@@ -230,8 +230,48 @@
 }
 
 .bubble-text {
-  white-space: pre-wrap;
   line-height: 1.4;
+}
+
+.markdown-content > *:first-child {
+  margin-top: 0;
+}
+
+.markdown-content > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content p,
+.markdown-content ul,
+.markdown-content ol,
+.markdown-content pre,
+.markdown-content blockquote {
+  margin: 0 0 0.7rem;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  padding-left: 1.3rem;
+}
+
+.markdown-content a {
+  color: inherit;
+}
+
+.markdown-content code {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+.markdown-content pre {
+  padding: 8px;
+  border-radius: 8px;
+  overflow: auto;
+}
+
+.bubble.assistant .markdown-content pre,
+.bubble.system .markdown-content pre,
+.bubble.user .markdown-content pre {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .bubble-meta {
@@ -305,6 +345,21 @@
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
   font-size: 0.78rem;
   color: #1d2233;
+}
+
+.tool-markdown {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  background: #ffffff;
+  border: 1px solid #d2dceb;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 0.78rem;
+  color: #1d2233;
+}
+
+.tool-markdown pre {
+  background: #f7f9fc;
 }
 
 .composer {

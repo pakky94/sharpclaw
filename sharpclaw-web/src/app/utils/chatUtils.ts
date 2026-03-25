@@ -42,6 +42,45 @@ export function formatToolPayload(value: unknown): string {
   }
 }
 
+export function formatToolResult(value: unknown): { text: string; format: 'text' | 'structured' } {
+  if (value === null || value === undefined) {
+    return { text: '(empty)', format: 'text' }
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      return { text: '(empty)', format: 'text' }
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed)
+
+      if (parsed === null || parsed === undefined) {
+        return { text: '(empty)', format: 'text' }
+      }
+
+      if (typeof parsed === 'string') {
+        return { text: parsed, format: 'text' }
+      }
+
+      if (typeof parsed === 'object') {
+        return { text: JSON.stringify(parsed, null, 2), format: 'structured' }
+      }
+
+      return { text: String(parsed), format: 'text' }
+    } catch {
+      return { text: value, format: 'text' }
+    }
+  }
+
+  try {
+    return { text: JSON.stringify(value, null, 2), format: 'structured' }
+  } catch {
+    return { text: String(value), format: 'text' }
+  }
+}
+
 export function mapHistoryMessageToBubbles(
   sessionId: string,
   messageIndex: number,
@@ -113,6 +152,7 @@ function mapHistoryContentToBubble(
   }
 
   if (content.type === 'tool_result') {
+    const formattedResult = formatToolResult(content.result ?? null)
     return {
       id,
       role: 'tool',
@@ -120,7 +160,8 @@ function mapHistoryContentToBubble(
       runId,
       toolEventType: 'tool_result',
       toolCallId: content.callId ?? null,
-      toolResult: formatToolPayload(content.result ?? null),
+      toolResult: formattedResult.text,
+      toolResultFormat: formattedResult.format,
       toolExpanded: false,
     }
   }
@@ -129,13 +170,15 @@ function mapHistoryContentToBubble(
     return null
   }
 
+  const formattedPayload = formatToolResult(content.payload)
   return {
     id,
     role: 'tool',
     text: '',
     runId,
     toolEventType: 'tool_result',
-    toolResult: formatToolPayload(content.payload),
+    toolResult: formattedPayload.text,
+    toolResultFormat: formattedPayload.format,
     toolExpanded: false,
   }
 }
@@ -170,6 +213,7 @@ export function mergeToolResultBubble(messages: ChatBubble[], resultBubble: Chat
       next[index] = {
         ...candidate,
         toolResult: resultBubble.toolResult ?? '(empty)',
+        toolResultFormat: resultBubble.toolResultFormat ?? 'text',
         toolResultExpanded: false,
       }
       return next

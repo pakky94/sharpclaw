@@ -19,9 +19,9 @@ export type SessionMessageContent = {
   text?: string | null
   callId?: string | null
   toolName?: string | null
-  arguments?: string | null
-  result?: string | null
-  payload?: string | null
+  arguments?: unknown
+  result?: unknown
+  payload?: unknown
 }
 
 export type SessionHistoryResponse = {
@@ -55,6 +55,7 @@ export type ChatBubble = {
   toolName?: string | null
   toolArguments?: string | null
   toolResult?: string | null
+  toolResultFormat?: 'text' | 'structured'
   toolExpanded?: boolean
   toolResultExpanded?: boolean
 }
@@ -62,10 +63,10 @@ export type ChatBubble = {
 export type ToolCallEventData = {
   callId?: string | null
   toolName?: string | null
-  arguments?: string | null
+  arguments?: unknown
 }
 
 export type ToolResultEventData = {
   callId?: string | null
-  result?: string | null
+  result?: unknown
 }
