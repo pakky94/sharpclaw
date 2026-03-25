@@ -5,7 +5,8 @@
   max-width: 1300px;
   margin: 0 auto;
   padding: 18px;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .sessions-panel,
@@ -20,6 +21,8 @@
   display: flex;
   flex-direction: column;
   padding: 16px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .panel-header h1 {
@@ -89,6 +92,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
   overflow: auto;
 }
 
@@ -126,7 +130,8 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   padding: 16px;
-  min-height: calc(100vh - 36px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .chat-header {
@@ -174,6 +179,7 @@
 
 .messages-view {
   margin: 14px 0;
+  min-height: 0;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -345,10 +351,14 @@
 @media (max-width: 980px) {
   .app-shell {
     grid-template-columns: 1fr;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
   }
 
   .chat-panel {
     min-height: 70vh;
+    overflow: visible;
   }
 
   .bubble {
