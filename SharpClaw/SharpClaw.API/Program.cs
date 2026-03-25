@@ -44,13 +44,3 @@ app.UseCors("WebClient");
 ChatEndpoints.Register(app);
 
 app.Run();
-
-public class CreateSessionRequest
-{
-    public long? AgentId { get; set; }
-}
-
-public class MessageRequest
-{
-    public required string Message { get; set; }
-}

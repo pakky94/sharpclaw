@@ -188,3 +188,13 @@ public static class ChatEndpoints
         });
     }
 }
+
+public class CreateSessionRequest
+{
+    public long? AgentId { get; set; }
+}
+
+public class MessageRequest
+{
+    public required string Message { get; set; }
+}
