@@ -3,6 +3,8 @@ using System.Text.Json;
 using Dapper;
 using Microsoft.Extensions.AI;
 using Npgsql;
+using SharpClaw.API.Agents.Memory.Lcm;
+using SharpClaw.API.Agents.Tools.Files;
 
 namespace SharpClaw.API.Agents;
 
@@ -19,9 +21,9 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
         {
             DbConnectionString = configuration.GetConnectionString("sharpclaw")!,
             AgentId = agentId,
+            SystemMessage = new ChatMessage(ChatRole.System, systemPrompt),
             Messages =
             [
-                new ChatMessage(ChatRole.System, systemPrompt),
             ],
         };
 
@@ -51,10 +53,20 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
             run.MarkStarted();
             try
             {
-                session.Context.Messages.Add(new ChatMessage(ChatRole.User, prompt));
+                session.Context.Messages.Add(new ChatMessage(ChatRole.User, prompt)
+                {
+                    MessageId = Guid.NewGuid().ToString().Replace("-", ""),
+                    AdditionalProperties = new AdditionalPropertiesDictionary
+                    {
+                        ["lcm_type"] = "user_message",
+                    },
+                });
 
                 var agent = chatProvider.GetClient(session.Context);
-                await agent.GetStreamingResponse(BuildTools(), update =>
+                var response = await agent.GetResponse(
+                    [session.Context.SystemMessage, ..session.Context.Messages],
+                    BuildTools(),
+                    update =>
                 {
                     if (!string.IsNullOrEmpty(update.Text))
                         run.AppendDelta(update.Text);
@@ -80,7 +92,15 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
                     return Task.CompletedTask;
                 });
 
+                session.Context.Messages.AddRange(response);
+
                 run.MarkCompleted();
+
+                _ = Task.Run(async () =>
+                {
+                    var summarizer = new Summarizer(chatProvider);
+                    _ = await summarizer.Summarize(session.Context, [], session.Context.Messages);
+                });
             }
             catch (Exception ex)
             {
@@ -171,10 +191,7 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
 
     private static List<AIFunction> BuildTools() =>
     [
-        AIFunctionFactory.Create(Tooling.ListFiles, "list_files", "Lists all files in your workspace"),
-        AIFunctionFactory.Create(Tooling.ReadFile, "read_file", "Read a file from your workspace"),
-        AIFunctionFactory.Create(Tooling.WriteFile, "write_file", "Write a file in your workspace, overwriting if it exists"),
-        AIFunctionFactory.Create(Tooling.DeleteFile, "delete_file", "Delete a file from your workspace"),
+        ..FileTools.Functions,
     ];
 
     private static string? SerializeToolPayload(object? payload)

@@ -1,10 +1,18 @@
 ﻿using Dapper;
+using Microsoft.Extensions.AI;
 using Npgsql;
 
-namespace SharpClaw.API.Agents;
+namespace SharpClaw.API.Agents.Tools.Files;
 
-public class Tooling
+public static class FileTools
 {
+    public static readonly AIFunction[] Functions = [
+        AIFunctionFactory.Create(ListFiles, "list_files", "Lists all files in your workspace"),
+        AIFunctionFactory.Create(ReadFile, "read_file", "Read a file from your workspace"),
+        AIFunctionFactory.Create(WriteFile, "write_file", "Write a file in your workspace, overwriting if it exists"),
+        AIFunctionFactory.Create(DeleteFile, "delete_file", "Delete a file from your workspace"),
+    ];
+
     public static async Task<string[]> ListFiles(IServiceProvider serviceProvider)
     {
         Console.WriteLine($"Listing files");
