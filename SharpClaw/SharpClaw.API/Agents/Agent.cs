@@ -5,12 +5,14 @@ using Microsoft.Extensions.AI;
 using Npgsql;
 using SharpClaw.API.Agents.Memory.Lcm;
 using SharpClaw.API.Agents.Tools.Files;
+using SharpClaw.API.Database;
 
 namespace SharpClaw.API.Agents;
 
-public class Agent(ChatProvider chatProvider, IConfiguration configuration)
+public class Agent(ChatProvider chatProvider, IConfiguration configuration, Repository repository)
 {
     private readonly ConcurrentDictionary<Guid, AgentSessionState> _sessions = new();
+    private readonly SemaphoreSlim _sessionsMutex = new(1, 1);
 
     public async Task<Guid> CreateSession(long agentId = 1)
     {
@@ -25,14 +27,14 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
             Messages = [],
         };
 
+        await repository.CreateSession(sessionId, agentId, systemPrompt);
         _sessions[sessionId] = new AgentSessionState(sessionId, context);
         return sessionId;
     }
 
-    public Task<AgentRunState> EnqueueMessage(Guid sessionId, string prompt)
+    public async Task<AgentRunState> EnqueueMessage(Guid sessionId, string prompt)
     {
-        if (!_sessions.TryGetValue(sessionId, out var session))
-            throw new KeyNotFoundException($"Session {sessionId} was not found.");
+        var session = await GetOrLoadSession(sessionId);
 
         AgentRunState run;
         lock (session.RunsLock)
@@ -51,7 +53,7 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
             run.MarkStarted();
             try
             {
-                session.Context.Messages.Add(new ChatResponse(
+                var userMessage = new ChatResponse(
                     new ChatMessage(ChatRole.User, prompt)
                     {
                         MessageId = Guid.NewGuid().ToString().Replace("-", ""),
@@ -59,7 +61,11 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
                         {
                             ["lcm_type"] = "user_message",
                         },
-                    }));
+                    });
+
+                var userMessageId = await repository.PersistMessage(sessionId, run.RunId, userMessage);
+                Repository.SetDbReference(userMessage, "message", userMessageId);
+                session.Context.Messages.Add(userMessage);
 
                 var agent = chatProvider.GetClient(session.Context);
                 var response = await agent.GetResponse(
@@ -91,6 +97,12 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
                         return Task.CompletedTask;
                     });
 
+                foreach (var message in response)
+                {
+                    var messageId = await repository.PersistMessage(sessionId, run.RunId, message);
+                    Repository.SetDbReference(message, "message", messageId);
+                }
+
                 session.Context.Messages = [..session.Context.Messages, ..response];
 
                 run.MarkCompleted();
@@ -113,7 +125,19 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
                             if (split.PreSummary.All(m => session.Context.Messages.Contains(m))
                                 && split.ToSummarize.All(m => session.Context.Messages.Contains(m))
                                 && split.PostSummary.All(m => session.Context.Messages.Contains(m)))
+                            {
+                                var summaryId = await repository.PersistSummaryAndCompactHistory(
+                                    sessionId,
+                                    run.RunId,
+                                    summary,
+                                    split.ToSummarize);
+
+                                Repository.SetDbReference(summary, "summary", summaryId);
+                                foreach (var message in split.ToSummarize)
+                                    Repository.SetParentSummaryReference(message, summaryId);
+
                                 session.Context.Messages = [..split.PreSummary, summary, ..split.PostSummary];
+                            }
                         }
                         finally
                         {
@@ -132,13 +156,12 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
             }
         });
 
-        return Task.FromResult(run);
+        return run;
     }
 
-    public SessionHistoryDto GetHistory(Guid sessionId)
+    public async Task<SessionHistoryDto> GetHistory(Guid sessionId)
     {
-        if (!_sessions.TryGetValue(sessionId, out var session))
-            throw new KeyNotFoundException($"Session {sessionId} was not found.");
+        var session = await GetOrLoadSession(sessionId);
 
         var runsByCreatedAt = session.Runs.Values
             .OrderBy(r => r.CreatedAt)
@@ -147,33 +170,26 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
         var runsById = session.Runs.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
         var activeRun = runsByCreatedAt.LastOrDefault(r => r.Status is AgentRunStatus.Pending or AgentRunStatus.Running);
 
-        var messages = new List<SessionMessageDto>(session.Context.Messages.Count);
-        var runCursor = -1;
-        Guid? currentRunId = null;
+        var rawMessages = await repository.LoadRawMessages(sessionId);
+        var messages = new List<SessionMessageDto>(rawMessages.Count);
 
-        foreach (var message in session.Context.Messages.SelectMany(r => r.Messages))
+        foreach (var raw in rawMessages)
         {
-            if (message.Role == ChatRole.User)
+            foreach (var message in raw.Response.Messages)
             {
-                runCursor += 1;
-                currentRunId = runCursor < runsByCreatedAt.Length
-                    ? runsByCreatedAt[runCursor].RunId
+                var runStatus = raw.RunId is not null && runsById.TryGetValue(raw.RunId.Value, out var run)
+                    ? run.Status.ToString().ToLowerInvariant()
                     : null;
+
+                messages.Add(new SessionMessageDto(
+                    Role: message.Role.Value,
+                    Text: message.Text,
+                    Contents: GetMessageContents(message),
+                    AuthorName: message.AuthorName,
+                    RunId: raw.RunId,
+                    RunStatus: runStatus
+                ));
             }
-
-            var messageRunId = message.Role == ChatRole.System ? null : currentRunId;
-            var runStatus = messageRunId is not null && runsById.TryGetValue(messageRunId.Value, out var run)
-                ? run.Status.ToString().ToLowerInvariant()
-                : null;
-
-            messages.Add(new SessionMessageDto(
-                Role: message.Role.Value,
-                Text: message.Text,
-                Contents: GetMessageContents(message),
-                AuthorName: message.AuthorName,
-                RunId: messageRunId,
-                RunStatus: runStatus
-            ));
         }
 
         return new SessionHistoryDto(
@@ -184,17 +200,15 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
         );
     }
 
-    public IReadOnlyList<AgentSessionDto> GetSessions(long agentId)
+    public async Task<IReadOnlyList<AgentSessionDto>> GetSessions(long agentId)
     {
-        return _sessions.Values
-            .Where(s => s.Context.AgentId == agentId)
-            .OrderByDescending(s => s.CreatedAt)
+        var sessions = await repository.GetSessions(agentId);
+        return sessions
             .Select(s => new AgentSessionDto(
                 SessionId: s.SessionId,
-                AgentId: s.Context.AgentId,
-                CreatedAt: s.CreatedAt,
-                MessagesCount: s.Context.Messages.Count
-            ))
+                AgentId: s.AgentId,
+                CreatedAt: new DateTimeOffset(DateTime.SpecifyKind(s.CreatedAt, DateTimeKind.Utc)),
+                MessagesCount: checked((int)s.MessagesCount)))
             .ToArray();
     }
 
@@ -207,6 +221,41 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
             throw new KeyNotFoundException($"Run {runId} was not found in session {sessionId}.");
 
         return run;
+    }
+
+    private async Task<AgentSessionState> GetOrLoadSession(Guid sessionId)
+    {
+        if (_sessions.TryGetValue(sessionId, out var existing))
+            return existing;
+
+        await _sessionsMutex.WaitAsync();
+        try
+        {
+            if (_sessions.TryGetValue(sessionId, out existing))
+                return existing;
+
+            var persistedSession = await repository.GetSession(sessionId)
+                                   ?? throw new KeyNotFoundException($"Session {sessionId} was not found.");
+
+            var context = new AgentExecutionContext
+            {
+                DbConnectionString = configuration.GetConnectionString("sharpclaw")!,
+                AgentId = persistedSession.AgentId,
+                SystemMessage = new ChatMessage(ChatRole.System, persistedSession.SystemPrompt),
+                Messages = [..await repository.LoadActiveConversation(sessionId)],
+            };
+
+            var loadedSession = new AgentSessionState(
+                sessionId,
+                context,
+                new DateTimeOffset(DateTime.SpecifyKind(persistedSession.CreatedAt, DateTimeKind.Utc)));
+            _sessions[sessionId] = loadedSession;
+            return loadedSession;
+        }
+        finally
+        {
+            _sessionsMutex.Release();
+        }
     }
 
     private static List<AIFunction> BuildTools() =>
@@ -254,6 +303,9 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
                 case TextContent textContent when !string.IsNullOrWhiteSpace(textContent.Text):
                     contents.Add(new SessionMessageContentDto(Type: "text", Text: textContent.Text));
                     break;
+                case TextContent:
+                    // Ignore empty text chunks emitted alongside tool-only messages.
+                    break;
                 case FunctionCallContent functionCall:
                     contents.Add(new SessionMessageContentDto(
                         Type: "tool_call",
@@ -298,10 +350,10 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
     }
 }
 
-public class AgentSessionState(Guid sessionId, AgentExecutionContext context)
+public class AgentSessionState(Guid sessionId, AgentExecutionContext context, DateTimeOffset? createdAt = null)
 {
     public Guid SessionId { get; } = sessionId;
-    public DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset CreatedAt { get; } = createdAt ?? DateTimeOffset.UtcNow;
     public AgentExecutionContext Context { get; } = context;
     public SemaphoreSlim Mutex { get; } = new(1, 1);
     public object RunsLock { get; } = new();

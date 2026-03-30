@@ -32,6 +32,58 @@ public class DatabaseSeeder(IConfiguration configuration)
                     agent_id bigint references agents(id),
                     document_id bigint references documents(id)
                 );
+
+                create table if not exists sessions(
+                    id uuid primary key,
+                    agent_id bigint not null references agents(id),
+                    system_prompt text not null,
+                    created_at timestamptz not null default now()
+                );
+
+                create table if not exists summaries(
+                    id bigserial primary key,
+                    session_id uuid not null references sessions(id) on delete cascade,
+                    run_id uuid null,
+                    parent_summary_id bigint null references summaries(id),
+                    payload jsonb not null,
+                    created_at timestamptz not null default now()
+                );
+
+                create table if not exists messages(
+                    id bigserial primary key,
+                    session_id uuid not null references sessions(id) on delete cascade,
+                    run_id uuid null,
+                    parent_summary_id bigint null references summaries(id),
+                    payload jsonb not null,
+                    created_at timestamptz not null default now()
+                );
+
+                create table if not exists conversation_history(
+                    id bigserial primary key,
+                    session_id uuid not null references sessions(id) on delete cascade,
+                    sequence bigint not null,
+                    entry_type varchar(16) not null check (entry_type in ('message', 'summary')),
+                    message_id bigint null references messages(id) on delete cascade,
+                    summary_id bigint null references summaries(id) on delete cascade,
+                    is_active boolean not null default true,
+                    created_at timestamptz not null default now(),
+                    constraint conversation_history_target_chk check (
+                        (entry_type = 'message' and message_id is not null and summary_id is null) or
+                        (entry_type = 'summary' and summary_id is not null and message_id is null)
+                    )
+                );
+
+                create index if not exists idx_sessions_agent_created_at
+                    on sessions(agent_id, created_at desc);
+
+                create index if not exists idx_messages_session_created_at
+                    on messages(session_id, created_at, id);
+
+                create index if not exists idx_summaries_session_created_at
+                    on summaries(session_id, created_at, id);
+
+                create index if not exists idx_conversation_history_session_active_sequence
+                    on conversation_history(session_id, is_active, sequence, id);
                 """);
 
             if (await connection.ExecuteScalarAsync<int>("select count(*) from agents where name = 'Main'") == 0)

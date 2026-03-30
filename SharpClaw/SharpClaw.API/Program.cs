@@ -7,6 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 
 builder.Services.AddTransient<DatabaseSeeder>();
+builder.Services.AddSingleton<Repository>();
 builder.Services.Configure<LmStudioConfiguration>(builder.Configuration.GetSection("LmStudio"));
 builder.Services.AddSingleton<ChatProvider>();
 builder.Services.AddSingleton<Agent>();

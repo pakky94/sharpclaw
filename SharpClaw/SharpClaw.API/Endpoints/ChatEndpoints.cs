@@ -71,12 +71,12 @@ public static class ChatEndpoints
             }
         });
 
-        app.MapGet("/agents/{agentId:long}/sessions", (
+        app.MapGet("/agents/{agentId:long}/sessions", async (
             long agentId,
             [FromServices] Agent agent
         ) =>
         {
-            var sessions = agent.GetSessions(agentId);
+            var sessions = await agent.GetSessions(agentId);
             return Results.Ok(new
             {
                 agentId,
@@ -84,14 +84,14 @@ public static class ChatEndpoints
             });
         });
 
-        app.MapGet("/sessions/{sessionId:guid}/history", (
+        app.MapGet("/sessions/{sessionId:guid}/history", async (
             Guid sessionId,
             [FromServices] Agent agent
         ) =>
         {
             try
             {
-                var history = agent.GetHistory(sessionId);
+                var history = await agent.GetHistory(sessionId);
                 return Results.Ok(new
                 {
                     sessionId = history.SessionId,
