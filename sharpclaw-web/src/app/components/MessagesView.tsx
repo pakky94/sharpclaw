@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { ChatBubble } from '../types/chat'
 import { MarkdownContent } from './MarkdownContent'
 import { shortenCallId, summarizeInline, summarizeJsonInline } from '../utils/chatUtils'
@@ -9,8 +10,42 @@ type MessagesViewProps = {
 }
 
 export function MessagesView({ messages, onToggleToolExpanded, onToggleToolResultExpanded }: MessagesViewProps) {
+  const containerRef = useRef<HTMLElement | null>(null)
+  const shouldAutoScrollRef = useRef(true)
+  const prevMessageCountRef = useRef(0)
+  const prevFirstMessageIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) {
+      return
+    }
+
+    const prevCount = prevMessageCountRef.current
+    const firstMessageId = messages[0]?.id ?? null
+    const isInitialLoad = prevCount === 0 && messages.length > 0
+    const isNewSession = prevFirstMessageIdRef.current !== null && firstMessageId !== prevFirstMessageIdRef.current
+    if (isInitialLoad || isNewSession || shouldAutoScrollRef.current) {
+      container.scrollTop = container.scrollHeight
+    }
+
+    prevMessageCountRef.current = messages.length
+    prevFirstMessageIdRef.current = firstMessageId
+  }, [messages])
+
+  function handleScroll() {
+    const container = containerRef.current
+    if (!container) {
+      return
+    }
+
+    const threshold = 80
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+    shouldAutoScrollRef.current = distanceFromBottom < threshold
+  }
+
   return (
-    <section className="messages-view">
+    <section className="messages-view" ref={containerRef} onScroll={handleScroll}>
       {messages.map((message) => (
         <article key={message.id} className={`bubble ${message.role}`}>
           {message.role === 'tool' ? (

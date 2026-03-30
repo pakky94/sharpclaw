@@ -1,4 +1,4 @@
-import type { FormEvent } from 'react'
+import type { FormEvent, KeyboardEvent } from 'react'
 
 type ComposerProps = {
   prompt: string
@@ -10,12 +10,22 @@ type ComposerProps = {
 }
 
 export function Composer({ prompt, isSending, isSessionProcessing, error, onPromptChange, onSubmit }: ComposerProps) {
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) {
+      return
+    }
+
+    event.preventDefault()
+    event.currentTarget.form?.requestSubmit()
+  }
+
   return (
     <form className="composer" onSubmit={onSubmit}>
       <textarea
         className="composer-input"
         value={prompt}
         onChange={(e) => onPromptChange(e.target.value)}
+        onKeyDown={handleKeyDown}
         placeholder="Write a message to the agent..."
         rows={3}
         disabled={isSessionProcessing}
