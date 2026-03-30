@@ -22,9 +22,7 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
             DbConnectionString = configuration.GetConnectionString("sharpclaw")!,
             AgentId = agentId,
             SystemMessage = new ChatMessage(ChatRole.System, systemPrompt),
-            Messages =
-            [
-            ],
+            Messages = [],
         };
 
         _sessions[sessionId] = new AgentSessionState(sessionId, context);
@@ -53,54 +51,76 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
             run.MarkStarted();
             try
             {
-                session.Context.Messages.Add(new ChatMessage(ChatRole.User, prompt)
-                {
-                    MessageId = Guid.NewGuid().ToString().Replace("-", ""),
-                    AdditionalProperties = new AdditionalPropertiesDictionary
+                session.Context.Messages.Add(new ChatResponse(
+                    new ChatMessage(ChatRole.User, prompt)
                     {
-                        ["lcm_type"] = "user_message",
-                    },
-                });
+                        MessageId = Guid.NewGuid().ToString().Replace("-", ""),
+                        AdditionalProperties = new AdditionalPropertiesDictionary
+                        {
+                            ["lcm_type"] = "user_message",
+                        },
+                    }));
 
                 var agent = chatProvider.GetClient(session.Context);
                 var response = await agent.GetResponse(
-                    [session.Context.SystemMessage, ..session.Context.Messages],
+                    [session.Context.SystemMessage, ..session.Context.Messages.SelectMany(r => r.Messages)],
                     BuildTools(),
                     update =>
-                {
-                    if (!string.IsNullOrEmpty(update.Text))
-                        run.AppendDelta(update.Text);
-
-                    foreach (var content in update.Contents)
                     {
-                        switch (content)
+                        if (!string.IsNullOrEmpty(update.Text))
+                            run.AppendDelta(update.Text);
+
+                        foreach (var content in update.Contents)
                         {
-                            case FunctionCallContent functionCall:
-                                run.AppendToolCall(
-                                    functionCall.CallId,
-                                    functionCall.Name,
-                                    SerializeToolPayload(functionCall.Arguments));
-                                break;
-                            case FunctionResultContent functionResult:
-                                run.AppendToolResult(
-                                    functionResult.CallId,
-                                    SerializeToolPayload(functionResult.Result));
-                                break;
+                            switch (content)
+                            {
+                                case FunctionCallContent functionCall:
+                                    run.AppendToolCall(
+                                        functionCall.CallId,
+                                        functionCall.Name,
+                                        SerializeToolPayload(functionCall.Arguments));
+                                    break;
+                                case FunctionResultContent functionResult:
+                                    run.AppendToolResult(
+                                        functionResult.CallId,
+                                        SerializeToolPayload(functionResult.Result));
+                                    break;
+                            }
                         }
-                    }
 
-                    return Task.CompletedTask;
-                });
+                        return Task.CompletedTask;
+                    });
 
-                session.Context.Messages.AddRange(response);
+                session.Context.Messages = [..session.Context.Messages, ..response];
 
                 run.MarkCompleted();
 
-                _ = Task.Run(async () =>
+                var inputTokens = response.LastOrDefault(m => m.Usage is not null)?.Usage?.InputTokenCount;
+
+                if (inputTokens is not null && inputTokens > session.Context.SoftCompactThreshold)
                 {
-                    var summarizer = new Summarizer(chatProvider);
-                    _ = await summarizer.Summarize(session.Context, [], session.Context.Messages);
-                });
+                    _ = Task.Run(async () =>
+                    {
+                        var split = Summarizer.SplitMessages(session.Context.Messages, session.Context.FreshMessagesCount);
+
+                        if (split.Depth < 0) return; // TODO: handle failure case for split message
+
+                        var summarizer = new Summarizer(chatProvider);
+                        var summary = await summarizer.Summarize(session.Context, [], split.ToSummarize, split.Depth);
+                        await session.Mutex.WaitAsync();
+                        try
+                        {
+                            if (split.PreSummary.All(m => session.Context.Messages.Contains(m))
+                                && split.ToSummarize.All(m => session.Context.Messages.Contains(m))
+                                && split.PostSummary.All(m => session.Context.Messages.Contains(m)))
+                                session.Context.Messages = [..split.PreSummary, summary, ..split.PostSummary];
+                        }
+                        finally
+                        {
+                            session.Mutex.Release();
+                        }
+                    });
+                }
             }
             catch (Exception ex)
             {
@@ -131,7 +151,7 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration)
         var runCursor = -1;
         Guid? currentRunId = null;
 
-        foreach (var message in session.Context.Messages)
+        foreach (var message in session.Context.Messages.SelectMany(r => r.Messages))
         {
             if (message.Role == ChatRole.User)
             {

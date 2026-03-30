@@ -1,82 +1,139 @@
-﻿using System.Text.Json;
-using System.Text.Json.Serialization;
+﻿using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.AI;
 
 namespace SharpClaw.API.Agents.Memory.Lcm;
 
 public partial class Summarizer(ChatProvider chatProvider)
 {
-    private static JsonSerializerOptions _jsonOptions = new()
+    private const string LcmSummaryLevelKey = "lcm_summary_level";
+    private const string LcmSummaryIdKey = "lcm_summary_id";
+
+    public async Task<ChatResponse> Summarize(AgentExecutionContext context,
+        List<ChatResponse> previousHistory, List<ChatResponse> messages, int depth, bool aggressive = false)
     {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
+        var priorContent = FormatSummaries(previousHistory);
 
-    public async Task<List<ChatMessage>> Summarize(AgentExecutionContext context,
-        List<ChatMessage> previousHistory, List<ChatMessage> messages)
-    {
-        Console.WriteLine("###Summarizing:");
-        Console.WriteLine($"#####Previous history:\n{JsonSerializer.Serialize(previousHistory, _jsonOptions)}");
-        Console.WriteLine($"#####New messages\n{JsonSerializer.Serialize(messages, _jsonOptions)}");
+        var summaryContent = depth == 0
+            ? string.Join('\n', FormatMessagesForSummary(messages.SelectMany(m => m.Messages)))
+            : FormatSummaries(messages);
 
-        var summaryMessage = SummaryMessage(FormatMessagesForSummary(messages), null);
+        var summaryMessage = SummaryMessage(summaryContent, priorContent);
 
-        Console.WriteLine($"#####Summary message:\n{summaryMessage}");
+        var prompt = depth switch
+        {
+            0 => SummaryPrompt,
+            1 => CondenseD2Prompt,
+            _ => CondenseD3Prompt,
+        };
+
+        if (aggressive)
+            prompt = $"{prompt.Trim()}\n\n{PromptAggressiveDirective}";
 
         var result = await chatProvider
             .GetClient(context)
             .GetResponse(
                 [
-                    new ChatMessage(ChatRole.System, SummaryPrompt),
+                    new ChatMessage(ChatRole.System, prompt),
                     new ChatMessage(ChatRole.User, summaryMessage),
                 ], []
             );
 
-        Console.WriteLine($"#####Result:\n{JsonSerializer.Serialize(result, _jsonOptions)}");
+        var msgTxt = result.FirstOrDefault(m => !string.IsNullOrEmpty(m.Text));
 
-        return result;
+        if (string.IsNullOrEmpty(msgTxt?.Text))
+            throw new Exception("No summary message found");
+
+        msgTxt.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+        msgTxt.AdditionalProperties[LcmSummaryLevelKey] = depth + 1;
+        msgTxt.AdditionalProperties[LcmSummaryIdKey] = GenerateSummaryId(msgTxt.Text, DateTime.UtcNow);
+
+        return msgTxt;
     }
 
-    private static IEnumerable<string> FormatMessagesForSummary(List<ChatMessage> messages)
+    public static (
+        List<ChatResponse> PreSummary,
+        List<ChatResponse> ToSummarize,
+        List<ChatResponse> PostSummary,
+        int Depth
+        ) SplitMessages(List<ChatResponse> messages, int mostRecentMessagesToKeep)
     {
-        string? lastMessageId = null;
-        var parts = messages
-            .SelectMany(m => m.Contents.Select(p => (Message: m, Part: p)))
+        var messagesWithLevel = messages
+            .Select((m, i) => (
+                Message: m,
+                Depth: m.AdditionalProperties?.TryGetValue(LcmSummaryLevelKey, out var level) ?? false
+                    ? level as int? ?? 0
+                    : 0))
             .ToArray();
 
-        foreach (var p in parts)
+        var messagesWithId = messages.Select((m, i) => (Message: m, Id: i)).ToArray();
+
+        foreach (var level in messagesWithLevel.Select(m => m.Depth).Distinct().OrderBy(l => l))
         {
-            if (lastMessageId != p.Message.MessageId)
-            {
-                if (lastMessageId is not null)
-                    yield return string.Empty;
+            var tail = messagesWithLevel
+                .Where(m => m.Depth == 0)
+                .TakeLast(mostRecentMessagesToKeep)
+                .ToList();
 
-                yield return $"[Message {p.Message.MessageId}] ({p.Message.Role.ToString().ToUpper()})";
-                lastMessageId = p.Message.MessageId;
-            }
+            var summary = messagesWithLevel
+                .Where(m => m.Depth == level && !tail.Contains(m))
+                .ToList();
 
-            if (p.Part is TextContent textContent)
-            {
-                yield return textContent.Text;
-            }
+            var summaryToolCalls = summary
+                .SelectMany(r => r.Message.Messages.SelectMany(m => m.Contents.OfType<FunctionCallContent>()))
+                .Select(c => c.CallId)
+                .ToArray();
 
-            if (p.Part is FunctionCallContent functionCall)
-            {
-                yield return $"[Tool {functionCall.Name}]";
-                yield return $"Input: {JsonSerializer.Serialize(functionCall.Arguments)}";
+            var messagesToShift = messagesWithLevel
+                .Where(r => r.Message
+                    .Messages
+                    .SelectMany(m => m.Contents)
+                    .Any(c => c is FunctionResultContent result && summaryToolCalls.Contains(result.CallId)))
+                .ToArray();
 
-                var result = parts.FirstOrDefault(r =>
-                    r.Part is FunctionResultContent resultCall
-                    && resultCall.CallId == functionCall.CallId);
+            summary.AddRange(messagesToShift);
+            tail.RemoveAll(m => messagesToShift.Contains(m));
 
-                if (result.Part is not null)
-                {
-                    var functionResult = ((FunctionResultContent)result.Part).Result;
-                    var formattedResult = functionResult as string ?? JsonSerializer.Serialize(functionResult);
-                    yield return $"Output: {formattedResult}";
-                }
-            }
+            var preSummary = messagesWithLevel
+                .Where(m => !summary.Contains(m) && !tail.Contains(m))
+                .ToList();
+
+            Trace.Assert(preSummary.Count + summary.Count + tail.Count == messages.Count, "All messages should be accounted for");
+
+            if (summary.Count > 1)
+                return (
+                    preSummary.Select(m => m.Message).ToList(),
+                    summary.Select(m => m.Message).ToList(),
+                    tail.Select(m => m.Message).ToList(),
+                    level
+                );
         }
+
+        return ([], [], [], -1); // failure case, what to do here?
+    }
+
+    private static string GenerateSummaryId(string content, DateTime timestamp)
+    {
+        var sha = SHA256.Create();
+        var contentBytes = Encoding.UTF8.GetBytes(content);
+        var timestampBytes = BitConverter.GetBytes(timestamp.Ticks);
+        var combinedBytes = contentBytes.Concat(timestampBytes).ToArray();
+        var hashBytes = sha.ComputeHash(combinedBytes);
+        return Convert.ToHexStringLower(hashBytes);
+    }
+
+    private static string FormatSummaries(List<ChatResponse> messages)
+    {
+        Trace.Assert(messages.All(m =>
+            m.Messages.Count == 1
+            && (m.AdditionalProperties?.ContainsKey(LcmSummaryIdKey) ?? false)
+        ), "All messages should be summaries");
+
+        return FormatMessagesForCondense(messages
+            .SelectMany(r => r.Messages.Select(m => (
+                m.AdditionalProperties?[LcmSummaryIdKey]?.ToString() ?? "",
+                m.Text
+            ))).ToList());
     }
 }
