@@ -11,9 +11,16 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
+  overflow: hidden;
   background:
     radial-gradient(circle at 20% 12%, #f9d59b 0%, transparent 30%),
     radial-gradient(circle at 78% 90%, #c3e0e8 0%, transparent 35%),

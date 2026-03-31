@@ -10,13 +10,16 @@
 }
 
 .app-root {
+  height: 100%;
   min-height: 100vh;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .app-content {
   min-height: 0;
+  overflow: hidden;
 }
 
 .top-nav {
@@ -40,7 +43,7 @@
   flex-direction: column;
   padding: 16px;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   gap: 8px;
 }
 
@@ -122,8 +125,10 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 240px;
-  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
 }
 
 .session-card {
