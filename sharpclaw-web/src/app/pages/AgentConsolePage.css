@@ -517,6 +517,16 @@
 }
 
 @media (max-width: 980px) {
+  .app-root {
+    height: auto;
+    min-height: 100vh;
+    overflow: auto;
+  }
+
+  .app-content {
+    overflow: auto;
+  }
+
   .app-shell {
     grid-template-columns: 1fr;
     height: auto;
