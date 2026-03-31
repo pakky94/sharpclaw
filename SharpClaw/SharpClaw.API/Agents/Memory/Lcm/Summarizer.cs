@@ -85,7 +85,7 @@ public partial class Summarizer(ChatProvider chatProvider)
                 .Select(c => c.CallId)
                 .ToArray();
 
-            var messagesToShift = messagesWithLevel
+            var messagesToShift = tail
                 .Where(r => r.Message
                     .Messages
                     .SelectMany(m => m.Contents)
@@ -120,7 +120,7 @@ public partial class Summarizer(ChatProvider chatProvider)
         var timestampBytes = BitConverter.GetBytes(timestamp.Ticks);
         var combinedBytes = contentBytes.Concat(timestampBytes).ToArray();
         var hashBytes = sha.ComputeHash(combinedBytes);
-        return Convert.ToHexStringLower(hashBytes);
+        return $"sum_{Convert.ToHexStringLower(hashBytes)}";
     }
 
     private static string FormatSummaries(List<ChatResponse> messages)

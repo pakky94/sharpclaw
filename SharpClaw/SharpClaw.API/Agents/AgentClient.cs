@@ -5,7 +5,7 @@ using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace SharpClaw.API.Agents;
 
-public class AgentClient(ChatClient chatClient, AgentExecutionContext context)
+public class AgentClient(ChatClient chatClient, AgentExecutionContext context, IConfiguration configuration)
 {
     public async Task<List<ChatResponse>> GetResponse(List<ChatMessage> messages, List<AIFunction> tools,
         Func<ChatResponseUpdate, Task>? onUpdate = null)
@@ -15,6 +15,7 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context)
             tools: [..tools],
             services: new ServiceCollection()
                 .AddSingleton(context)
+                .AddSingleton(configuration)
                 .BuildServiceProvider()
         );
 

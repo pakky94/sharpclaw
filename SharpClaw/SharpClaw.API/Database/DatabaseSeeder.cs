@@ -16,6 +16,8 @@ public class DatabaseSeeder(IConfiguration configuration)
 
             await connection.ExecuteAsync(
                 """
+                create extension if not exists pg_trgm;
+
                 create table if not exists documents(
                     id bigserial primary key,
                     name varchar(511),
@@ -69,6 +71,9 @@ public class DatabaseSeeder(IConfiguration configuration)
                     run_id uuid null,
                     parent_summary_id bigint null references summaries(id),
                     payload jsonb not null,
+                    search_text text not null default '',
+                    lcm_summary_id varchar(128) null,
+                    lcm_summary_level int null,
                     created_at timestamptz not null default now()
                 );
 
@@ -78,8 +83,58 @@ public class DatabaseSeeder(IConfiguration configuration)
                     run_id uuid null,
                     parent_summary_id bigint null references summaries(id),
                     payload jsonb not null,
+                    role varchar(32) null,
+                    search_text text not null default '',
                     created_at timestamptz not null default now()
                 );
+
+                alter table summaries add column if not exists search_text text;
+                alter table summaries add column if not exists lcm_summary_id varchar(128);
+                alter table summaries add column if not exists lcm_summary_level int;
+                alter table messages add column if not exists role varchar(32);
+                alter table messages add column if not exists search_text text;
+
+                update messages
+                set role = coalesce(role, nullif(payload #>> '{Messages,0,Role}', ''))
+                where role is null;
+
+                update messages
+                set search_text = coalesce((
+                    select string_agg(t.txt, E'\n\n')
+                    from (
+                        select nullif(btrim(value::text, '"'), '') as txt
+                        from jsonb_path_query(payload, '$.Messages[*].Text') value
+                    ) t
+                    where t.txt is not null
+                ), '')
+                where search_text is null or search_text = '';
+
+                update summaries
+                set lcm_summary_id = coalesce(lcm_summary_id, nullif(payload #>> '{AdditionalProperties,lcm_summary_id}', ''))
+                where lcm_summary_id is null;
+
+                update summaries
+                set lcm_summary_level = coalesce(
+                    lcm_summary_level,
+                    nullif(payload #>> '{AdditionalProperties,lcm_summary_level}', '')::int
+                )
+                where lcm_summary_level is null;
+
+                update summaries
+                set search_text = coalesce((
+                    select string_agg(t.txt, E'\n\n')
+                    from (
+                        select nullif(btrim(value::text, '"'), '') as txt
+                        from jsonb_path_query(payload, '$.Messages[*].Text') value
+                    ) t
+                    where t.txt is not null
+                ), '')
+                where search_text is null or search_text = '';
+
+                alter table messages alter column search_text set not null;
+                alter table messages alter column search_text set default '';
+                alter table summaries alter column search_text set not null;
+                alter table summaries alter column search_text set default '';
 
                 create table if not exists conversation_history(
                     id bigserial primary key,
@@ -101,9 +156,17 @@ public class DatabaseSeeder(IConfiguration configuration)
 
                 create index if not exists idx_messages_session_created_at
                     on messages(session_id, created_at, id);
+                create index if not exists idx_messages_role
+                    on messages(role);
+                create index if not exists idx_messages_search_text_trgm
+                    on messages using gin (search_text gin_trgm_ops);
 
                 create index if not exists idx_summaries_session_created_at
                     on summaries(session_id, created_at, id);
+                create index if not exists idx_summaries_session_lcm_summary_id
+                    on summaries(session_id, lcm_summary_id);
+                create index if not exists idx_summaries_search_text_trgm
+                    on summaries using gin (search_text gin_trgm_ops);
 
                 create index if not exists idx_conversation_history_session_active_sequence
                     on conversation_history(session_id, is_active, sequence, id);

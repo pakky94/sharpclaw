@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Memory.Lcm;
 using SharpClaw.API.Agents.Tools.Files;
+using SharpClaw.API.Agents.Tools.Lcm;
 using SharpClaw.API.Database;
 
 namespace SharpClaw.API.Agents;
@@ -21,11 +22,12 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration, Repo
 
         var context = new AgentExecutionContext
         {
+            SessionId = sessionId,
             DbConnectionString = configuration.GetConnectionString("sharpclaw")!,
             AgentId = agentId,
             LlmModel = agentConfig.LlmModel,
             Temperature = agentConfig.Temperature,
-            SystemMessage = new ChatMessage(ChatRole.System, systemPrompt),
+            SystemMessage = systemPrompt,
             Messages = [],
         };
 
@@ -69,9 +71,18 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration, Repo
                 Repository.SetDbReference(userMessage, "message", userMessageId);
                 session.Context.Messages.Add(userMessage);
 
+                var systemMessage = string.Join('\n', [
+                    Environment.EnvPrompt(session.Context.LlmModel, DateTimeOffset.Now),
+                    Prompts.LcmPrompt,
+                    session.Context.SystemMessage,
+                ]);
+
                 var agent = chatProvider.GetClient(session.Context);
                 var response = await agent.GetResponse(
-                    [session.Context.SystemMessage, ..session.Context.Messages.SelectMany(r => r.Messages)],
+                    [
+                        new ChatMessage(ChatRole.System, systemMessage),
+                        ..session.Context.Messages.SelectMany(r => r.Messages)
+                    ],
                     BuildTools(),
                     update =>
                     {
@@ -243,11 +254,12 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration, Repo
 
             var context = new AgentExecutionContext
             {
+                SessionId = sessionId,
                 DbConnectionString = configuration.GetConnectionString("sharpclaw")!,
                 AgentId = persistedSession.AgentId,
                 LlmModel = agentConfig.LlmModel,
                 Temperature = agentConfig.Temperature,
-                SystemMessage = new ChatMessage(ChatRole.System, persistedSession.SystemPrompt),
+                SystemMessage = (await repository.GetAgentDocument(persistedSession.AgentId, "AGENTS.md"))?.Content ?? string.Empty,
                 Messages = [..await repository.LoadActiveConversation(sessionId)],
             };
 
@@ -267,6 +279,7 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration, Repo
     private static List<AIFunction> BuildTools() =>
     [
         ..FileTools.Functions,
+        ..LcmTools.Functions,
     ];
 
     private static string? SerializeToolPayload(object? payload)

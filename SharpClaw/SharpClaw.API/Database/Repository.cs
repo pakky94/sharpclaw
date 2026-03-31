@@ -280,14 +280,15 @@ public class Repository(IConfiguration configuration)
         await using var tx = await connection.BeginTransactionAsync();
 
         var payload = SerializeResponse(response);
+        var (role, searchText) = BuildIndexFields(response);
 
         var messageId = await connection.ExecuteScalarAsync<long>(
             """
-            insert into messages (session_id, run_id, payload)
-            values (@sessionId, @runId, cast(@payload as jsonb))
+            insert into messages (session_id, run_id, payload, role, search_text)
+            values (@sessionId, @runId, cast(@payload as jsonb), @role, @searchText)
             returning id;
             """,
-            new { sessionId, runId, payload },
+            new { sessionId, runId, payload, role, searchText },
             tx);
 
         var nextSequence = await connection.ExecuteScalarAsync<long>(
@@ -333,14 +334,16 @@ public class Repository(IConfiguration configuration)
         await using var tx = await connection.BeginTransactionAsync();
 
         var payload = SerializeResponse(summary);
+        var (_, searchText) = BuildIndexFields(summary);
+        var (lcmSummaryId, lcmSummaryLevel) = ExtractSummaryMetadata(summary);
 
         var summaryId = await connection.ExecuteScalarAsync<long>(
             """
-            insert into summaries (session_id, run_id, payload)
-            values (@sessionId, @runId, cast(@payload as jsonb))
+            insert into summaries (session_id, run_id, payload, search_text, lcm_summary_id, lcm_summary_level)
+            values (@sessionId, @runId, cast(@payload as jsonb), @searchText, @lcmSummaryId, @lcmSummaryLevel)
             returning id;
             """,
-            new { sessionId, runId, payload },
+            new { sessionId, runId, payload, searchText, lcmSummaryId, lcmSummaryLevel },
             tx);
 
         if (messageIds.Length > 0)
@@ -466,6 +469,187 @@ public class Repository(IConfiguration configuration)
             .ToArray();
     }
 
+    public async Task<LcmSummaryRecord?> GetLcmSummary(Guid sessionId, string lcmSummaryId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var row = await connection.QueryFirstOrDefaultAsync<LcmSummaryRow>(
+            """
+            select s.id as DbId,
+                   s.session_id as SessionId,
+                   s.parent_summary_id as ParentSummaryDbId,
+                   s.created_at as CreatedAt,
+                   s.lcm_summary_id as LcmSummaryId,
+                   s.lcm_summary_level as SummaryLevel,
+                   s.search_text as SearchText,
+                   s.payload::text as Payload
+            from summaries s
+            where s.session_id = @sessionId
+              and s.lcm_summary_id = @lcmSummaryId
+            order by s.id desc
+            limit 1;
+            """,
+            new { sessionId, lcmSummaryId });
+
+        return row is null ? null : ToLcmSummaryRecord(row);
+    }
+
+    public async Task<IReadOnlyList<LcmSummaryRecord>> GetLcmSummaryParents(long summaryDbId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<LcmSummaryRow>(
+            """
+            with recursive parents as (
+                select s.id as db_id,
+                       s.session_id,
+                       s.parent_summary_id,
+                       s.created_at,
+                       s.lcm_summary_id,
+                       s.lcm_summary_level,
+                       s.search_text,
+                       s.payload
+                from summaries s
+                where s.id = @summaryDbId
+
+                union all
+
+                select parent.id as db_id,
+                       parent.session_id,
+                       parent.parent_summary_id,
+                       parent.created_at,
+                       parent.lcm_summary_id,
+                       parent.lcm_summary_level,
+                       parent.search_text,
+                       parent.payload
+                from summaries parent
+                join parents p on p.parent_summary_id = parent.id
+            )
+            select p.db_id as DbId,
+                   p.session_id as SessionId,
+                   p.parent_summary_id as ParentSummaryDbId,
+                   p.created_at as CreatedAt,
+                   p.lcm_summary_id as LcmSummaryId,
+                   p.lcm_summary_level as SummaryLevel,
+                   p.search_text as SearchText,
+                   p.payload::text as Payload
+            from parents p
+            where p.db_id <> @summaryDbId
+            order by p.created_at, p.db_id;
+            """,
+            new { summaryDbId });
+
+        return rows.Select(ToLcmSummaryRecord).ToArray();
+    }
+
+    public async Task<IReadOnlyList<LcmExpandedMessageRecord>> ExpandLcmSummaryToMessages(Guid sessionId, string lcmSummaryId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<LcmExpandedMessageRow>(
+            """
+            with root as (
+                select s.id
+                from summaries s
+                where s.session_id = @sessionId
+                  and s.lcm_summary_id = @lcmSummaryId
+                order by s.id desc
+                limit 1
+            ),
+            summary_closure as (
+                select s.id
+                from summaries s
+                join root r on r.id = s.id
+
+                union all
+
+                select child.id
+                from summaries child
+                join summary_closure c on child.parent_summary_id = c.id
+                where child.session_id = @sessionId
+            )
+            select m.id as MessageDbId,
+                   m.run_id as RunId,
+                   m.created_at as CreatedAt,
+                   m.payload::text as Payload
+            from messages m
+            where m.session_id = @sessionId
+              and m.parent_summary_id in (select id from summary_closure)
+            order by m.created_at, m.id;
+            """,
+            new { sessionId, lcmSummaryId });
+
+        return rows.Select(ToLcmExpandedMessageRecord).ToArray();
+    }
+
+    public async Task<IReadOnlyList<LcmGrepMessageRecord>> SearchLcmMessagesRegex(
+        Guid sessionId,
+        string pattern,
+        string? lcmSummaryId,
+        int limit,
+        int offset)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+
+        IEnumerable<LcmGrepRow> rows;
+        if (string.IsNullOrWhiteSpace(lcmSummaryId))
+        {
+            rows = await connection.QueryAsync<LcmGrepRow>(
+                """
+                select m.id as MessageDbId,
+                       m.created_at as CreatedAt,
+                       m.payload::text as Payload,
+                       cover.lcm_summary_id as CoveringSummaryId,
+                       cover.lcm_summary_level as CoveringSummaryLevel
+                from messages m
+                left join summaries cover on cover.id = m.parent_summary_id
+                where m.session_id = @sessionId
+                  and m.search_text ~* @pattern
+                order by m.created_at, m.id
+                limit @limit offset @offset;
+                """,
+                new { sessionId, pattern, limit, offset });
+        }
+        else
+        {
+            rows = await connection.QueryAsync<LcmGrepRow>(
+                """
+                with root as (
+                    select s.id
+                    from summaries s
+                    where s.session_id = @sessionId
+                      and s.lcm_summary_id = @lcmSummaryId
+                    order by s.id desc
+                    limit 1
+                ),
+                summary_closure as (
+                    select s.id
+                    from summaries s
+                    join root r on r.id = s.id
+
+                    union all
+
+                    select child.id
+                    from summaries child
+                    join summary_closure c on child.parent_summary_id = c.id
+                    where child.session_id = @sessionId
+                )
+                select m.id as MessageDbId,
+                       m.created_at as CreatedAt,
+                       m.payload::text as Payload,
+                       cover.lcm_summary_id as CoveringSummaryId,
+                       cover.lcm_summary_level as CoveringSummaryLevel
+                from messages m
+                left join summaries cover on cover.id = m.parent_summary_id
+                where m.session_id = @sessionId
+                  and m.parent_summary_id in (select id from summary_closure)
+                  and m.search_text ~* @pattern
+                order by m.created_at, m.id
+                limit @limit offset @offset;
+                """,
+                new { sessionId, lcmSummaryId, pattern, limit, offset });
+        }
+
+        return rows.Select(ToLcmGrepMessageRecord).ToArray();
+    }
+
     public static void SetDbReference(ChatResponse response, string type, long id, long? parentSummaryId = null)
     {
         response.AdditionalProperties ??= new AdditionalPropertiesDictionary();
@@ -503,6 +687,108 @@ public class Repository(IConfiguration configuration)
         return (type, id.Value);
     }
 
+    private static LcmSummaryRecord ToLcmSummaryRecord(LcmSummaryRow row)
+    {
+        var response = DeserializeResponse(row.Payload);
+        var (payloadSummaryId, payloadSummaryLevel) = ExtractSummaryMetadata(response);
+        var level = row.SummaryLevel ?? payloadSummaryLevel;
+        var externalSummaryId = row.LcmSummaryId ?? payloadSummaryId;
+        var content = !string.IsNullOrWhiteSpace(row.SearchText)
+            ? row.SearchText
+            : response.Messages.Select(m => m.Text).FirstOrDefault(t => !string.IsNullOrWhiteSpace(t)) ?? string.Empty;
+
+        return new LcmSummaryRecord(
+            row.DbId,
+            row.SessionId,
+            externalSummaryId,
+            level,
+            content,
+            row.ParentSummaryDbId,
+            row.CreatedAt);
+    }
+
+    private static LcmExpandedMessageRecord ToLcmExpandedMessageRecord(LcmExpandedMessageRow row)
+    {
+        var (role, content) = FlattenResponsePayload(row.Payload);
+
+        return new LcmExpandedMessageRecord(
+            row.MessageDbId,
+            row.RunId,
+            role,
+            content,
+            row.CreatedAt);
+    }
+
+    private static LcmGrepMessageRecord ToLcmGrepMessageRecord(LcmGrepRow row)
+    {
+        var (role, content) = FlattenResponsePayload(row.Payload);
+
+        return new LcmGrepMessageRecord(
+            row.MessageDbId,
+            role,
+            content,
+            row.CreatedAt,
+            row.CoveringSummaryId,
+            row.CoveringSummaryLevel);
+    }
+
+    private static (string Role, string Content) FlattenResponsePayload(string payload)
+    {
+        var response = DeserializeResponse(payload);
+        return FlattenChatResponse(response);
+    }
+
+    private static (string Role, string Content) FlattenChatResponse(ChatResponse response)
+    {
+        var flattenedMessages = response.Messages
+            .Select(chatMessage =>
+            {
+                var pieces = new List<string>();
+                if (!string.IsNullOrWhiteSpace(chatMessage.Text))
+                    pieces.Add(chatMessage.Text!);
+
+                foreach (var content in chatMessage.Contents.Select(PersistedContent.From))
+                {
+                    var fallback = content.ToFallbackText();
+                    if (!string.IsNullOrWhiteSpace(fallback))
+                        pieces.Add(fallback);
+                }
+
+                var text = string.Join('\n', pieces.Where(x => !string.IsNullOrWhiteSpace(x)));
+                return (Role: chatMessage.Role.Value, Text: text);
+            })
+            .Where(x => !string.IsNullOrWhiteSpace(x.Text))
+            .ToArray();
+
+        var role = flattenedMessages.FirstOrDefault().Role ?? "assistant";
+        var content = string.Join("\n\n", flattenedMessages.Select(x => x.Text).Where(x => !string.IsNullOrWhiteSpace(x)));
+        return (role, content);
+    }
+
+    private static (string Role, string SearchText) BuildIndexFields(ChatResponse response)
+    {
+        var (role, text) = FlattenChatResponse(response);
+        return (role, text);
+    }
+
+    private static (string? LcmSummaryId, int? LcmSummaryLevel) ExtractSummaryMetadata(ChatResponse response)
+    {
+        var properties = response.AdditionalProperties;
+        if (properties is null)
+            return (null, null);
+
+        string? summaryId = null;
+        int? summaryLevel = null;
+
+        if (properties.TryGetValue("lcm_summary_id", out var idObj))
+            summaryId = idObj?.ToString();
+
+        if (properties.TryGetValue("lcm_summary_level", out var levelObj))
+            summaryLevel = TryReadInt32(levelObj);
+
+        return (summaryId, summaryLevel);
+    }
+
     private static long? TryReadInt64(object? value)
     {
         return value switch
@@ -515,6 +801,22 @@ public class Repository(IConfiguration configuration)
             JsonElement { ValueKind: JsonValueKind.Number } element when element.TryGetInt64(out var n) => n,
             JsonElement { ValueKind: JsonValueKind.String } element when long.TryParse(element.GetString(), out var n) => n,
             _ when long.TryParse(value.ToString(), out var n) => n,
+            _ => null,
+        };
+    }
+
+    private static int? TryReadInt32(object? value)
+    {
+        return value switch
+        {
+            null => null,
+            int i => i,
+            long l when l is >= int.MinValue and <= int.MaxValue => (int)l,
+            short s => s,
+            byte b => b,
+            JsonElement { ValueKind: JsonValueKind.Number } element when element.TryGetInt32(out var n) => n,
+            JsonElement { ValueKind: JsonValueKind.String } element when int.TryParse(element.GetString(), out var n) => n,
+            _ when int.TryParse(value.ToString(), out var n) => n,
             _ => null,
         };
     }
@@ -545,11 +847,61 @@ public class Repository(IConfiguration configuration)
         public DateTime CreatedAt { get; init; }
         public required string Payload { get; init; }
     }
+
+    private sealed class LcmSummaryRow
+    {
+        public long DbId { get; init; }
+        public Guid SessionId { get; init; }
+        public long? ParentSummaryDbId { get; init; }
+        public DateTime CreatedAt { get; init; }
+        public string? LcmSummaryId { get; init; }
+        public int? SummaryLevel { get; init; }
+        public string? SearchText { get; init; }
+        public required string Payload { get; init; }
+    }
+
+    private sealed class LcmExpandedMessageRow
+    {
+        public long MessageDbId { get; init; }
+        public Guid? RunId { get; init; }
+        public DateTime CreatedAt { get; init; }
+        public required string Payload { get; init; }
+    }
+
+    private sealed class LcmGrepRow
+    {
+        public long MessageDbId { get; init; }
+        public DateTime CreatedAt { get; init; }
+        public required string Payload { get; init; }
+        public string? CoveringSummaryId { get; init; }
+        public int? CoveringSummaryLevel { get; init; }
+    }
 }
 
 public record PersistedSession(Guid SessionId, long AgentId, string SystemPrompt, DateTime CreatedAt);
 public record PersistedSessionSummary(Guid SessionId, long AgentId, DateTime CreatedAt, long MessagesCount);
 public record PersistedRawMessage(long MessageId, Guid? RunId, DateTime CreatedAt, ChatResponse Response);
+public record LcmSummaryRecord(
+    long DbId,
+    Guid SessionId,
+    string? LcmSummaryId,
+    int? SummaryLevel,
+    string Content,
+    long? ParentSummaryDbId,
+    DateTime CreatedAt);
+public record LcmExpandedMessageRecord(
+    long MessageDbId,
+    Guid? RunId,
+    string Role,
+    string Content,
+    DateTime CreatedAt);
+public record LcmGrepMessageRecord(
+    long MessageDbId,
+    string Role,
+    string Content,
+    DateTime CreatedAt,
+    string? CoveringSummaryId,
+    int? CoveringSummaryLevel);
 public record AgentConfig(long Id, string Name, string LlmModel, float Temperature, DateTime CreatedAt, DateTime UpdatedAt);
 public record AgentDocumentSummary(string Name);
 public record AgentDocument(string Path, string Content);
