@@ -28,7 +28,7 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context)
                            {
                                ChatOptions = new ChatOptions
                                {
-                                   Temperature = 0.1f,
+                                   Temperature = context.Temperature,
                                }
                            }))
         {

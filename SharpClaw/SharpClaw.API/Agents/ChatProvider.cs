@@ -17,7 +17,7 @@ public class ChatProvider(IOptions<LmStudioConfiguration> configuration)
                 NetworkTimeout = TimeSpan.FromMinutes(10),
             });
 
-        var chatClient = client.GetChatClient("openai/gpt-oss-20b");
+        var chatClient = client.GetChatClient(context.LlmModel);
         // var chatClient = client.GetChatClient("qwen/qwen3.5-35b-a3b");
         // var chatClient = client.GetChatClient("qwen/qwen3.5-9b");
         // var chatClient = client.GetChatClient("zai-org/glm-4.7-flash");

@@ -24,8 +24,31 @@ public class DatabaseSeeder(IConfiguration configuration)
 
                 create table if not exists agents(
                     id bigserial primary key,
-                    name varchar(511)
+                    name varchar(511) not null,
+                    llm_model varchar(255) not null default 'openai/gpt-oss-20b',
+                    temperature real not null default 0.1,
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
                 );
+
+                alter table agents add column if not exists llm_model varchar(255);
+                alter table agents add column if not exists temperature real;
+                alter table agents add column if not exists created_at timestamptz;
+                alter table agents add column if not exists updated_at timestamptz;
+
+                update agents set llm_model = 'openai/gpt-oss-20b' where llm_model is null;
+                update agents set temperature = 0.1 where temperature is null;
+                update agents set created_at = now() where created_at is null;
+                update agents set updated_at = now() where updated_at is null;
+
+                alter table agents alter column llm_model set not null;
+                alter table agents alter column llm_model set default 'openai/gpt-oss-20b';
+                alter table agents alter column temperature set not null;
+                alter table agents alter column temperature set default 0.1;
+                alter table agents alter column created_at set not null;
+                alter table agents alter column created_at set default now();
+                alter table agents alter column updated_at set not null;
+                alter table agents alter column updated_at set default now();
 
                 create table if not exists agents_documents(
                     id bigserial primary key,
@@ -90,7 +113,8 @@ public class DatabaseSeeder(IConfiguration configuration)
                 await connection.ExecuteAsync(
                     """
                     with agent_id as (
-                        insert into agents (name) values ('Main')
+                        insert into agents (name, llm_model, temperature)
+                        values ('Main', 'openai/gpt-oss-20b', 0.1)
                             returning id
                     ),
                     documents_id as (

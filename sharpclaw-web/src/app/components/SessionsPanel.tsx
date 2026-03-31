@@ -1,48 +1,54 @@
-import type { SessionSummary } from '../types/chat'
+import type { AgentConfig, SessionSummary } from '../types/chat'
 
 type SessionsPanelProps = {
-  agentId: number
+  agents: AgentConfig[]
+  selectedAgentId: number | null
   sessions: SessionSummary[]
   selectedSessionId: string | null
-  onAgentIdChange: (value: number) => void
+  onSelectAgent: (agentId: number) => void
   onCreateSession: () => void
-  onRefresh: () => void
+  onRefreshSessions: () => void
   onSelectSession: (sessionId: string) => void
 }
 
 export function SessionsPanel({
-  agentId,
+  agents,
+  selectedAgentId,
   sessions,
   selectedSessionId,
-  onAgentIdChange,
+  onSelectAgent,
   onCreateSession,
-  onRefresh,
+  onRefreshSessions,
   onSelectSession,
 }: SessionsPanelProps) {
   return (
     <aside className="sessions-panel">
       <div className="panel-header">
         <h1>SharpClaw</h1>
-        <p>Agent Console</p>
+        <p>Session Console</p>
       </div>
 
-      <label className="field-label" htmlFor="agent-id-input">
-        Agent ID
+      <label className="field-label" htmlFor="agent-select">
+        Agent
       </label>
-      <input
-        id="agent-id-input"
+      <select
+        id="agent-select"
         className="text-input"
-        type="number"
-        min={1}
-        value={agentId}
-        onChange={(e) => onAgentIdChange(Number(e.target.value || 1))}
-      />
+        value={selectedAgentId ?? ''}
+        onChange={(event) => onSelectAgent(Number(event.target.value))}
+      >
+        {agents.map((agent) => (
+          <option key={agent.id} value={agent.id}>
+            {agent.id} - {agent.name}
+          </option>
+        ))}
+      </select>
 
       <div className="sessions-actions">
-        <button type="button" className="button primary" onClick={onCreateSession}>
+        <button type="button" className="button primary" onClick={onCreateSession} disabled={!selectedAgentId}>
           New Session
         </button>
-        <button type="button" className="button ghost" onClick={onRefresh}>
+        <button type="button" className="button ghost" onClick={onRefreshSessions} disabled={!selectedAgentId}>
           Refresh
         </button>
       </div>

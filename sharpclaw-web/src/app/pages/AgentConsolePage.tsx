@@ -6,6 +6,7 @@ import { MessagesView } from '../components/MessagesView'
 import { SessionsPanel } from '../components/SessionsPanel'
 import { API_BASE_URL, fetchJson } from '../services/chatApi'
 import type {
+  AgentConfig,
   ChatBubble,
   RunStatus,
   SessionHistoryResponse,
@@ -25,7 +26,8 @@ import {
 import './AgentConsolePage.css'
 
 export function AgentConsolePage() {
-  const [agentId, setAgentId] = useState<number>(1)
+  const [agents, setAgents] = useState<AgentConfig[]>([])
+  const [selectedAgentId, setSelectedAgentId] = useState<number | null>(null)
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatBubble[]>([])
@@ -48,8 +50,19 @@ export function AgentConsolePage() {
   const visibleMessages = messages.filter((message) => message.role !== 'system' && (showToolEvents || message.role !== 'tool'))
 
   useEffect(() => {
-    void refreshSessions(agentId)
-  }, [agentId])
+    void loadAgents()
+  }, [])
+
+  useEffect(() => {
+    if (selectedAgentId === null) {
+      setSessions([])
+      setSelectedSessionId(null)
+      setMessages([])
+      return
+    }
+
+    void refreshSessions(selectedAgentId)
+  }, [selectedAgentId])
 
   useEffect(() => {
     return () => {
@@ -57,23 +70,47 @@ export function AgentConsolePage() {
     }
   }, [])
 
-  async function refreshSessions(currentAgentId: number) {
+  async function loadAgents() {
     try {
       setError(null)
-      const data = await fetchJson<{ agentId: number; sessions: SessionSummary[] }>(
-        `${API_BASE_URL}/agents/${currentAgentId}/sessions`,
-      )
-      setSessions(data.sessions)
+      const data = await fetchJson<{ agents: AgentConfig[] }>(`${API_BASE_URL}/agents`)
+      setAgents(data.agents)
 
-      if (data.sessions.length > 0 && !selectedSessionId) {
-        const first = data.sessions[0]
-        setSelectedSessionId(first.sessionId)
-        await loadHistory(first.sessionId)
+      if (data.agents.length === 0) {
+        setSelectedAgentId(null)
+        return
       }
 
-      if (data.sessions.length === 0) {
+      const current = selectedAgentId !== null ? data.agents.find((agent) => agent.id === selectedAgentId) : null
+      setSelectedAgentId((current ?? data.agents[0]).id)
+    } catch (e) {
+      setError(asErrorMessage(e))
+    }
+  }
+
+  async function refreshSessions(currentAgentId: number, preferredSessionId?: string | null) {
+    try {
+      setError(null)
+      const data = await fetchJson<{ agentId: number; sessions: SessionSummary[] }>(`${API_BASE_URL}/agents/${currentAgentId}/sessions`)
+      setSessions(data.sessions)
+
+      const nextSessionId =
+        (preferredSessionId && data.sessions.some((session) => session.sessionId === preferredSessionId)
+          ? preferredSessionId
+          : null) ??
+        (selectedSessionId && data.sessions.some((session) => session.sessionId === selectedSessionId) ? selectedSessionId : null) ??
+        data.sessions[0]?.sessionId ??
+        null
+
+      if (!nextSessionId) {
         setSelectedSessionId(null)
         setMessages([])
+        return
+      }
+
+      if (nextSessionId !== selectedSessionId || preferredSessionId) {
+        setSelectedSessionId(nextSessionId)
+        await loadHistory(nextSessionId)
       }
     } catch (e) {
       setError(asErrorMessage(e))
@@ -81,16 +118,18 @@ export function AgentConsolePage() {
   }
 
   async function createSession() {
+    if (selectedAgentId === null) {
+      return
+    }
+
     try {
       setError(null)
       const data = await fetchJson<{ sessionId: string }>(`${API_BASE_URL}/sessions`, {
         method: 'POST',
-        body: JSON.stringify({ agentId }),
+        body: JSON.stringify({ agentId: selectedAgentId }),
       })
 
-      await refreshSessions(agentId)
-      setSelectedSessionId(data.sessionId)
-      await loadHistory(data.sessionId)
+      await refreshSessions(selectedAgentId, data.sessionId)
     } catch (e) {
       setError(asErrorMessage(e))
     }
@@ -140,7 +179,9 @@ export function AgentConsolePage() {
         void streamRun(sessionId, data.activeRunId, assistantMessageId)
           .then(async () => {
             await loadHistory(sessionId)
-            await refreshSessions(agentId)
+            if (selectedAgentId !== null) {
+              await refreshSessions(selectedAgentId, sessionId)
+            }
           })
           .catch((e) => setError(asErrorMessage(e)))
       } else {
@@ -153,6 +194,11 @@ export function AgentConsolePage() {
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+
+    if (selectedAgentId === null) {
+      setError('Select an agent first.')
+      return
+    }
 
     const text = prompt.trim()
     if (!text || isSending || isSessionProcessing) {
@@ -168,11 +214,11 @@ export function AgentConsolePage() {
       if (!sessionId) {
         const created = await fetchJson<{ sessionId: string }>(`${API_BASE_URL}/sessions`, {
           method: 'POST',
-          body: JSON.stringify({ agentId }),
+          body: JSON.stringify({ agentId: selectedAgentId }),
         })
         sessionId = created.sessionId
         setSelectedSessionId(sessionId)
-        await refreshSessions(agentId)
+        await refreshSessions(selectedAgentId, sessionId)
       }
 
       const localUserId = crypto.randomUUID()
@@ -192,7 +238,7 @@ export function AgentConsolePage() {
       setActiveRun({ sessionId, runId: run.runId, status: 'pending' })
       await streamRun(sessionId, run.runId, localAssistantId)
       await loadHistory(sessionId)
-      await refreshSessions(agentId)
+      await refreshSessions(selectedAgentId, sessionId)
     } catch (e) {
       setError(asErrorMessage(e))
       setMessages((prev) => prev.map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m)))
@@ -355,12 +401,23 @@ export function AgentConsolePage() {
   return (
     <div className="app-shell">
       <SessionsPanel
-        agentId={agentId}
+        agents={agents}
+        selectedAgentId={selectedAgentId}
         sessions={sessions}
         selectedSessionId={selectedSessionId}
-        onAgentIdChange={setAgentId}
+        onSelectAgent={(agentId) => {
+          closeStream()
+          setActiveRun(null)
+          setSelectedSessionId(null)
+          setMessages([])
+          setSelectedAgentId(agentId)
+        }}
         onCreateSession={() => void createSession()}
-        onRefresh={() => void refreshSessions(agentId)}
+        onRefreshSessions={() => {
+          if (selectedAgentId !== null) {
+            void refreshSessions(selectedAgentId)
+          }
+        }}
         onSelectSession={(sessionId) => {
           setSelectedSessionId(sessionId)
           void loadHistory(sessionId)

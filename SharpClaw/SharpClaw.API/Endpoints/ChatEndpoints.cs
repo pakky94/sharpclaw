@@ -13,7 +13,7 @@ public static class ChatEndpoints
             [FromServices] Agent agent
         ) =>
         {
-            var sessionId = await agent.CreateSession(1);
+            var sessionId = await agent.CreateSession(request.AgentId ?? 1);
             var run = await agent.EnqueueMessage(sessionId, request.Message);
 
             while (run.Status is AgentRunStatus.Pending or AgentRunStatus.Running)
@@ -197,4 +197,5 @@ public class CreateSessionRequest
 public class MessageRequest
 {
     public required string Message { get; set; }
+    public long? AgentId { get; set; }
 }

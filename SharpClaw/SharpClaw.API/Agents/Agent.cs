@@ -1,8 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
-using Dapper;
 using Microsoft.Extensions.AI;
-using Npgsql;
 using SharpClaw.API.Agents.Memory.Lcm;
 using SharpClaw.API.Agents.Tools.Files;
 using SharpClaw.API.Database;
@@ -16,13 +14,17 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration, Repo
 
     public async Task<Guid> CreateSession(long agentId = 1)
     {
-        var systemPrompt = await GetAgentMd(agentId) ?? "";
+        var agentConfig = await repository.GetAgent(agentId)
+                          ?? throw new KeyNotFoundException($"Agent {agentId} was not found.");
+        var systemPrompt = (await repository.GetAgentDocument(agentId, "AGENTS.md"))?.Content ?? string.Empty;
         var sessionId = Guid.NewGuid();
 
         var context = new AgentExecutionContext
         {
             DbConnectionString = configuration.GetConnectionString("sharpclaw")!,
             AgentId = agentId,
+            LlmModel = agentConfig.LlmModel,
+            Temperature = agentConfig.Temperature,
             SystemMessage = new ChatMessage(ChatRole.System, systemPrompt),
             Messages = [],
         };
@@ -236,11 +238,15 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration, Repo
 
             var persistedSession = await repository.GetSession(sessionId)
                                    ?? throw new KeyNotFoundException($"Session {sessionId} was not found.");
+            var agentConfig = await repository.GetAgent(persistedSession.AgentId)
+                              ?? throw new KeyNotFoundException($"Agent {persistedSession.AgentId} was not found.");
 
             var context = new AgentExecutionContext
             {
                 DbConnectionString = configuration.GetConnectionString("sharpclaw")!,
                 AgentId = persistedSession.AgentId,
+                LlmModel = agentConfig.LlmModel,
+                Temperature = agentConfig.Temperature,
                 SystemMessage = new ChatMessage(ChatRole.System, persistedSession.SystemPrompt),
                 Messages = [..await repository.LoadActiveConversation(sessionId)],
             };
@@ -330,24 +336,6 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration, Repo
         return contents;
     }
 
-    private async Task<string?> GetAgentMd(long agentId)
-    {
-        await using var connection = new NpgsqlConnection(configuration.GetConnectionString("sharpclaw"));
-
-        var content = await connection.QueryFirstOrDefaultAsync<string>(
-            """
-            select d.content from agents a
-            join agents_documents ad on a.id = ad.agent_id
-            join documents d on d.id = ad.document_id
-            where a.Id = @agentId and d.name = 'AGENTS.md';
-            """,
-            new
-            {
-                agentId,
-            });
-
-        return content;
-    }
 }
 
 public class AgentSessionState(Guid sessionId, AgentExecutionContext context, DateTimeOffset? createdAt = null)

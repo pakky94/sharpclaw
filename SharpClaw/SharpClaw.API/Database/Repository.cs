@@ -11,9 +11,218 @@ public class Repository(IConfiguration configuration)
     private const string DbEntryTypeKey = "db_entry_type";
     private const string DbEntryIdKey = "db_entry_id";
     private const string ParentSummaryIdKey = "parent_summary_id";
+    private const string DefaultAgentPrompt =
+        """
+        # AGENTS.md
+
+        You are a helpful assistant. Follow workspace files and user instructions precisely.
+        """;
 
     private string ConnectionString => configuration.GetConnectionString("sharpclaw")
                                        ?? throw new InvalidOperationException("Missing connection string 'sharpclaw'.");
+
+    public async Task<IReadOnlyList<AgentConfig>> GetAgents()
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<AgentConfig>(
+            """
+            select id as Id,
+                   name as Name,
+                   llm_model as LlmModel,
+                   temperature as Temperature,
+                   created_at as CreatedAt,
+                   updated_at as UpdatedAt
+            from agents
+            order by id;
+            """);
+
+        return rows.ToArray();
+    }
+
+    public async Task<AgentConfig?> GetAgent(long agentId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        return await connection.QueryFirstOrDefaultAsync<AgentConfig>(
+            """
+            select id as Id,
+                   name as Name,
+                   llm_model as LlmModel,
+                   temperature as Temperature,
+                   created_at as CreatedAt,
+                   updated_at as UpdatedAt
+            from agents
+            where id = @agentId;
+            """,
+            new { agentId });
+    }
+
+    public async Task<AgentConfig> CreateAgent(string name, string llmModel, float temperature)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var tx = await connection.BeginTransactionAsync();
+
+        var created = await connection.QuerySingleAsync<AgentConfig>(
+            """
+            insert into agents (name, llm_model, temperature)
+            values (@name, @llmModel, @temperature)
+            returning id as Id,
+                      name as Name,
+                      llm_model as LlmModel,
+                      temperature as Temperature,
+                      created_at as CreatedAt,
+                      updated_at as UpdatedAt;
+            """,
+            new { name, llmModel, temperature },
+            tx);
+
+        var documentId = await connection.QuerySingleAsync<long>(
+            """
+            insert into documents (name, content)
+            values ('AGENTS.md', @content)
+            returning id;
+            """,
+            new { content = DefaultAgentPrompt },
+            tx);
+
+        await connection.ExecuteAsync(
+            """
+            insert into agents_documents (agent_id, document_id)
+            values (@agentId, @documentId);
+            """,
+            new { agentId = created.Id, documentId },
+            tx);
+
+        await tx.CommitAsync();
+        return created;
+    }
+
+    public async Task<AgentConfig?> UpdateAgent(long agentId, string name, string llmModel, float temperature)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        return await connection.QueryFirstOrDefaultAsync<AgentConfig>(
+            """
+            update agents
+            set name = @name,
+                llm_model = @llmModel,
+                temperature = @temperature,
+                updated_at = now()
+            where id = @agentId
+            returning id as Id,
+                      name as Name,
+                      llm_model as LlmModel,
+                      temperature as Temperature,
+                      created_at as CreatedAt,
+                      updated_at as UpdatedAt;
+            """,
+            new { agentId, name, llmModel, temperature });
+    }
+
+    public async Task<IReadOnlyList<AgentDocumentSummary>> GetAgentDocuments(long agentId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<AgentDocumentSummary>(
+            """
+            select d.name as Name
+            from agents_documents ad
+            join documents d on d.id = ad.document_id
+            where ad.agent_id = @agentId
+            order by d.name;
+            """,
+            new { agentId });
+
+        return rows.ToArray();
+    }
+
+    public async Task<AgentDocument?> GetAgentDocument(long agentId, string path)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        return await connection.QueryFirstOrDefaultAsync<AgentDocument>(
+            """
+            select d.name as Path,
+                   d.content as Content
+            from agents_documents ad
+            join documents d on d.id = ad.document_id
+            where ad.agent_id = @agentId
+              and d.name = @path;
+            """,
+            new { agentId, path });
+    }
+
+    public async Task UpsertAgentDocument(long agentId, string path, string content)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.ExecuteAsync(
+            """
+            update documents as d
+            set content = @content
+            from agents_documents ad
+            where d.id = ad.document_id
+              and ad.agent_id = @agentId
+              and d.name = @path;
+
+            with inserted as (
+                insert into documents (name, content)
+                select @path, @content
+                where not exists (
+                    select 1
+                    from agents_documents ad
+                    join documents d on d.id = ad.document_id
+                    where ad.agent_id = @agentId and d.name = @path
+                )
+                returning id
+            )
+            insert into agents_documents (agent_id, document_id)
+            select @agentId, id
+            from inserted;
+            """,
+            new { agentId, path, content });
+    }
+
+    public async Task<bool> DeleteAgentDocument(long agentId, string path)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var tx = await connection.BeginTransactionAsync();
+
+        var documentId = await connection.QueryFirstOrDefaultAsync<long?>(
+            """
+            select d.id
+            from agents_documents ad
+            join documents d on d.id = ad.document_id
+            where ad.agent_id = @agentId and d.name = @path
+            limit 1;
+            """,
+            new { agentId, path },
+            tx);
+
+        if (documentId is null)
+            return false;
+
+        await connection.ExecuteAsync(
+            """
+            delete from agents_documents
+            where agent_id = @agentId and document_id = @documentId;
+            """,
+            new { agentId, documentId },
+            tx);
+
+        await connection.ExecuteAsync(
+            """
+            delete from documents
+            where id = @documentId
+              and not exists (
+                  select 1
+                  from agents_documents
+                  where document_id = @documentId
+              );
+            """,
+            new { documentId },
+            tx);
+
+        await tx.CommitAsync();
+        return true;
+    }
 
     public async Task CreateSession(Guid sessionId, long agentId, string systemPrompt)
     {
@@ -341,6 +550,9 @@ public class Repository(IConfiguration configuration)
 public record PersistedSession(Guid SessionId, long AgentId, string SystemPrompt, DateTime CreatedAt);
 public record PersistedSessionSummary(Guid SessionId, long AgentId, DateTime CreatedAt, long MessagesCount);
 public record PersistedRawMessage(long MessageId, Guid? RunId, DateTime CreatedAt, ChatResponse Response);
+public record AgentConfig(long Id, string Name, string LlmModel, float Temperature, DateTime CreatedAt, DateTime UpdatedAt);
+public record AgentDocumentSummary(string Name);
+public record AgentDocument(string Path, string Content);
 
 internal sealed class PersistedChatResponse
 {

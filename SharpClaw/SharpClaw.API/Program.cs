@@ -43,5 +43,6 @@ app.UseHttpsRedirection();
 app.UseCors("WebClient");
 
 ChatEndpoints.Register(app);
+AgentEndpoints.Register(app);
 
 app.Run();

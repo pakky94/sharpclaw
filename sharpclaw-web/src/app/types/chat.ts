@@ -5,6 +5,24 @@ export type SessionSummary = {
   messagesCount: number
 }
 
+export type AgentConfig = {
+  id: number
+  name: string
+  llmModel: string
+  temperature: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type AgentFileSummary = {
+  name: string
+}
+
+export type AgentFile = {
+  path: string
+  content: string
+}
+
 export type SessionHistoryMessage = {
   role: string
   text: string | null
