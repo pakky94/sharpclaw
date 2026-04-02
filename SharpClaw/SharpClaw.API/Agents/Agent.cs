@@ -2,13 +2,17 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Memory.Lcm;
-using SharpClaw.API.Agents.Tools.Files;
+using SharpClaw.API.Agents.Tools.Fragments;
 using SharpClaw.API.Agents.Tools.Lcm;
 using SharpClaw.API.Database;
 
 namespace SharpClaw.API.Agents;
 
-public class Agent(ChatProvider chatProvider, IConfiguration configuration, Repository repository)
+public class Agent(
+    ChatProvider chatProvider,
+    IConfiguration configuration,
+    Repository repository,
+    FragmentsRepository fragmentsRepository)
 {
     private readonly ConcurrentDictionary<Guid, AgentSessionState> _sessions = new();
     private readonly SemaphoreSlim _sessionsMutex = new(1, 1);
@@ -17,7 +21,7 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration, Repo
     {
         var agentConfig = await repository.GetAgent(agentId)
                           ?? throw new KeyNotFoundException($"Agent {agentId} was not found.");
-        var systemPrompt = (await repository.GetAgentDocument(agentId, "AGENTS.md"))?.Content ?? string.Empty;
+        var systemPrompt = (await fragmentsRepository.ReadFragmentByPath(agentId, "AGENTS.md"))?.Content ?? string.Empty;
         var sessionId = Guid.NewGuid();
 
         var context = new AgentExecutionContext
@@ -259,7 +263,7 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration, Repo
                 AgentId = persistedSession.AgentId,
                 LlmModel = agentConfig.LlmModel,
                 Temperature = agentConfig.Temperature,
-                SystemMessage = (await repository.GetAgentDocument(persistedSession.AgentId, "AGENTS.md"))?.Content ?? string.Empty,
+                SystemMessage = (await fragmentsRepository.ReadFragmentByPath(persistedSession.AgentId, "AGENTS.md"))?.Content ?? string.Empty,
                 Messages = [..await repository.LoadActiveConversation(sessionId)],
             };
 
@@ -278,7 +282,7 @@ public class Agent(ChatProvider chatProvider, IConfiguration configuration, Repo
 
     private static List<AIFunction> BuildTools() =>
     [
-        ..FileTools.Functions,
+        ..FragmentTools.Functions,
         ..LcmTools.Functions,
     ];
 

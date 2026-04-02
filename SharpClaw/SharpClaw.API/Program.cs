@@ -8,6 +8,9 @@ builder.AddServiceDefaults();
 
 builder.Services.AddTransient<DatabaseSeeder>();
 builder.Services.AddSingleton<Repository>();
+builder.Services.AddSingleton<FragmentsRepository>();
+builder.Services.AddSingleton<FragmentEmbeddingService>();
+builder.Services.AddHostedService<FragmentEmbeddingBackgroundService>();
 builder.Services.Configure<LmStudioConfiguration>(builder.Configuration.GetSection("LmStudio"));
 builder.Services.AddSingleton<ChatProvider>();
 builder.Services.AddSingleton<Agent>();

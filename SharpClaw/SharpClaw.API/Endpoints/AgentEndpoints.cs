@@ -26,7 +26,8 @@ public static class AgentEndpoints
 
         app.MapPost("/agents", async (
             [FromBody] CreateAgentRequest request,
-            [FromServices] Repository repository
+            [FromServices] Repository repository,
+            [FromServices] FragmentsRepository fragmentsRepository
         ) =>
         {
             var name = request.Name.Trim();
@@ -37,6 +38,8 @@ public static class AgentEndpoints
                 return Results.BadRequest(new { error = "Name is required." });
 
             var created = await repository.CreateAgent(name, model, temperature);
+            await fragmentsRepository.EnsureRootFragment(created.Id);
+            await fragmentsRepository.UpsertFragmentByPath(created.Id, "AGENTS.md", DatabaseSeeder.AgentsMd);
             return Results.Ok(created);
         });
 
@@ -61,27 +64,28 @@ public static class AgentEndpoints
 
         app.MapGet("/agents/{agentId:long}/files", async (
             long agentId,
-            [FromServices] Repository repository
+            [FromServices] Repository repository,
+            [FromServices] FragmentsRepository fragmentsRepository
         ) =>
         {
             var agent = await repository.GetAgent(agentId);
             if (agent is null)
                 return Results.NotFound(new { error = $"Agent {agentId} was not found." });
 
-            var files = await repository.GetAgentDocuments(agentId);
+            var files = await fragmentsRepository.ListFragmentsAsFiles(agentId);
             return Results.Ok(new { agentId, files });
         });
 
         app.MapGet("/agents/{agentId:long}/file", async (
             long agentId,
             [FromQuery] string path,
-            [FromServices] Repository repository
+            [FromServices] FragmentsRepository fragmentsRepository
         ) =>
         {
             if (string.IsNullOrWhiteSpace(path))
                 return Results.BadRequest(new { error = "Path is required." });
 
-            var file = await repository.GetAgentDocument(agentId, path);
+            var file = await fragmentsRepository.ReadFragmentByPath(agentId, path);
             return file is null
                 ? Results.NotFound(new { error = $"File '{path}' was not found for agent {agentId}." })
                 : Results.Ok(file);
@@ -90,7 +94,8 @@ public static class AgentEndpoints
         app.MapPut("/agents/{agentId:long}/file", async (
             long agentId,
             [FromBody] UpsertAgentFileRequest request,
-            [FromServices] Repository repository
+            [FromServices] Repository repository,
+            [FromServices] FragmentsRepository fragmentsRepository
         ) =>
         {
             var path = request.Path.Trim();
@@ -101,20 +106,20 @@ public static class AgentEndpoints
             if (agent is null)
                 return Results.NotFound(new { error = $"Agent {agentId} was not found." });
 
-            await repository.UpsertAgentDocument(agentId, path, request.Content);
+            await fragmentsRepository.UpsertFragmentByPath(agentId, path, request.Content);
             return Results.Ok(new { agentId, path });
         });
 
         app.MapDelete("/agents/{agentId:long}/file", async (
             long agentId,
             [FromQuery] string path,
-            [FromServices] Repository repository
+            [FromServices] FragmentsRepository fragmentsRepository
         ) =>
         {
             if (string.IsNullOrWhiteSpace(path))
                 return Results.BadRequest(new { error = "Path is required." });
 
-            var deleted = await repository.DeleteAgentDocument(agentId, path);
+            var deleted = await fragmentsRepository.DeleteFragmentByPath(agentId, path);
             return deleted
                 ? Results.Ok(new { agentId, path })
                 : Results.NotFound(new { error = $"File '{path}' was not found for agent {agentId}." });

@@ -11,12 +11,6 @@ public class Repository(IConfiguration configuration)
     private const string DbEntryTypeKey = "db_entry_type";
     private const string DbEntryIdKey = "db_entry_id";
     private const string ParentSummaryIdKey = "parent_summary_id";
-    private const string DefaultAgentPrompt =
-        """
-        # AGENTS.md
-
-        You are a helpful assistant. Follow workspace files and user instructions precisely.
-        """;
 
     private string ConnectionString => configuration.GetConnectionString("sharpclaw")
                                        ?? throw new InvalidOperationException("Missing connection string 'sharpclaw'.");
@@ -59,10 +53,7 @@ public class Repository(IConfiguration configuration)
     public async Task<AgentConfig> CreateAgent(string name, string llmModel, float temperature)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
-        await connection.OpenAsync();
-        await using var tx = await connection.BeginTransactionAsync();
-
-        var created = await connection.QuerySingleAsync<AgentConfig>(
+        return await connection.QuerySingleAsync<AgentConfig>(
             """
             insert into agents (name, llm_model, temperature)
             values (@name, @llmModel, @temperature)
@@ -73,28 +64,7 @@ public class Repository(IConfiguration configuration)
                       created_at as CreatedAt,
                       updated_at as UpdatedAt;
             """,
-            new { name, llmModel, temperature },
-            tx);
-
-        var documentId = await connection.QuerySingleAsync<long>(
-            """
-            insert into documents (name, content)
-            values ('AGENTS.md', @content)
-            returning id;
-            """,
-            new { content = DefaultAgentPrompt },
-            tx);
-
-        await connection.ExecuteAsync(
-            """
-            insert into agents_documents (agent_id, document_id)
-            values (@agentId, @documentId);
-            """,
-            new { agentId = created.Id, documentId },
-            tx);
-
-        await tx.CommitAsync();
-        return created;
+            new { name, llmModel, temperature });
     }
 
     public async Task<AgentConfig?> UpdateAgent(long agentId, string name, string llmModel, float temperature)

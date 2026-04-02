@@ -8,9 +8,12 @@ public static class Environment
         $"""
          You are powered by the model named {modelId}.
          Here is some useful information about the environment you are running in:
-         <env>`,
-           Local date: ${now.ToLocalTime():dddd dd MM YYYY}`,
-         </env>`,
+         <env>
+           Local date: {now.ToLocalTime():dddd dd MM YYYY}`,
+         </env>
+         These are your root fragments:
+         <fragments>
+         </fragments>
          """;
     /*
         `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,

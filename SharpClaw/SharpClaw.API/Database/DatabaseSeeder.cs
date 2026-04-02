@@ -17,6 +17,8 @@ public class DatabaseSeeder(IConfiguration configuration)
             await connection.ExecuteAsync(
                 """
                 create extension if not exists pg_trgm;
+                create extension if not exists pgcrypto;
+                create extension if not exists vector;
 
                 create table if not exists documents(
                     id bigserial primary key,
@@ -63,6 +65,47 @@ public class DatabaseSeeder(IConfiguration configuration)
                     agent_id bigint not null references agents(id),
                     system_prompt text not null,
                     created_at timestamptz not null default now()
+                );
+
+                create table if not exists fragments(
+                    id uuid primary key default gen_random_uuid(),
+                    owner_agent_id bigint not null references agents(id) on delete cascade,
+                    parent_id uuid null references fragments(id) on delete cascade,
+                    name varchar(511) not null,
+                    content text not null default '',
+                    fragment_type varchar(64) null,
+                    tags jsonb not null default '{}'::jsonb,
+                    embedding vector null,
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
+                );
+
+                alter table fragments add column if not exists embedding vector;
+                alter table fragments alter column embedding drop not null;
+                do $$
+                begin
+                    if exists (
+                        select 1
+                        from information_schema.columns
+                        where table_schema = 'public'
+                          and table_name = 'fragments'
+                          and column_name = 'embedding'
+                          and udt_name = 'jsonb'
+                    ) then
+                        alter table fragments drop column embedding;
+                        alter table fragments add column embedding vector;
+                    end if;
+                end
+                $$;
+
+                create table if not exists fragment_shares(
+                    id bigserial primary key,
+                    fragment_id uuid not null references fragments(id) on delete cascade,
+                    target_agent_id bigint not null references agents(id) on delete cascade,
+                    permission varchar(16) not null check (permission in ('read-only', 'read-write')),
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now(),
+                    unique(fragment_id, target_agent_id)
                 );
 
                 create table if not exists summaries(
@@ -170,6 +213,17 @@ public class DatabaseSeeder(IConfiguration configuration)
 
                 create index if not exists idx_conversation_history_session_active_sequence
                     on conversation_history(session_id, is_active, sequence, id);
+
+                create index if not exists idx_fragments_owner_parent
+                    on fragments(owner_agent_id, parent_id);
+                create index if not exists idx_fragments_owner_name
+                    on fragments(owner_agent_id, name);
+                create index if not exists idx_fragments_content_trgm
+                    on fragments using gin (content gin_trgm_ops);
+                create index if not exists idx_fragments_tags
+                    on fragments using gin (tags);
+                create index if not exists idx_fragment_shares_target
+                    on fragment_shares(target_agent_id);
                 """);
 
             if (await connection.ExecuteScalarAsync<int>("select count(*) from agents where name = 'Main'") == 0)
@@ -204,6 +258,48 @@ public class DatabaseSeeder(IConfiguration configuration)
                         ToolsMd,
                         UserMd,
                     });
+
+            await connection.ExecuteAsync(
+                """
+                with roots as (
+                    insert into fragments (owner_agent_id, parent_id, name, content, fragment_type, tags)
+                    select a.id, null, '__root__', '', 'root', cast('{}' as jsonb)
+                    from agents a
+                    where not exists (
+                        select 1
+                        from fragments f
+                        where f.owner_agent_id = a.id
+                          and f.parent_id is null
+                          and f.name = '__root__'
+                    )
+                    returning id, owner_agent_id
+                ),
+                all_roots as (
+                    select f.id, f.owner_agent_id
+                    from fragments f
+                    where f.parent_id is null and f.name = '__root__'
+                    union all
+                    select r.id, r.owner_agent_id
+                    from roots r
+                )
+                insert into fragments (owner_agent_id, parent_id, name, content, fragment_type, tags)
+                select ad.agent_id,
+                       ar.id as parent_id,
+                       d.name,
+                       d.content,
+                       'knowledge',
+                       cast('{}' as jsonb)
+                from agents_documents ad
+                join documents d on d.id = ad.document_id
+                join all_roots ar on ar.owner_agent_id = ad.agent_id
+                where not exists (
+                    select 1
+                    from fragments f
+                    where f.owner_agent_id = ad.agent_id
+                      and f.parent_id = ar.id
+                      and f.name = d.name
+                );
+                """);
 
         }
         catch (Exception ex)
