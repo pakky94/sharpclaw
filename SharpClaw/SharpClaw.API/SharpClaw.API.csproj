@@ -8,8 +8,8 @@
 
     <ItemGroup>
         <PackageReference Include="Dapper" Version="2.1.72" />
-        <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-rc4" />
-        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.4"/>
+        <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0" />
+        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.5" />
         <PackageReference Include="Npgsql" Version="10.0.2" />
     </ItemGroup>
 

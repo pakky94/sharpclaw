@@ -20,7 +20,7 @@ public sealed class FragmentEmbeddingService(IOptions<LmStudioConfiguration> opt
         if (string.IsNullOrWhiteSpace(model))
             return null;
 
-        var endpoint = _configuration.Endpoint?.Trim();
+        var endpoint = _configuration.EmbeddingEndpoint?.Trim();
         if (string.IsNullOrWhiteSpace(endpoint))
             return null;
 
@@ -31,9 +31,9 @@ public sealed class FragmentEmbeddingService(IOptions<LmStudioConfiguration> opt
                 Timeout = TimeSpan.FromSeconds(30),
             };
 
-            if (!string.IsNullOrWhiteSpace(_configuration.ApiKey))
+            if (!string.IsNullOrWhiteSpace(_configuration.EmbeddingApiKey))
                 httpClient.DefaultRequestHeaders.Authorization =
-                    new AuthenticationHeaderValue("Bearer", _configuration.ApiKey);
+                    new AuthenticationHeaderValue("Bearer", _configuration.EmbeddingApiKey);
 
             var baseUri = endpoint.EndsWith("/", StringComparison.Ordinal) ? endpoint : endpoint + "/";
             var uri = new Uri(new Uri(baseUri, UriKind.Absolute), "embeddings");

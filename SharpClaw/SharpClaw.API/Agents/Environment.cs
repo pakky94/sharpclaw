@@ -7,17 +7,20 @@ public static class Environment
     // TODO: when adding multiprovider support update the prompt
     // TODO: when workspace support update the prompt
     public static string EnvPrompt(string modelId, DateTimeOffset now,
+        Guid rootFragment,
         IReadOnlyList<FragmentReadItem>? fragmentsChildren) =>
         $"""
          You are powered by the model named {modelId}.
          Here is some useful information about the environment you are running in:
          <env>
-           Local date: {now.ToLocalTime():dddd dd MM YYYY}`,
+           Local date: {now.ToLocalTime():dddd dd MM yyyy}`,
          </env>
          These are your root fragments:
-         <fragments>
-         {string.Join("\n", fragmentsChildren?.Select(f => $"  <fragment name=\"{f.Name}\" id=\"{f.Id}\" />") ?? [])}
-         </fragments>
+         <rootFragment id=\"{rootFragment}\">
+           <fragments>
+         {string.Join("\n", fragmentsChildren?.Select(f => $"    <fragment name=\"{f.Name}\" id=\"{f.Id}\" />") ?? [])}
+           </fragments>
+         </rootFragment>
          """;
     /*
         `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,

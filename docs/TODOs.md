@@ -1,8 +1,10 @@
 ## Most important stuff:
 
 ### Fragments improvements
-- [ ] Add root fragments to `Environment.EnvPrompt`
+- [X] Add root fragments to `Environment.EnvPrompt`
 - [ ] Consider using more compact Ids for fragments (eg. 16 hex characters)
+- [ ] Return an error if trying to create an already existing fragment? to force the LLM to use the update tool
+- [ ] paginated children when reading a fragment, sorted by most recent?
 
 ### Remove persistence of system prompt as it should be calculated on the fly. It contains the current date and other stuff.
 - [ ] delete the column from the database

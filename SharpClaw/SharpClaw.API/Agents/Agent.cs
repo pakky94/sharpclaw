@@ -84,7 +84,7 @@ public class Agent(
                     childNamesOnly: true);
 
                 var systemMessage = string.Join('\n', [
-                    Environment.EnvPrompt(session.Context.LlmModel, DateTimeOffset.Now, fragments?.Children),
+                    Environment.EnvPrompt(session.Context.LlmModel, DateTimeOffset.Now, rootFragment, fragments?.Children),
                     Prompts.LcmPrompt,
                     Memory.Fragments.Prompts.FragmentPrompt,
                     session.Context.SystemMessage,

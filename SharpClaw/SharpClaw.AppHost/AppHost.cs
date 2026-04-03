@@ -14,4 +14,8 @@ var sharpclaw = builder.AddProject<Projects.SharpClaw_API>("sharpclaw-api");
 
 sharpclaw.WithReference(db).WaitFor(db);
 
+var web = builder.AddViteApp("sharpclaw-web", Path.Join("..", "..", "sharpclaw-web"));
+
+web.WithEnvironment("VITE_API_BASE_URL", sharpclaw.GetEndpoint("http"));
+
 builder.Build().Run();

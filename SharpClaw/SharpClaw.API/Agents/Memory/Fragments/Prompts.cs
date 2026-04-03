@@ -28,9 +28,10 @@ public static class Prompts
         
         ### Storing Information
         
-        * Use `create_fragment` to save new knowledge, tasks, or results
+        * Use `create_fragment` or `update_fragment` to save new knowledge, tasks, or results, depending on whether the fragment already exists (when using `update_fragment` do remember to keep relevant information from the existing fragment)
         * Place related data as child fragments (e.g., code under a task)
         * Keep fragments focused and well-organized
+        * when you see the notation `Fragment1`>`Fragment2` in the context of fragments it means that `Fragment2` is a child of `Fragment1`
         
         ### Reading & Navigation
         

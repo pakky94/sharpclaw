@@ -19,7 +19,7 @@ builder.Services.AddCors(options =>
     options.AddPolicy("WebClient", policy =>
     {
         policy
-            .WithOrigins("http://localhost:5173", "https://localhost:5173")
+            .AllowAnyOrigin()
             .AllowAnyMethod()
             .AllowAnyHeader();
     });
