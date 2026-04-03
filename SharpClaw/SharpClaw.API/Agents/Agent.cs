@@ -75,9 +75,18 @@ public class Agent(
                 Repository.SetDbReference(userMessage, "message", userMessageId);
                 session.Context.Messages.Add(userMessage);
 
+                var rootFragment = await fragmentsRepository.EnsureRootFragment(session.Context.AgentId);
+                var fragments = await fragmentsRepository.ReadFragment(
+                    session.Context.AgentId,
+                    rootFragment,
+                    includeChildren: true,
+                    maxDepth: 1,
+                    childNamesOnly: true);
+
                 var systemMessage = string.Join('\n', [
-                    Environment.EnvPrompt(session.Context.LlmModel, DateTimeOffset.Now),
+                    Environment.EnvPrompt(session.Context.LlmModel, DateTimeOffset.Now, fragments?.Children),
                     Prompts.LcmPrompt,
+                    Memory.Fragments.Prompts.FragmentPrompt,
                     session.Context.SystemMessage,
                 ]);
 

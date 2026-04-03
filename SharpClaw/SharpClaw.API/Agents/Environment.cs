@@ -1,10 +1,13 @@
-﻿namespace SharpClaw.API.Agents;
+﻿using SharpClaw.API.Database;
+
+namespace SharpClaw.API.Agents;
 
 public static class Environment
 {
     // TODO: when adding multiprovider support update the prompt
     // TODO: when workspace support update the prompt
-    public static string EnvPrompt(string modelId, DateTimeOffset now) =>
+    public static string EnvPrompt(string modelId, DateTimeOffset now,
+        IReadOnlyList<FragmentReadItem>? fragmentsChildren) =>
         $"""
          You are powered by the model named {modelId}.
          Here is some useful information about the environment you are running in:
@@ -13,6 +16,7 @@ public static class Environment
          </env>
          These are your root fragments:
          <fragments>
+         {string.Join("\n", fragmentsChildren?.Select(f => $"  <fragment name=\"{f.Name}\" id=\"{f.Id}\" />") ?? [])}
          </fragments>
          """;
     /*

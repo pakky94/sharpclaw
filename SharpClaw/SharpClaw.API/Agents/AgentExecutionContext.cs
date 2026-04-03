@@ -12,6 +12,6 @@ public class AgentExecutionContext
     public string? SystemMessage { get; set; }
     public List<ChatResponse> Messages { get; set; } = [];
 
-    public long SoftCompactThreshold = 4 * 1024;
+    public long SoftCompactThreshold = 35 * 1024;
     public int FreshMessagesCount = 8;
 }

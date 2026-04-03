@@ -1,6 +1,7 @@
 ﻿using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI.Chat;
+using SharpClaw.API.Database;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace SharpClaw.API.Agents;
@@ -14,8 +15,12 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
             // instructions: "you are a helpful assistant, follow the .md files instructions and try to help the user.",
             tools: [..tools],
             services: new ServiceCollection()
+                .Configure<LmStudioConfiguration>(configuration)
                 .AddSingleton(context)
                 .AddSingleton(configuration)
+                .AddSingleton<Repository>()
+                .AddSingleton<FragmentsRepository>()
+                .AddSingleton<FragmentEmbeddingService>()
                 .BuildServiceProvider()
         );
 
