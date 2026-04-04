@@ -28,25 +28,8 @@ public static class Prompts
         When conversations grow long, older messages are summarized into compact representations. The original messages are preserved in a database and can be retrieved on demand. This gives you unlimited effective context while keeping the active context window manageable.
         
         Summaries are organized in a hierarchical structure:
-        - **Leaf groups (leaves)**: Basal grouped action sequences/turns
-        - **Sprig summaries**: L1 summaries built from leaves
-        - **Bindle summaries**: L2 summaries built from sprigs
-        - **Archive stubs**: Compact off-context pointer summaries that reference archived bindles via lineage pointers
-        
-        ### Retrieval Traversal Workflow (Mode-Aware)
-        
-        When pre-response hooks inject memory cues, treat them as pointer breadcrumbs in Dolt mode:
-        
-        1. Hook cue includes `summaryId`, `summaryType`, `archived`, and lineage pointer IDs.
-        2. Call `lcm_describe` on the cue `summaryId` to inspect lineage and archive pointer targets.
-        3. If the summary is a bindle or archive stub, follow pointer targets (if needed) with `lcm_describe`.
-        4. Use `lcm_expand_query` to resolve and expand relevant summaries for a focused question.
-        
-        This is the expected traversal path: hook pointer -> bindle/stub -> expanded underlying messages.
-        
-        In Upward mode, retrieval is active-DAG only:
-        - Off-context archive recall is unavailable.
-        - `lcm_expand_query` returns an explicit diagnostic and no result when only off-context matches exist.
+        - **Leaf messages**: Basal grouped action sequences/turns
+        - **summaries**: summaries built from leaves or other summaries
         
         ## Available LCM Tools
         
@@ -56,10 +39,10 @@ public static class Prompts
         - You need to recall specific details from past messages
         - Working on a task that relates to earlier discussion
         
-        Results are grouped by their covering summary ID and include lineage metadata (level/type/off-context, archive pointer targets when available). Archive-stub groups are explicitly flagged in Dolt mode. The tool is paginated for large result sets and injects results directly into context without spawning a sub-agent.
+        Results are grouped by their covering summary ID and include lineage metadata (level/type/off-context, archive pointer targets when available). The tool is paginated for large result sets and injects results directly into context without spawning a sub-agent.
         
         ### lcm_describe
-        Look up metadata for a summary or file ID without expanding the full content. For summary IDs, it reports lineage metadata (summary level/type, off-context status, pointer targets, lineage closure IDs) and clearly marks archive stubs in Dolt mode. Use this as a triage step: when you see a cue with `sum_xxx`, call lcm_describe first to choose the right expansion target.
+        Look up metadata for a summary or file ID without expanding the full content. For summary IDs, it reports lineage metadata (summary level/type, off-context status, pointer targets, lineage closure IDs). Use this as a triage step: when you see a cue with `sum_xxx`, call lcm_describe first to choose the right expansion target.
         
         ### lcm_expand
         Expand a summary to see its full underlying content. Retrieves the original messages that were compressed into the summary.
@@ -68,11 +51,7 @@ public static class Prompts
         **IMPORTANT**: This tool can only be called by sub-agents spawned via the Task tool. The main agent cannot call this directly - spawn a Task sub-agent and ask it to use lcm_expand to analyze the content.
         
         ### lcm_expand_query
-        High-level deep-recall tool for focused historical questions. Provide a `prompt` plus either `summary_ids`, a `query`, or both. It resolves candidates through the active retrieval adapter, spawns a delegated sub-agent, runs `lcm_expand` under the hood, and returns a concise answer with summary citations.
-        
-        Mode behavior:
-        - Dolt mode: candidate resolution includes off-context/archive lineage paths.
-        - Upward mode: candidate resolution is restricted to active condensation DAG summaries and emits explicit diagnostics when only off-context matches exist.
+        High-level deep-recall tool for focused historical questions. Provide a `prompt` plus either `summary_ids`, a `query`, or both. It resolves candidates through the active retrieval adapter, spawns a delegated sub-agent, runs `lcm_expand` under the hood, and returns a concise answer with summary citations. Candidate resolution is restricted to active condensation DAG summaries.
         
         ## LCM ID Types
         
