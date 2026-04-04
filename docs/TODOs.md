@@ -27,8 +27,14 @@
 ### Models Multiprovider support
 - [ ] when doing this update the `Environment.EnvPrompt`
 
+### Multi-model support
+- [ ] allow the agent to change model to handle different tasks (eg. one default, one for coding, one for simpler tasks like summarizing, ecc...)
+
 ### LCM
 - [ ] validate that tokens(summary) < tokens(history) and use aggressive directive if necessary
 
 ### LCM / Fragments integration
-- [ ] during summarization remove fragments content and save only their Id's
+- [ ] ??? during summarization remove fragments content and save only their Id's
+
+### General improvements
+- [ ] backup/export/restore functionality of database
