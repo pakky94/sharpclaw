@@ -1,4 +1,5 @@
 import ReactMarkdown from 'react-markdown'
+import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
 
 type MarkdownContentProps = {
@@ -9,7 +10,7 @@ type MarkdownContentProps = {
 export function MarkdownContent({ content, className }: MarkdownContentProps) {
   return (
     <div className={className}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{content}</ReactMarkdown>
     </div>
   )
 }
