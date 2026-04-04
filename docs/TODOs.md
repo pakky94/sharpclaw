@@ -34,7 +34,8 @@
 - [ ] validate that tokens(summary) < tokens(history) and use aggressive directive if necessary
 
 ### LCM / Fragments integration
-- [ ] ??? during summarization remove fragments content and save only their Id's
+- [ ] TBC: during summarization remove fragments content and save only their Id's
 
 ### General improvements
 - [ ] backup/export/restore functionality of database
+- [ ] TBD: add delete of agents, older sessions, ecc... how should this work? do we delete the sessions or just mark them as deleted? what about agents?
