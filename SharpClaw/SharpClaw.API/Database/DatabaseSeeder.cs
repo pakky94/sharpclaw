@@ -19,6 +19,22 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                 create extension if not exists pg_trgm;
                 create extension if not exists pgcrypto;
                 create extension if not exists vector;
+                
+                create or replace function generate_fragment_id()
+                returns varchar(21)
+                language sql
+                as $$
+                    with entropy as (
+                        select gen_random_bytes(16) as bytes
+                    )
+                    select 'frag_' || string_agg(
+                        substr('0123456789abcdefghijklmnopqrstuvwxyz', (get_byte(e.bytes, i) % 36) + 1, 1),
+                        ''
+                        order by i
+                    )
+                    from entropy e
+                    cross join generate_series(0, 15) as i;
+                $$;
 
                 create table if not exists agents(
                     id bigserial primary key,
@@ -37,25 +53,28 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                 );
 
                 create table if not exists fragments(
-                    id uuid primary key default gen_random_uuid(),
+                    id varchar(21) primary key default generate_fragment_id(),
                     owner_agent_id bigint not null references agents(id) on delete cascade,
-                    parent_id uuid null references fragments(id) on delete cascade,
+                    parent_id varchar(21) null references fragments(id) on delete cascade,
                     name varchar(511) not null,
                     content text not null default '',
                     fragment_type varchar(64) null,
                     tags jsonb not null default '{}'::jsonb,
                     embedding vector null,
                     created_at timestamptz not null default now(),
-                    updated_at timestamptz not null default now()
+                    updated_at timestamptz not null default now(),
+                    constraint fragments_id_format_chk check (id ~ '^frag_[a-z0-9]{16}$'),
+                    constraint fragments_parent_id_format_chk check (parent_id is null or parent_id ~ '^frag_[a-z0-9]{16}$')
                 );
 
                 create table if not exists fragment_shares(
                     id bigserial primary key,
-                    fragment_id uuid not null references fragments(id) on delete cascade,
+                    fragment_id varchar(21) not null references fragments(id) on delete cascade,
                     target_agent_id bigint not null references agents(id) on delete cascade,
                     permission varchar(16) not null check (permission in ('read-only', 'read-write')),
                     created_at timestamptz not null default now(),
                     updated_at timestamptz not null default now(),
+                    constraint fragment_shares_fragment_id_format_chk check (fragment_id ~ '^frag_[a-z0-9]{16}$'),
                     unique(fragment_id, target_agent_id)
                 );
 

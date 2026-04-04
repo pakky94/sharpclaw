@@ -8,7 +8,7 @@ public static class FragmentTools
     public static readonly AIFunction[] Functions =
     [
         AIFunctionFactory.Create(CreateFragment, "create_fragment", "Create a new fragment."),
-        AIFunctionFactory.Create(ReadFragment, "read_fragment", "Read a fragment by id."),
+        AIFunctionFactory.Create(ReadFragment, "read_fragment", "Read a fragment by id. Defaults to returning child fragments' names only."),
         AIFunctionFactory.Create(UpdateFragment, "update_fragment", "Update fragment content/type/tags."),
         AIFunctionFactory.Create(DeleteFragment, "delete_fragment", "Delete a fragment."),
         AIFunctionFactory.Create(MoveFragment, "move_fragment", "Move a fragment to a new parent and optionally rename it."),
@@ -28,35 +28,46 @@ public static class FragmentTools
         var ctx = serviceProvider.GetRequiredService<AgentExecutionContext>();
         var repository = serviceProvider.GetRequiredService<FragmentsRepository>();
 
-        Guid? parentGuid = null;
+        string? parentFragmentId = null;
         if (!string.IsNullOrWhiteSpace(parent_id))
         {
-            if (!Guid.TryParse(parent_id, out var parsedParent))
+            if (!FragmentIds.IsValid(parent_id))
                 return new { error = $"Invalid parent_id: {parent_id}" };
 
-            parentGuid = parsedParent;
+            parentFragmentId = parent_id;
         }
 
-        var id = await repository.CreateFragment(ctx.AgentId, name, parentGuid, content, type, tags);
-        return new { id = id.ToString() };
+        var effectiveParentId = parentFragmentId ?? await repository.EnsureRootFragment(ctx.AgentId);
+        var existingId = await repository.ResolveChild(ctx.AgentId, effectiveParentId, name);
+        if (!string.IsNullOrWhiteSpace(existingId))
+        {
+            return new
+            {
+                error =
+                    $"Fragment '{name}' already exists under parent '{effectiveParentId}' (id: {existingId}). Use update_fragment on the existing fragment instead.",
+            };
+        }
+
+        var id = await repository.CreateFragment(ctx.AgentId, name, effectiveParentId, content, type, tags);
+        return new { id };
     }
 
     public static async Task<object> ReadFragment(
         IServiceProvider serviceProvider,
         string id,
-        bool include_children = false,
+        bool include_children = true,
         int max_depth = 1,
-        bool child_names_only = false)
+        bool child_names_only = true)
     {
         var ctx = serviceProvider.GetRequiredService<AgentExecutionContext>();
         var repository = serviceProvider.GetRequiredService<FragmentsRepository>();
 
-        if (!Guid.TryParse(id, out var fragmentId))
+        if (!FragmentIds.IsValid(id))
             return new { error = $"Invalid id: {id}" };
 
         var fragment = await repository.ReadFragment(
             ctx.AgentId,
-            fragmentId,
+            id,
             include_children,
             max_depth,
             child_names_only);
@@ -74,10 +85,10 @@ public static class FragmentTools
         var ctx = serviceProvider.GetRequiredService<AgentExecutionContext>();
         var repository = serviceProvider.GetRequiredService<FragmentsRepository>();
 
-        if (!Guid.TryParse(id, out var fragmentId))
+        if (!FragmentIds.IsValid(id))
             return new { error = $"Invalid id: {id}" };
 
-        var updated = await repository.UpdateFragment(ctx.AgentId, fragmentId, content, tags, type);
+        var updated = await repository.UpdateFragment(ctx.AgentId, id, content, tags, type);
         return new { updated };
     }
 
@@ -89,10 +100,10 @@ public static class FragmentTools
         var ctx = serviceProvider.GetRequiredService<AgentExecutionContext>();
         var repository = serviceProvider.GetRequiredService<FragmentsRepository>();
 
-        if (!Guid.TryParse(id, out var fragmentId))
+        if (!FragmentIds.IsValid(id))
             return new { error = $"Invalid id: {id}" };
 
-        var deleted = await repository.DeleteFragment(ctx.AgentId, fragmentId, recursive);
+        var deleted = await repository.DeleteFragment(ctx.AgentId, id, recursive);
         return new { deleted };
     }
 
@@ -105,13 +116,13 @@ public static class FragmentTools
         var ctx = serviceProvider.GetRequiredService<AgentExecutionContext>();
         var repository = serviceProvider.GetRequiredService<FragmentsRepository>();
 
-        if (!Guid.TryParse(fragment_id, out var fragmentId))
+        if (!FragmentIds.IsValid(fragment_id))
             return new { error = $"Invalid fragment_id: {fragment_id}" };
 
-        if (!Guid.TryParse(new_parent_id, out var newParentId))
+        if (!FragmentIds.IsValid(new_parent_id))
             return new { error = $"Invalid new_parent_id: {new_parent_id}" };
 
-        var moved = await repository.MoveFragment(ctx.AgentId, fragmentId, newParentId, new_name);
+        var moved = await repository.MoveFragment(ctx.AgentId, fragment_id, new_parent_id, new_name);
         return new { moved };
     }
 
@@ -126,12 +137,12 @@ public static class FragmentTools
         var ctx = serviceProvider.GetRequiredService<AgentExecutionContext>();
         var repository = serviceProvider.GetRequiredService<FragmentsRepository>();
 
-        Guid? parentGuid = null;
+        string? parentFragmentId = null;
         if (!string.IsNullOrWhiteSpace(parent_id))
         {
-            if (!Guid.TryParse(parent_id, out var parsed))
+            if (!FragmentIds.IsValid(parent_id))
                 return new { error = $"Invalid parent_id: {parent_id}" };
-            parentGuid = parsed;
+            parentFragmentId = parent_id;
         }
 
         var results = await repository.SearchFragments(
@@ -140,7 +151,7 @@ public static class FragmentTools
             top_k,
             tag_filter,
             type_filter,
-            parentGuid);
+            parentFragmentId);
 
         return results;
     }
@@ -153,11 +164,11 @@ public static class FragmentTools
         var ctx = serviceProvider.GetRequiredService<AgentExecutionContext>();
         var repository = serviceProvider.GetRequiredService<FragmentsRepository>();
 
-        if (!Guid.TryParse(parent_id, out var parentId))
+        if (!FragmentIds.IsValid(parent_id))
             return new { error = $"Invalid parent_id: {parent_id}" };
 
-        var id = await repository.ResolveChild(ctx.AgentId, parentId, child_name);
-        return new { id = id?.ToString() };
+        var id = await repository.ResolveChild(ctx.AgentId, parent_id, child_name);
+        return new { id };
     }
 
     public static async Task<object> ShareFragment(
@@ -169,13 +180,13 @@ public static class FragmentTools
         var ctx = serviceProvider.GetRequiredService<AgentExecutionContext>();
         var repository = serviceProvider.GetRequiredService<FragmentsRepository>();
 
-        if (!Guid.TryParse(fragment_id, out var fragmentId))
+        if (!FragmentIds.IsValid(fragment_id))
             return new { error = $"Invalid fragment_id: {fragment_id}" };
 
         if (!long.TryParse(target_agent_id, out var targetAgentId))
             return new { error = $"Invalid target_agent_id: {target_agent_id}" };
 
-        var shared = await repository.ShareFragment(ctx.AgentId, fragmentId, targetAgentId, permission);
+        var shared = await repository.ShareFragment(ctx.AgentId, fragment_id, targetAgentId, permission);
         return new { shared };
     }
 }

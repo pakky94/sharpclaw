@@ -11,10 +11,10 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
     private string ConnectionString => configuration.GetConnectionString("sharpclaw")
                                        ?? throw new InvalidOperationException("Missing connection string 'sharpclaw'.");
 
-    public async Task<Guid> EnsureRootFragment(long agentId)
+    public async Task<string> EnsureRootFragment(long agentId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
-        return await connection.QuerySingleAsync<Guid>(
+        return await connection.QuerySingleAsync<string>(
             """
             with existing as (
                 select id
@@ -38,10 +38,10 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
             new { agentId, rootName = RootName });
     }
 
-    public async Task<Guid> CreateFragment(
+    public async Task<string> CreateFragment(
         long agentId,
         string name,
-        Guid? parentId,
+        string? parentId,
         string content,
         string? type,
         IReadOnlyDictionary<string, string>? tags)
@@ -50,7 +50,7 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
         var tagsJson = SerializeTags(tags);
 
         await using var connection = new NpgsqlConnection(ConnectionString);
-        return await connection.QuerySingleAsync<Guid>(
+        return await connection.QuerySingleAsync<string>(
             """
             insert into fragments (owner_agent_id, parent_id, name, content, fragment_type, tags, embedding)
             values (@agentId, @parentId, @name, @content, @type, cast(@tagsJson as jsonb), null)
@@ -69,10 +69,10 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
 
     public async Task<FragmentReadResponse?> ReadFragment(
         long agentId,
-        Guid id,
-        bool includeChildren = false,
+        string id,
+        bool includeChildren = true,
         int maxDepth = 1,
-        bool childNamesOnly = false)
+        bool childNamesOnly = true)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         var root = await connection.QueryFirstOrDefaultAsync<FragmentRow>(
@@ -190,9 +190,9 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
         }
 
         return new FragmentReadResponse(
-            Id: root.Id.ToString(),
+            Id: root.Id,
             Name: root.Name,
-            ParentId: root.ParentId?.ToString(),
+            ParentId: root.ParentId,
             Content: root.Content,
             Type: root.Type,
             Tags: ParseTags(root.TagsJson),
@@ -202,7 +202,7 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
 
     public async Task<bool> UpdateFragment(
         long agentId,
-        Guid id,
+        string id,
         string? content = null,
         IReadOnlyDictionary<string, string>? tags = null,
         string? type = null)
@@ -240,7 +240,7 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
         return affected > 0;
     }
 
-    public async Task<bool> DeleteFragment(long agentId, Guid id, bool recursive = true)
+    public async Task<bool> DeleteFragment(long agentId, string id, bool recursive = true)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
@@ -289,7 +289,7 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
         return affected > 0;
     }
 
-    public async Task<bool> MoveFragment(long agentId, Guid fragmentId, Guid newParentId, string? newName)
+    public async Task<bool> MoveFragment(long agentId, string fragmentId, string newParentId, string? newName)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
@@ -360,7 +360,7 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
         int topK = 5,
         IReadOnlyDictionary<string, string>? tagFilter = null,
         string? typeFilter = null,
-        Guid? parentId = null)
+        string? parentId = null)
     {
         var effectiveTopK = Math.Clamp(topK, 1, 50);
         var tagsJson = tagFilter is null ? null : SerializeTags(tagFilter);
@@ -444,7 +444,7 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
             if (materialized.Length > 0)
             {
                 return materialized
-                    .Select(r => new FragmentSearchResult(r.Id.ToString(), r.Name, r.Snippet, r.Permission))
+                    .Select(r => new FragmentSearchResult(r.Id, r.Name, r.Snippet, r.Permission))
                     .ToArray();
             }
         }
@@ -526,14 +526,14 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
             });
 
         return rows
-            .Select(r => new FragmentSearchResult(r.Id.ToString(), r.Name, r.Snippet, r.Permission))
+            .Select(r => new FragmentSearchResult(r.Id, r.Name, r.Snippet, r.Permission))
             .ToArray();
     }
 
-    public async Task<Guid?> ResolveChild(long agentId, Guid parentId, string childName)
+    public async Task<string?> ResolveChild(long agentId, string parentId, string childName)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
-        return await connection.QueryFirstOrDefaultAsync<Guid?>(
+        return await connection.QueryFirstOrDefaultAsync<string?>(
             """
             select f.id
             from fragments f
@@ -554,7 +554,7 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
             new { agentId, parentId, childName });
     }
 
-    public async Task<bool> ShareFragment(long agentId, Guid fragmentId, long targetAgentId, string permission)
+    public async Task<bool> ShareFragment(long agentId, string fragmentId, long targetAgentId, string permission)
     {
         if (permission is not ("read-only" or "read-write"))
             return false;
@@ -638,7 +638,7 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
         for (var i = 0; i < segments.Length - 1; i++)
         {
             var segment = segments[i];
-            var existingId = await connection.QueryFirstOrDefaultAsync<Guid?>(
+            var existingId = await connection.QueryFirstOrDefaultAsync<string?>(
                 """
                 select id
                 from fragments
@@ -653,11 +653,11 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
 
             if (existingId is not null)
             {
-                currentParent = existingId.Value;
+                currentParent = existingId;
                 continue;
             }
 
-            currentParent = await connection.QuerySingleAsync<Guid>(
+            currentParent = await connection.QuerySingleAsync<string>(
                 """
                 insert into fragments (owner_agent_id, parent_id, name, content, fragment_type, tags, embedding)
                 values (@agentId, @parentId, @name, '', 'knowledge', cast('{}' as jsonb), null)
@@ -668,7 +668,7 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
         }
 
         var finalName = segments[^1];
-        var existingLeaf = await connection.QueryFirstOrDefaultAsync<Guid?>(
+        var existingLeaf = await connection.QueryFirstOrDefaultAsync<string?>(
             """
             select id
             from fragments
@@ -701,7 +701,7 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
                     updated_at = now()
                 where id = @id;
                 """,
-                new { id = existingLeaf.Value, content },
+                new { id = existingLeaf, content },
                 tx);
         }
 
@@ -784,7 +784,7 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
             .ToArray();
     }
 
-    public async Task<bool> TrySetFragmentEmbedding(Guid fragmentId, DateTime updatedAt, IReadOnlyList<float> embedding, CancellationToken cancellationToken = default)
+    public async Task<bool> TrySetFragmentEmbedding(string fragmentId, DateTime updatedAt, IReadOnlyList<float> embedding, CancellationToken cancellationToken = default)
     {
         var embeddingLiteral = ToVectorLiteral(embedding);
         await using var connection = new NpgsqlConnection(ConnectionString);
@@ -837,9 +837,9 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
     private static FragmentReadItem ToReadItem(FragmentDepthRow row)
     {
         return new FragmentReadItem(
-            Id: row.Id.ToString(),
+            Id: row.Id,
             Name: row.Name,
-            ParentId: row.ParentId?.ToString(),
+            ParentId: row.ParentId,
             Content: row.Content,
             Type: row.Type,
             Tags: ParseTags(row.TagsJson),
@@ -849,9 +849,9 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
 
     private sealed class FragmentRow
     {
-        public Guid Id { get; init; }
+        public required string Id { get; init; }
         public required string Name { get; init; }
-        public Guid? ParentId { get; init; }
+        public string? ParentId { get; init; }
         public required string Content { get; init; }
         public string? Type { get; init; }
         public string? TagsJson { get; init; }
@@ -862,9 +862,9 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
 
     private sealed class FragmentDepthRow
     {
-        public Guid Id { get; init; }
+        public required string Id { get; init; }
         public required string Name { get; init; }
-        public Guid? ParentId { get; init; }
+        public string? ParentId { get; init; }
         public required string Content { get; init; }
         public string? Type { get; init; }
         public string? TagsJson { get; init; }
@@ -876,7 +876,7 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
 
     private sealed class FragmentSearchRow
     {
-        public Guid Id { get; init; }
+        public required string Id { get; init; }
         public required string Name { get; init; }
         public required string Snippet { get; init; }
         public required string Permission { get; init; }
@@ -885,7 +885,7 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
 
     private sealed class PendingFragmentEmbeddingRow
     {
-        public Guid Id { get; init; }
+        public required string Id { get; init; }
         public required string Name { get; init; }
         public string? Type { get; init; }
         public required string Content { get; init; }
@@ -920,8 +920,9 @@ public sealed record FragmentSearchResult(
     string Permissions);
 
 public sealed record PendingFragmentEmbedding(
-    Guid Id,
+    string Id,
     string Name,
     string? Type,
     string Content,
     DateTime UpdatedAt);
+

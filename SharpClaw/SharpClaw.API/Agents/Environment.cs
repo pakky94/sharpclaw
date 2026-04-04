@@ -7,7 +7,7 @@ public static class Environment
     // TODO: when adding multiprovider support update the prompt
     // TODO: when workspace support update the prompt
     public static string EnvPrompt(string modelId, DateTimeOffset now,
-        Guid rootFragment,
+        string rootFragment,
         IReadOnlyList<FragmentReadItem>? fragmentsChildren) =>
         $"""
          You are powered by the model named {modelId}.
