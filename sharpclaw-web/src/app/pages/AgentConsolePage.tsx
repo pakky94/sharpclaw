@@ -25,18 +25,41 @@ import {
 } from '../utils/chatUtils'
 import './AgentConsolePage.css'
 
-export function AgentConsolePage() {
+type AgentConsolePageProps = {
+  onUnsavedChange?: (hasUnsaved: boolean) => void
+}
+
+export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   const [agents, setAgents] = useState<AgentConfig[]>([])
   const [selectedAgentId, setSelectedAgentId] = useState<number | null>(null)
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatBubble[]>([])
-  const [prompt, setPrompt] = useState('')
+  const [draftsBySessionKey, setDraftsBySessionKey] = useState<Record<string, string>>({})
   const [isSending, setIsSending] = useState(false)
   const [showToolEvents, setShowToolEvents] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeRun, setActiveRun] = useState<{ sessionId: string; runId: string; status: RunStatus } | null>(null)
   const streamRef = useRef<{ sessionId: string; runId: string; source: EventSource } | null>(null)
+  const draftSessionKey = selectedSessionId ?? (selectedAgentId !== null ? `__new__:${selectedAgentId}` : '__new__:none')
+  const prompt = draftsBySessionKey[draftSessionKey] ?? ''
+  const unsavedSessionIds = useMemo(() => {
+    const next = new Set<string>()
+    for (const [sessionKey, draft] of Object.entries(draftsBySessionKey)) {
+      if (!draft.trim()) {
+        continue
+      }
+      if (sessionKey.startsWith('__new__:')) {
+        continue
+      }
+      next.add(sessionKey)
+    }
+    return next
+  }, [draftsBySessionKey])
+  const hasUnsavedDrafts = useMemo(
+    () => Object.values(draftsBySessionKey).some((draft) => draft.trim().length > 0),
+    [draftsBySessionKey],
+  )
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.sessionId === selectedSessionId) ?? null,
@@ -69,6 +92,10 @@ export function AgentConsolePage() {
       closeStream()
     }
   }, [])
+
+  useEffect(() => {
+    onUnsavedChange?.(hasUnsavedDrafts)
+  }, [hasUnsavedDrafts, onUnsavedChange])
 
   async function loadAgents() {
     try {
@@ -208,7 +235,7 @@ export function AgentConsolePage() {
     try {
       setError(null)
       setIsSending(true)
-      setPrompt('')
+      const sourceDraftSessionKey = draftSessionKey
 
       let sessionId = selectedSessionId
       if (!sessionId) {
@@ -234,6 +261,9 @@ export function AgentConsolePage() {
         method: 'POST',
         body: JSON.stringify({ message: text }),
       })
+      setDraftsBySessionKey((prev) =>
+        prev[sourceDraftSessionKey] === undefined ? prev : { ...prev, [sourceDraftSessionKey]: '' },
+      )
 
       setActiveRun({ sessionId, runId: run.runId, status: 'pending' })
       await streamRun(sessionId, run.runId, localAssistantId)
@@ -405,6 +435,7 @@ export function AgentConsolePage() {
         selectedAgentId={selectedAgentId}
         sessions={sessions}
         selectedSessionId={selectedSessionId}
+        unsavedSessionIds={unsavedSessionIds}
         onSelectAgent={(agentId) => {
           closeStream()
           setActiveRun(null)
@@ -427,6 +458,7 @@ export function AgentConsolePage() {
       <main className="chat-panel">
         <ChatHeader
           selectedSession={selectedSession}
+          hasUnsavedDraft={prompt.trim().length > 0}
           showToolEvents={showToolEvents}
           apiBaseUrl={API_BASE_URL}
           onShowToolEventsChange={setShowToolEvents}
@@ -441,7 +473,17 @@ export function AgentConsolePage() {
           isSending={isSending}
           isSessionProcessing={isSessionProcessing}
           error={error}
-          onPromptChange={setPrompt}
+          onPromptChange={(value) => {
+            setDraftsBySessionKey((prev) => {
+              if (prev[draftSessionKey] === value) {
+                return prev
+              }
+              return {
+                ...prev,
+                [draftSessionKey]: value,
+              }
+            })
+          }}
           onSubmit={sendMessage}
         />
       </main>

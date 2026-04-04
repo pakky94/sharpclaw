@@ -5,6 +5,7 @@ type SessionsPanelProps = {
   selectedAgentId: number | null
   sessions: SessionSummary[]
   selectedSessionId: string | null
+  unsavedSessionIds: Set<string>
   onSelectAgent: (agentId: number) => void
   onCreateSession: () => void
   onRefreshSessions: () => void
@@ -16,6 +17,7 @@ export function SessionsPanel({
   selectedAgentId,
   sessions,
   selectedSessionId,
+  unsavedSessionIds,
   onSelectAgent,
   onCreateSession,
   onRefreshSessions,
@@ -66,7 +68,9 @@ export function SessionsPanel({
               <div className="session-id">{session.sessionId.slice(0, 8)}</div>
               <div className="session-meta">
                 <span>{new Date(session.createdAt).toLocaleString()}</span>
-                <span>{session.messagesCount} msgs</span>
+                <span>
+                  {session.messagesCount} msgs{unsavedSessionIds.has(session.sessionId) ? ' *' : ''}
+                </span>
               </div>
             </button>
           )

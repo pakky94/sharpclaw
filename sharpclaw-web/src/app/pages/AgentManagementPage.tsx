@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { API_BASE_URL, fetchJson } from '../services/chatApi'
 import type { AgentConfig, AgentFileSummary } from '../types/chat'
 import { asErrorMessage } from '../utils/chatUtils'
@@ -6,7 +6,27 @@ import './AgentConsolePage.css'
 
 const DEFAULT_MODEL = 'openai/gpt-oss-20b'
 
-export function AgentManagementPage() {
+type AgentManagementPageProps = {
+  onUnsavedChange?: (hasUnsaved: boolean) => void
+}
+
+type FileDraft = {
+  path: string
+  content: string
+  dirty: boolean
+  originalPath: string | null
+  originalContent: string | null
+}
+
+function getExistingFileDraftKey(agentId: number, path: string) {
+  return `existing:${agentId}:${path}`
+}
+
+function getNewFileDraftKey(agentId: number) {
+  return `new:${agentId}`
+}
+
+export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProps) {
   const [agents, setAgents] = useState<AgentConfig[]>([])
   const [selectedAgentId, setSelectedAgentId] = useState<number | null>(null)
   const [agentName, setAgentName] = useState('')
@@ -14,11 +34,26 @@ export function AgentManagementPage() {
   const [agentTemperature, setAgentTemperature] = useState('0.1')
   const [files, setFiles] = useState<AgentFileSummary[]>([])
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
-  const [filePath, setFilePath] = useState('')
-  const [fileContent, setFileContent] = useState('')
-  const [fileDirty, setFileDirty] = useState(false)
+  const [activeDraftKey, setActiveDraftKey] = useState<string | null>(null)
+  const [fileDrafts, setFileDrafts] = useState<Record<string, FileDraft>>({})
   const [fileLoading, setFileLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const activeDraft = activeDraftKey ? fileDrafts[activeDraftKey] ?? null : null
+  const filePath = activeDraft?.path ?? ''
+  const fileContent = activeDraft?.content ?? ''
+  const fileDirty = activeDraft?.dirty ?? false
+  const hasUnsavedDrafts = useMemo(() => Object.values(fileDrafts).some((draft) => draft.dirty), [fileDrafts])
+  const unsavedFileKeys = useMemo(() => {
+    const next = new Set<string>()
+    for (const [key, draft] of Object.entries(fileDrafts)) {
+      if (draft.dirty) {
+        next.add(key)
+      }
+    }
+    return next
+  }, [fileDrafts])
+  const unsavedNewFileForSelectedAgent =
+    selectedAgentId !== null && unsavedFileKeys.has(getNewFileDraftKey(selectedAgentId))
 
   useEffect(() => {
     void loadAgents()
@@ -34,11 +69,13 @@ export function AgentManagementPage() {
     void refreshFiles(selectedAgentId)
   }, [selectedAgentId])
 
+  useEffect(() => {
+    onUnsavedChange?.(hasUnsavedDrafts)
+  }, [hasUnsavedDrafts, onUnsavedChange])
+
   function resetEditor() {
     setSelectedFilePath(null)
-    setFilePath('')
-    setFileContent('')
-    setFileDirty(false)
+    setActiveDraftKey(null)
   }
 
   function applyAgentForm(agent: AgentConfig) {
@@ -139,6 +176,14 @@ export function AgentManagementPage() {
       return
     }
 
+    const draftKey = getExistingFileDraftKey(selectedAgentId, path)
+    const existingDraft = fileDrafts[draftKey]
+    if (existingDraft) {
+      setSelectedFilePath(path)
+      setActiveDraftKey(draftKey)
+      return
+    }
+
     try {
       setError(null)
       setFileLoading(true)
@@ -146,9 +191,17 @@ export function AgentManagementPage() {
         `${API_BASE_URL}/agents/${selectedAgentId}/file?path=${encodeURIComponent(path)}`,
       )
       setSelectedFilePath(data.path)
-      setFilePath(data.path)
-      setFileContent(data.content)
-      setFileDirty(false)
+      setFileDrafts((prev) => ({
+        ...prev,
+        [draftKey]: {
+          path: data.path,
+          content: data.content,
+          dirty: false,
+          originalPath: data.path,
+          originalContent: data.content,
+        },
+      }))
+      setActiveDraftKey(draftKey)
     } catch (e) {
       setError(asErrorMessage(e))
     } finally {
@@ -157,7 +210,7 @@ export function AgentManagementPage() {
   }
 
   async function saveFile() {
-    if (selectedAgentId === null || !filePath.trim()) {
+    if (selectedAgentId === null || !activeDraftKey || !filePath.trim()) {
       return
     }
 
@@ -169,8 +222,23 @@ export function AgentManagementPage() {
         method: 'PUT',
         body: JSON.stringify({ path, content: fileContent }),
       })
+      const savedDraftKey = getExistingFileDraftKey(selectedAgentId, path)
+      setFileDrafts((prev) => {
+        const next = { ...prev }
+        if (activeDraftKey !== savedDraftKey) {
+          delete next[activeDraftKey]
+        }
+        next[savedDraftKey] = {
+          path,
+          content: fileContent,
+          dirty: false,
+          originalPath: path,
+          originalContent: fileContent,
+        }
+        return next
+      })
+      setActiveDraftKey(savedDraftKey)
       setSelectedFilePath(path)
-      setFileDirty(false)
       await refreshFiles(selectedAgentId)
     } catch (e) {
       setError(asErrorMessage(e))
@@ -186,15 +254,89 @@ export function AgentManagementPage() {
 
     try {
       setError(null)
+      const fileDraftKey = getExistingFileDraftKey(selectedAgentId, selectedFilePath)
       await fetchJson<{ agentId: number; path: string }>(
         `${API_BASE_URL}/agents/${selectedAgentId}/file?path=${encodeURIComponent(selectedFilePath)}`,
         { method: 'DELETE' },
       )
+      setFileDrafts((prev) => {
+        const next = { ...prev }
+        delete next[fileDraftKey]
+        return next
+      })
       resetEditor()
       await refreshFiles(selectedAgentId)
     } catch (e) {
       setError(asErrorMessage(e))
     }
+  }
+
+  async function reloadFile() {
+    if (selectedAgentId === null || !selectedFilePath) {
+      return
+    }
+
+    const draftKey = getExistingFileDraftKey(selectedAgentId, selectedFilePath)
+
+    try {
+      setError(null)
+      setFileLoading(true)
+      const data = await fetchJson<{ path: string; content: string }>(
+        `${API_BASE_URL}/agents/${selectedAgentId}/file?path=${encodeURIComponent(selectedFilePath)}`,
+      )
+      setSelectedFilePath(data.path)
+      setActiveDraftKey(draftKey)
+      setFileDrafts((prev) => ({
+        ...prev,
+        [draftKey]: {
+          path: data.path,
+          content: data.content,
+          dirty: false,
+          originalPath: data.path,
+          originalContent: data.content,
+        },
+      }))
+    } catch (e) {
+      setError(asErrorMessage(e))
+    } finally {
+      setFileLoading(false)
+    }
+  }
+
+  function discardUnsavedChanges() {
+    if (!activeDraftKey) {
+      return
+    }
+
+    setError(null)
+    setFileDrafts((prev) => {
+      const current = prev[activeDraftKey]
+      if (!current) {
+        return prev
+      }
+
+      if (current.originalPath === null || current.originalContent === null) {
+        return {
+          ...prev,
+          [activeDraftKey]: {
+            ...current,
+            path: '',
+            content: '',
+            dirty: false,
+          },
+        }
+      }
+
+      return {
+        ...prev,
+        [activeDraftKey]: {
+          ...current,
+          path: current.originalPath,
+          content: current.originalContent,
+          dirty: false,
+        },
+      }
+    })
   }
 
   return (
@@ -275,7 +417,7 @@ export function AgentManagementPage() {
         </div>
 
         <div className="files-header">
-          <h3>Files</h3>
+          <h3>Files{unsavedNewFileForSelectedAgent ? ' *' : ''}</h3>
           <div className="inline-actions">
             <button
               type="button"
@@ -289,10 +431,18 @@ export function AgentManagementPage() {
               type="button"
               className="button ghost"
               onClick={() => {
+                if (selectedAgentId === null) {
+                  return
+                }
+                const newDraftKey = getNewFileDraftKey(selectedAgentId)
                 setSelectedFilePath(null)
-                setFilePath('')
-                setFileContent('')
-                setFileDirty(false)
+                setActiveDraftKey(newDraftKey)
+                setFileDrafts((prev) => ({
+                  ...prev,
+                  [newDraftKey]:
+                    prev[newDraftKey] ??
+                    { path: '', content: '', dirty: false, originalPath: null, originalContent: null },
+                }))
               }}
               disabled={!selectedAgentId}
             >
@@ -307,6 +457,8 @@ export function AgentManagementPage() {
         <div className="files-list">
           {files.map((file) => {
             const isSelected = selectedFilePath === file.name
+            const fileDraftKey = selectedAgentId !== null ? getExistingFileDraftKey(selectedAgentId, file.name) : null
+            const hasUnsaved = fileDraftKey ? unsavedFileKeys.has(fileDraftKey) : false
             return (
               <button
                 key={file.name}
@@ -320,7 +472,10 @@ export function AgentManagementPage() {
                   void loadFile(file.name)
                 }}
               >
-                <div className="session-id">{file.name}</div>
+                <div className="session-id">
+                  {file.name}
+                  {hasUnsaved ? ' *' : ''}
+                </div>
               </button>
             )
           })}
@@ -331,7 +486,7 @@ export function AgentManagementPage() {
       <main className="manager-main">
         <div className="chat-header">
           <div>
-            <h2>{selectedFilePath ?? 'No File Selected'}</h2>
+            <h2>{selectedFilePath ?? 'No File Selected'}{fileDirty ? ' *' : ''}</h2>
             <p>{selectedFilePath ? 'Editing selected file.' : 'Select a file from the sidebar or click New.'}</p>
           </div>
         </div>
@@ -344,32 +499,80 @@ export function AgentManagementPage() {
           className="text-input"
           value={filePath}
           onChange={(e) => {
-            setFilePath(e.target.value)
-            setFileDirty(true)
+            if (!activeDraftKey) {
+              return
+            }
+            const value = e.target.value
+            setFileDrafts((prev) => {
+              const current = prev[activeDraftKey]
+              return {
+                ...prev,
+                [activeDraftKey]: {
+                  path: value,
+                  content: current?.content ?? '',
+                  dirty: true,
+                  originalPath: current?.originalPath ?? null,
+                  originalContent: current?.originalContent ?? null,
+                },
+              }
+            })
           }}
-          disabled={fileLoading || !selectedAgentId}
+          disabled={fileLoading || !selectedAgentId || !activeDraftKey}
         />
 
         <textarea
           className="composer-input file-editor-main"
           value={fileContent}
           onChange={(e) => {
-            setFileContent(e.target.value)
-            setFileDirty(true)
+            if (!activeDraftKey) {
+              return
+            }
+            const value = e.target.value
+            setFileDrafts((prev) => {
+              const current = prev[activeDraftKey]
+              return {
+                ...prev,
+                [activeDraftKey]: {
+                  path: current?.path ?? '',
+                  content: value,
+                  dirty: true,
+                  originalPath: current?.originalPath ?? null,
+                  originalContent: current?.originalContent ?? null,
+                },
+              }
+            })
           }}
-          disabled={fileLoading || !selectedAgentId}
+          disabled={fileLoading || !selectedAgentId || !activeDraftKey}
         />
 
         <div className="composer-footer">
           {error && <span className="error-text">{error}</span>}
-          <button
-            type="button"
-            className="button primary"
-            onClick={() => void saveFile()}
-            disabled={!selectedAgentId || fileLoading || !filePath.trim() || !fileDirty}
-          >
-            Save File
-          </button>
+          <div className="inline-actions">
+            <button
+              type="button"
+              className="button ghost"
+              onClick={discardUnsavedChanges}
+              disabled={!selectedAgentId || fileLoading || !activeDraftKey || !fileDirty}
+            >
+              Discard
+            </button>
+            <button
+              type="button"
+              className="button ghost"
+              onClick={() => void reloadFile()}
+              disabled={!selectedAgentId || fileLoading || !selectedFilePath}
+            >
+              Reload
+            </button>
+            <button
+              type="button"
+              className="button primary"
+              onClick={() => void saveFile()}
+              disabled={!selectedAgentId || fileLoading || !filePath.trim() || !fileDirty}
+            >
+              Save File
+            </button>
+          </div>
         </div>
       </main>
     </div>
