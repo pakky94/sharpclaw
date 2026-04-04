@@ -1,6 +1,7 @@
 ﻿using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI.Chat;
+using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
@@ -9,19 +10,25 @@ namespace SharpClaw.API.Agents;
 public class AgentClient(ChatClient chatClient, AgentExecutionContext context, IConfiguration configuration)
 {
     public async Task<List<ChatResponse>> GetResponse(List<ChatMessage> messages, List<AIFunction> tools,
+        AgentRunState? runState = null,
         Func<ChatResponseUpdate, Task>? onUpdate = null)
     {
+        var services = new ServiceCollection()
+            .Configure<LmStudioConfiguration>(configuration)
+            .AddSingleton(context)
+            .AddSingleton(configuration)
+            .AddSingleton<Repository>()
+            .AddSingleton<FragmentsRepository>()
+            .AddSingleton<FragmentEmbeddingService>()
+            .AddSingleton<WorkspaceRepository>()
+            .AddSingleton<ApprovalService>();
+
+        if (runState is not null)
+            services.AddSingleton(runState);
+
         var agent = chatClient.AsAIAgent(
-            // instructions: "you are a helpful assistant, follow the .md files instructions and try to help the user.",
             tools: [..tools],
-            services: new ServiceCollection()
-                .Configure<LmStudioConfiguration>(configuration)
-                .AddSingleton(context)
-                .AddSingleton(configuration)
-                .AddSingleton<Repository>()
-                .AddSingleton<FragmentsRepository>()
-                .AddSingleton<FragmentEmbeddingService>()
-                .BuildServiceProvider()
+            services: services.BuildServiceProvider()
         );
 
         var response = new List<ChatResponse>();

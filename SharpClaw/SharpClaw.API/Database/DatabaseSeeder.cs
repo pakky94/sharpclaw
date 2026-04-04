@@ -146,6 +146,97 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     on fragments using gin (tags);
                 create index if not exists idx_fragment_shares_target
                     on fragment_shares(target_agent_id);
+
+                create table if not exists workspaces(
+                    id bigserial primary key,
+                    name varchar(255) not null,
+                    root_path text not null,
+                    allowlist_patterns jsonb not null default '[]'::jsonb,
+                    denylist_patterns jsonb not null default '[]'::jsonb,
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now(),
+                    unique(name)
+                );
+
+                create table if not exists agent_workspace_assignments(
+                    id bigserial primary key,
+                    agent_id bigint not null references agents(id) on delete cascade,
+                    workspace_id bigint not null references workspaces(id) on delete cascade,
+                    policy_mode varchar(32) not null default 'confirm_writes_and_exec'
+                        check (policy_mode in ('unrestricted', 'true_unrestricted', 'confirm_writes_and_exec', 'confirm_exec_only', 'read_only', 'disabled')),
+                    is_default boolean not null default false,
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now(),
+                    unique(agent_id, workspace_id)
+                );
+
+                create table if not exists workspace_approval_events(
+                    id bigserial primary key,
+                    session_id uuid not null references sessions(id) on delete cascade,
+                    agent_id bigint not null references agents(id),
+                    approval_token varchar(64) not null unique,
+                    action_type varchar(32) not null,
+                    target_path text null,
+                    command_preview text null,
+                    risk_level varchar(16) not null,
+                    status varchar(16) not null default 'pending'
+                        check (status in ('pending', 'approved', 'rejected', 'expired')),
+                    created_at timestamptz not null default now(),
+                    resolved_at timestamptz null
+                );
+
+                create table if not exists lcm_files(
+                    id bigserial primary key,
+                    file_id varchar(128) not null unique,
+                    session_id uuid not null references sessions(id) on delete cascade,
+                    origin_tool varchar(64) not null,
+                    workspace_path text not null,
+                    byte_count bigint not null,
+                    storage_kind varchar(16) not null default 'filesystem'
+                        check (storage_kind in ('filesystem', 'inline')),
+                    filesystem_path text null,
+                    created_at timestamptz not null default now()
+                );
+
+                create table if not exists session_active_workspaces(
+                    id bigserial primary key,
+                    session_id uuid not null references sessions(id) on delete cascade,
+                    workspace_name varchar(255) not null,
+                    policy_mode varchar(32) not null default 'confirm_writes_and_exec'
+                        check (policy_mode in ('unrestricted', 'true_unrestricted', 'confirm_writes_and_exec', 'confirm_exec_only', 'read_only', 'disabled')),
+                    created_at timestamptz not null default now(),
+                    unique(session_id, workspace_name)
+                );
+
+                create index if not exists idx_session_active_workspaces_session
+                    on session_active_workspaces(session_id);
+
+                create index if not exists idx_workspaces_name
+                    on workspaces(name);
+
+                create index if not exists idx_agent_workspace_assignments_agent
+                    on agent_workspace_assignments(agent_id);
+
+                create index if not exists idx_agent_workspace_assignments_workspace
+                    on agent_workspace_assignments(workspace_id);
+
+                create index if not exists idx_agent_workspace_assignments_default
+                    on agent_workspace_assignments(agent_id, is_default);
+
+                create index if not exists idx_workspace_approval_events_session_created
+                    on workspace_approval_events(session_id, created_at desc);
+
+                create index if not exists idx_workspace_approval_events_status_created
+                    on workspace_approval_events(status, created_at desc);
+
+                create index if not exists idx_workspace_approval_events_token
+                    on workspace_approval_events(approval_token);
+
+                create index if not exists idx_lcm_files_session_created
+                    on lcm_files(session_id, created_at desc);
+
+                create index if not exists idx_lcm_files_file_id
+                    on lcm_files(file_id);
                 """);
 
             if (await connection.ExecuteScalarAsync<int>("select count(*) from agents where name = 'Main'") == 0)

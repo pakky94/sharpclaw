@@ -55,7 +55,7 @@ export type StreamEvent = {
   runId: string
   sessionId: string
   sequence: number
-  type: 'started' | 'delta' | 'completed' | 'failed' | 'tool_call' | 'tool_result'
+  type: 'started' | 'delta' | 'completed' | 'failed' | 'tool_call' | 'tool_result' | 'approval_required'
   text: string | null
   data?: unknown
   timestamp: string
@@ -87,4 +87,39 @@ export type ToolCallEventData = {
 export type ToolResultEventData = {
   callId?: string | null
   result?: unknown
+}
+
+export type WorkspaceConfig = {
+  id: number
+  name: string
+  rootPath: string
+  allowlistPatterns: string[]
+  denylistPatterns: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+export type WorkspaceAssignment = {
+  id: number
+  policyMode: string
+  isDefault: boolean
+}
+
+export type AgentWorkspaceEntry = {
+  workspace: WorkspaceConfig
+  assignment: WorkspaceAssignment
+}
+
+export type ApprovalEvent = {
+  id: number
+  sessionId: string
+  agentId: number
+  approvalToken: string
+  actionType: string
+  targetPath: string | null
+  commandPreview: string | null
+  riskLevel: string
+  status: string
+  createdAt: string
+  resolvedAt: string | null
 }

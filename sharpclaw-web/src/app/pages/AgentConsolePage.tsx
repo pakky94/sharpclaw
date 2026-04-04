@@ -40,6 +40,14 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   const [showToolEvents, setShowToolEvents] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeRun, setActiveRun] = useState<{ sessionId: string; runId: string; status: RunStatus } | null>(null)
+  const [pendingApproval, setPendingApproval] = useState<{
+    token: string
+    action: string
+    target: string | null
+    commandPreview: string | null
+    risk: string
+    description: string
+  } | null>(null)
   const streamRef = useRef<{ sessionId: string; runId: string; source: EventSource } | null>(null)
   const draftSessionKey = selectedSessionId ?? (selectedAgentId !== null ? `__new__:${selectedAgentId}` : '__new__:none')
   const prompt = draftsBySessionKey[draftSessionKey] ?? ''
@@ -392,7 +400,37 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
         reject(new Error(payload.text || 'Run failed.'))
       })
+
+      source.addEventListener('approval_required', (event) => {
+        const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
+        const data = payload.data as { approval_token: string; action: string; target: string | null; command_preview: string | null; risk: string; description: string } | undefined
+        if (data) {
+          setPendingApproval({
+            token: data.approval_token,
+            action: data.action,
+            target: data.target,
+            commandPreview: data.command_preview,
+            risk: data.risk,
+            description: data.description,
+          })
+        }
+      })
     })
+  }
+
+  async function resolveApproval(approved: boolean) {
+    if (!pendingApproval || !selectedSessionId) return
+    try {
+      setError(null)
+      const method = approved ? 'approve' : 'reject'
+      await fetchJson(
+        `${API_BASE_URL}/sessions/${selectedSessionId}/approvals/${pendingApproval.token}/${method}`,
+        { method: 'POST' },
+      )
+      setPendingApproval(null)
+    } catch (e) {
+      setError(asErrorMessage(e))
+    }
   }
 
   function closeStream() {
@@ -462,6 +500,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
           showToolEvents={showToolEvents}
           apiBaseUrl={API_BASE_URL}
           onShowToolEventsChange={setShowToolEvents}
+          onError={(msg) => setError(msg)}
         />
         <MessagesView
           messages={visibleMessages}
@@ -487,6 +526,52 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
           onSubmit={sendMessage}
         />
       </main>
+
+      {pendingApproval && (
+        <div className="approval-overlay">
+          <div className="approval-dialog">
+            <div className="approval-dialog-header">
+              <h3>Action Requires Approval</h3>
+              <span className={`approval-risk-badge ${pendingApproval.risk}`}>{pendingApproval.risk}</span>
+            </div>
+            <div className="approval-dialog-body">
+              <p className="approval-description">{pendingApproval.description}</p>
+              {pendingApproval.target && (
+                <div className="approval-detail">
+                  <span>Path:</span>
+                  <code>{pendingApproval.target}</code>
+                </div>
+              )}
+              {pendingApproval.commandPreview && (
+                <div className="approval-detail">
+                  <span>Command:</span>
+                  <code>{pendingApproval.commandPreview}</code>
+                </div>
+              )}
+              <div className="approval-detail">
+                <span>Action:</span>
+                <span className="approval-action-type">{pendingApproval.action}</span>
+              </div>
+            </div>
+            <div className="approval-dialog-footer">
+              <button
+                type="button"
+                className="button ghost"
+                onClick={() => void resolveApproval(false)}
+              >
+                Reject
+              </button>
+              <button
+                type="button"
+                className="button primary"
+                onClick={() => void resolveApproval(true)}
+              >
+                Approve
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

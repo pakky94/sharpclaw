@@ -1,4 +1,3 @@
-using System.Data;
 using System.Text.Json;
 using Dapper;
 using Microsoft.Extensions.AI;
@@ -279,6 +278,8 @@ public class Repository(IConfiguration configuration)
             tx);
 
         await tx.CommitAsync();
+
+        SetDbReference(response, "message", messageId);
         return messageId;
     }
 
@@ -395,6 +396,11 @@ public class Repository(IConfiguration configuration)
             tx);
 
         await tx.CommitAsync();
+
+        SetDbReference(summary, "summary", summaryId);
+        foreach (var item in summarizedItems)
+            SetParentSummaryReference(item, summaryId);
+
         return summaryId;
     }
 
@@ -406,7 +412,12 @@ public class Repository(IConfiguration configuration)
             select case
                        when ch.entry_type = 'message' then m.payload::text
                        else s.payload::text
-                   end as Payload
+                   end as Payload,
+                   ch.entry_type as EntryType,
+                   m.id as MessageId,
+                   s.id as SummaryId,
+                   m.parent_summary_id as MessageParentSummaryId,
+                   s.parent_summary_id as SummaryParentSummaryId
             from conversation_history ch
             left join messages m on ch.message_id = m.id
             left join summaries s on ch.summary_id = s.id
@@ -416,7 +427,15 @@ public class Repository(IConfiguration configuration)
             """,
             new { sessionId });
 
-        return rows.Select(r => DeserializeResponse(r.Payload)).ToArray();
+        return rows.Select(r =>
+        {
+            var response = DeserializeResponse(r.Payload);
+            if (r.EntryType == "message" && r.MessageId is not null)
+                SetDbReference(response, "message", r.MessageId.Value, r.MessageParentSummaryId);
+            else if (r.EntryType == "summary" && r.SummaryId is not null)
+                SetDbReference(response, "summary", r.SummaryId.Value, r.SummaryParentSummaryId);
+            return response;
+        }).ToArray();
     }
 
     public async Task<IReadOnlyList<PersistedRawMessage>> LoadRawMessages(Guid sessionId)
@@ -427,7 +446,8 @@ public class Repository(IConfiguration configuration)
             select id as MessageId,
                    run_id as RunId,
                    created_at as CreatedAt,
-                   payload::text as Payload
+                   payload::text as Payload,
+                   parent_summary_id as ParentSummaryId
             from messages
             where session_id = @sessionId
             order by created_at, id;
@@ -435,7 +455,12 @@ public class Repository(IConfiguration configuration)
             new { sessionId });
 
         return rows
-            .Select(r => new PersistedRawMessage(r.MessageId, r.RunId, r.CreatedAt, DeserializeResponse(r.Payload)))
+            .Select(r =>
+            {
+                var response = DeserializeResponse(r.Payload);
+                SetDbReference(response, "message", r.MessageId, r.ParentSummaryId);
+                return new PersistedRawMessage(r.MessageId, r.RunId, r.CreatedAt, response);
+            })
             .ToArray();
     }
 
@@ -620,7 +645,7 @@ public class Repository(IConfiguration configuration)
         return rows.Select(ToLcmGrepMessageRecord).ToArray();
     }
 
-    public static void SetDbReference(ChatResponse response, string type, long id, long? parentSummaryId = null)
+    private static void SetDbReference(ChatResponse response, string type, long id, long? parentSummaryId = null)
     {
         response.AdditionalProperties ??= new AdditionalPropertiesDictionary();
         response.AdditionalProperties[DbEntryTypeKey] = type;
@@ -630,7 +655,7 @@ public class Repository(IConfiguration configuration)
             response.AdditionalProperties[ParentSummaryIdKey] = parentSummaryId.Value;
     }
 
-    public static void SetParentSummaryReference(ChatResponse response, long parentSummaryId)
+    private static void SetParentSummaryReference(ChatResponse response, long parentSummaryId)
     {
         response.AdditionalProperties ??= new AdditionalPropertiesDictionary();
         response.AdditionalProperties[ParentSummaryIdKey] = parentSummaryId;
@@ -808,6 +833,11 @@ public class Repository(IConfiguration configuration)
     private sealed class ConversationPayloadRow
     {
         public required string Payload { get; init; }
+        public required string EntryType { get; init; }
+        public long? MessageId { get; init; }
+        public long? SummaryId { get; init; }
+        public long? MessageParentSummaryId { get; init; }
+        public long? SummaryParentSummaryId { get; init; }
     }
 
     private sealed class RawMessageRow
@@ -816,6 +846,7 @@ public class Repository(IConfiguration configuration)
         public Guid? RunId { get; init; }
         public DateTime CreatedAt { get; init; }
         public required string Payload { get; init; }
+        public long? ParentSummaryId { get; init; }
     }
 
     private sealed class LcmSummaryRow

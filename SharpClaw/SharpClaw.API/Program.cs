@@ -1,4 +1,5 @@
 using SharpClaw.API.Agents;
+using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database;
 using SharpClaw.API.Endpoints;
 
@@ -9,6 +10,8 @@ builder.AddServiceDefaults();
 builder.Services.AddTransient<DatabaseSeeder>();
 builder.Services.AddSingleton<Repository>();
 builder.Services.AddSingleton<FragmentsRepository>();
+builder.Services.AddSingleton<WorkspaceRepository>();
+builder.Services.AddSingleton<ApprovalService>();
 builder.Services.AddSingleton<FragmentEmbeddingService>();
 builder.Services.AddHostedService<FragmentEmbeddingBackgroundService>();
 builder.Services.Configure<LmStudioConfiguration>(builder.Configuration.GetSection("LmStudio"));
@@ -47,5 +50,6 @@ app.UseCors("WebClient");
 
 ChatEndpoints.Register(app);
 AgentEndpoints.Register(app);
+WorkspaceEndpoints.Register(app);
 
 app.Run();

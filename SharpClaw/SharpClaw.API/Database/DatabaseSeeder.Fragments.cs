@@ -163,6 +163,24 @@ public partial class DatabaseSeeder
         
         ---
         
+        ## 🧠 LCM Context Management
+        
+        Use this guide when unsure which context tool to call: **TOOLS.md**>`LCM_GUIDE.md`
+        
+        Quick reference:
+        - **User references earlier discussion?** → `lcm_grep` with keywords, then `lcm_expand_query` if needed
+        - **See [Summary ID: sum_xxx]?** → `lcm_describe` first to check relevance, then expand
+        - **See [Large file: file_xxx]?** → Spawn Task sub-agent with specific question (never ask for full content)
+        - **Need metadata about a summary?** → `lcm_describe(id="sum_xxx")`
+        
+        Key rules:
+        1. Always be specific in expand queries - never ask for "everything"
+        2. Main agent uses `lcm_expand_query`, sub-agents use `lcm_expand` directly
+        3. Check summary metadata before expanding to avoid archived content
+        4. Delegate large file analysis to sub-agents
+        
+        ---
+        
         ## Make It Yours
         
         This is a starting point. Add your own conventions, style, and rules as you figure out what works.
@@ -358,5 +376,169 @@ public partial class DatabaseSeeder
         ---
 
         The more you know, the better you can help. But remember — you're learning about a person, not building a dossier. Respect the difference.
+        """;
+
+    private const string LcmUsageMd =
+        """
+        # LCM Tool Usage Guide
+        
+        Decision trees for context management. Use this when you're unsure which tool to call.
+        
+        ---
+        
+        ## Quick Decision Tree
+        
+        ```
+        User references something from earlier?
+        ├─ Yes → lcm_grep with relevant keywords
+        │   ├─ Found matches? → lcm_expand_query with focused question
+        │   └─ No matches? → Ask user for clarification or try different terms
+        │
+        See [Summary ID: sum_xxx] in context?
+        ├─ Need details from that summary? → lcm_expand_query(prompt="X", summary_ids=["sum_xxx"])
+        ├─ Just need metadata? → lcm_describe(id="sum_xxx")
+        └─ Unsure what it contains? → lcm_describe first, then decide
+        
+        See [Large file: file_xxx] in context?
+        ├─ Need to analyze content? → Spawn Task sub-agent with specific question
+        │   └─ NEVER ask for "full content" - ask targeted questions
+        └─ Just need metadata? → lcm_describe(id="file_xxx")
+        
+        Need to search prior conversation broadly?
+        └─ Use lcm_grep with regex pattern, page=1 first
+            ├─ Too many results? → Refine pattern or use page parameter
+            └─ No results? → Try different terms or check if content exists
+        ```
+        
+        ---
+        
+        ## Tool Selection Matrix
+        
+        | Scenario | Primary Tool | When to Escalate |
+        |----------|--------------|------------------|
+        | User asks about earlier discussion | `lcm_grep` | If grep returns nothing, try `lcm_expand_query` with broader query |
+        | Need details from a summary marker | `lcm_expand_query` | Use if you need specific information extracted |
+        | Just checking what a summary contains | `lcm_describe` | Before expanding to confirm it's relevant |
+        | Large file needs analysis | Task sub-agent + Read tool | For deep analysis, never expand directly |
+        | Complex historical query | `lcm_expand_query` with query parameter | When you need multi-step reasoning across summaries |
+        
+        ---
+        
+        ## lcm_grep Best Practices
+        
+        **Use when:** User references something discussed earlier, or you need to recall specific details.
+        
+        **Pattern tips:**
+        - Be specific but not overly narrow: `"database connection string"` works better than `.*connection.*string.*`
+        - Use word boundaries: `\bproduct\b` instead of just `product` (avoids "production")
+        - Combine with context: search for both the term and related keywords
+        
+        **Example:**
+        ```python
+        # Good - specific but not too narrow
+        lcm_grep(pattern="database connection string", top_k=5)
+        
+        # Better - word boundaries prevent false positives  
+        lcm_grep(pattern=r"\bproduct\b.*price", top_k=5)
+        ```
+        
+        ---
+        
+        ## lcm_expand_query Best Practices
+        
+        **Use when:** You have a specific question about summarized content, or see summary markers.
+        
+        **Key rules:**
+        1. **Always be specific in the prompt** - never ask for "everything"
+        2. **Include summary_ids if you know them** - reduces search space
+        3. **Ask extractive questions** - "What models support tool_call?" not "Tell me about this"
+        
+        **Example:**
+        ```python
+        # Good - targeted extraction
+        lcm_expand_query(
+            prompt="Find all entries where price > 100 and list the top 5",
+            summary_ids=["sum_abc123"]
+        )
+        
+        # Bad - too broad, defeats LCM purpose
+        lcm_expand_query(prompt="Tell me everything about this summary")
+        ```
+        
+        ---
+        
+        ## lcm_describe Best Practices
+        
+        **Use when:** You see a summary ID and need to understand what it contains before expanding.
+        
+        **What it tells you:**
+        - Summary level/type (leaf vs nested)
+        - Off-context status (is this from archived content?)
+        - Lineage closure IDs (what other summaries does this cover?)
+        
+        **Example workflow:**
+        ```python
+        # See [Summary ID: sum_xyz789] in context
+        metadata = lcm_describe(id="sum_xyz789")
+        
+        if metadata["off_context"]:
+            # Might be less relevant, consider alternatives first
+            pass
+            
+        if metadata["level"] == 0:
+            # Leaf summary - probably contains the details you need
+            result = lcm_expand_query(prompt="X", summary_ids=["sum_xyz789"])
+        ```
+        
+        ---
+        
+        ## Common Mistakes to Avoid
+        
+        ❌ **Asking sub-agents for full content**
+        - This defeats LCM's purpose and pollutes context
+        - Instead: "What models support tool_call?" or "List the top-level keys"
+        
+        ❌ **Using lcm_expand directly (main agent)**
+        - Only sub-agents can call this - use Task sub-agent instead
+        - Main agent should use `lcm_expand_query` which delegates under the hood
+        
+        ❌ **Searching with overly broad patterns**
+        - `"error"` returns everything
+        - Use `"error.*timeout"` or specific error codes
+        
+        ❌ **Not checking summary metadata before expanding**
+        - Could expand archived content when active context exists
+        - Always call `lcm_describe` first if unsure
+        
+        ---
+        
+        ## When to Delegate vs Handle Directly
+        
+        | Task | Delegate? | Why |
+        |------|-----------|-----|
+        | Read large file (100+ lines) | ✅ Yes | Preserves main context |
+        | Analyze summary content | ✅ Yes | Sub-agent can use lcm_expand |
+        | Simple grep search | ❌ No | Fast, direct tool call |
+        | Multi-step reasoning across summaries | ✅ Yes | Complex queries benefit from delegation |
+        | Extract specific data point | ❌ No | Direct expansion is faster |
+        
+        ---
+        
+        ## Debugging LCM Issues
+        
+        **Problem:** Can't find information that should exist
+        - Try different search terms (user might have used synonyms)
+        - Check if content was summarized (look for summary markers)
+        - Use `lcm_describe` on nearby summaries to see coverage
+        
+        **Problem:** Getting too many results from grep
+        - Refine pattern with word boundaries or more context
+        - Increase specificity: `"database connection"` → `"PostgreSQL connection string"`
+        - Use pagination: check page=2 if relevant info is further down
+        
+        **Problem:** Expanding summary gives irrelevant content
+        - Check `lcm_describe` metadata first - might be off-context/archived
+        - Narrow the expand query prompt to be more specific
+        - Try expanding a different (more recent) summary in the lineage
         """;
 }

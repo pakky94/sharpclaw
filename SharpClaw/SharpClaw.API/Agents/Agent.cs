@@ -4,6 +4,7 @@ using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Memory.Lcm;
 using SharpClaw.API.Agents.Tools.Fragments;
 using SharpClaw.API.Agents.Tools.Lcm;
+using SharpClaw.API.Agents.Tools.Workspace;
 using SharpClaw.API.Database;
 
 namespace SharpClaw.API.Agents;
@@ -12,7 +13,8 @@ public class Agent(
     ChatProvider chatProvider,
     IConfiguration configuration,
     Repository repository,
-    FragmentsRepository fragmentsRepository)
+    FragmentsRepository fragmentsRepository,
+    WorkspaceRepository workspaceRepository)
 {
     private readonly ConcurrentDictionary<Guid, AgentSessionState> _sessions = new();
     private readonly SemaphoreSlim _sessionsMutex = new(1, 1);
@@ -24,6 +26,11 @@ public class Agent(
         var systemPrompt = (await fragmentsRepository.ReadFragmentByPath(agentId, "AGENTS.md"))?.Content ?? string.Empty;
         var sessionId = Guid.NewGuid();
 
+        var defaultWs = await workspaceRepository.ResolveDefaultWorkspace(agentId);
+        var activeWorkspaces = new HashSet<string>();
+        if (defaultWs is not null)
+            activeWorkspaces.Add(defaultWs.Name);
+
         var context = new AgentExecutionContext
         {
             SessionId = sessionId,
@@ -33,6 +40,8 @@ public class Agent(
             Temperature = agentConfig.Temperature,
             SystemMessage = systemPrompt,
             Messages = [],
+            Workspace = defaultWs,
+            ActiveWorkspaceNames = activeWorkspaces,
         };
 
         await repository.CreateSession(sessionId, agentId, systemPrompt);
@@ -71,8 +80,7 @@ public class Agent(
                         },
                     });
 
-                var userMessageId = await repository.PersistMessage(sessionId, run.RunId, userMessage);
-                Repository.SetDbReference(userMessage, "message", userMessageId);
+                await repository.PersistMessage(sessionId, run.RunId, userMessage);
                 session.Context.Messages.Add(userMessage);
 
                 var rootFragment = await fragmentsRepository.EnsureRootFragment(session.Context.AgentId);
@@ -84,7 +92,7 @@ public class Agent(
                     childNamesOnly: true);
 
                 var systemMessage = string.Join('\n', [
-                    Environment.EnvPrompt(session.Context.LlmModel, DateTimeOffset.Now, rootFragment, fragments?.Children),
+                    Environment.EnvPrompt(session.Context.LlmModel, DateTimeOffset.Now, rootFragment, fragments?.Children, session.Context.Workspace),
                     Prompts.LcmPrompt,
                     Memory.Fragments.Prompts.FragmentPrompt,
                     session.Context.SystemMessage,
@@ -97,6 +105,7 @@ public class Agent(
                         ..session.Context.Messages.SelectMany(r => r.Messages)
                     ],
                     BuildTools(),
+                    run,
                     update =>
                     {
                         if (!string.IsNullOrEmpty(update.Text))
@@ -125,8 +134,7 @@ public class Agent(
 
                 foreach (var message in response)
                 {
-                    var messageId = await repository.PersistMessage(sessionId, run.RunId, message);
-                    Repository.SetDbReference(message, "message", messageId);
+                    await repository.PersistMessage(sessionId, run.RunId, message);
                 }
 
                 session.Context.Messages = [..session.Context.Messages, ..response];
@@ -152,15 +160,11 @@ public class Agent(
                                 && split.ToSummarize.All(m => session.Context.Messages.Contains(m))
                                 && split.PostSummary.All(m => session.Context.Messages.Contains(m)))
                             {
-                                var summaryId = await repository.PersistSummaryAndCompactHistory(
+                                await repository.PersistSummaryAndCompactHistory(
                                     sessionId,
                                     run.RunId,
                                     summary,
                                     split.ToSummarize);
-
-                                Repository.SetDbReference(summary, "summary", summaryId);
-                                foreach (var message in split.ToSummarize)
-                                    Repository.SetParentSummaryReference(message, summaryId);
 
                                 session.Context.Messages = [..split.PreSummary, summary, ..split.PostSummary];
                             }
@@ -249,6 +253,23 @@ public class Agent(
         return run;
     }
 
+    public AgentRunState? GetActiveRunForSession(Guid sessionId)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var session))
+            return null;
+
+        return session.Runs.Values.FirstOrDefault(r => r.Status is AgentRunStatus.Pending or AgentRunStatus.Running);
+    }
+
+    public bool TryUpdateSessionActiveWorkspaces(Guid sessionId, string[] workspaceNames)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var session))
+            return false;
+
+        session.Context.ActiveWorkspaceNames = new HashSet<string>(workspaceNames, StringComparer.OrdinalIgnoreCase);
+        return true;
+    }
+
     private async Task<AgentSessionState> GetOrLoadSession(Guid sessionId)
     {
         if (_sessions.TryGetValue(sessionId, out var existing))
@@ -265,6 +286,15 @@ public class Agent(
             var agentConfig = await repository.GetAgent(persistedSession.AgentId)
                               ?? throw new KeyNotFoundException($"Agent {persistedSession.AgentId} was not found.");
 
+            var defaultWs = await workspaceRepository.ResolveDefaultWorkspace(persistedSession.AgentId);
+            var activeWsRows = await workspaceRepository.GetActiveWorkspacesForSession(sessionId);
+            var activeWsNames = new HashSet<string>(activeWsRows.Select(r => r.WorkspaceName));
+
+            if (activeWsNames.Count == 0 && defaultWs is not null)
+            {
+                activeWsNames.Add(defaultWs.Name);
+            }
+
             var context = new AgentExecutionContext
             {
                 SessionId = sessionId,
@@ -274,6 +304,8 @@ public class Agent(
                 Temperature = agentConfig.Temperature,
                 SystemMessage = (await fragmentsRepository.ReadFragmentByPath(persistedSession.AgentId, "AGENTS.md"))?.Content ?? string.Empty,
                 Messages = [..await repository.LoadActiveConversation(sessionId)],
+                Workspace = defaultWs,
+                ActiveWorkspaceNames = activeWsNames,
             };
 
             var loadedSession = new AgentSessionState(
@@ -293,6 +325,9 @@ public class Agent(
     [
         ..FragmentTools.Functions,
         ..LcmTools.Functions,
+        ..WorkspaceTools.Functions,
+        ..CommandTools.Functions,
+        ..SessionWorkspaceTools.Functions,
     ];
 
     private static string? SerializeToolPayload(object? payload)
@@ -388,6 +423,7 @@ public class AgentRunState(Guid runId, Guid sessionId)
 {
     private readonly object _eventsLock = new();
     private readonly List<AgentRunEvent> _events = [];
+    private readonly Dictionary<string, TaskCompletionSource<bool>> _pendingApprovals = [];
     private long _sequence = 0;
 
     public Guid RunId { get; } = runId;
@@ -442,6 +478,50 @@ public class AgentRunState(Guid runId, Guid sessionId)
         Status = AgentRunStatus.Failed;
         Error = error;
         AddEvent("failed", error);
+    }
+
+    public TaskCompletionSource<bool> CreateApprovalRequest(string token, string action, string? target, string? commandPreview, string risk, string description)
+    {
+        var tcs = new TaskCompletionSource<bool>();
+        lock (_eventsLock)
+        {
+            _pendingApprovals[token] = tcs;
+            AddEvent("approval_required", null, new
+            {
+                approval_token = token,
+                action,
+                target,
+                command_preview = commandPreview,
+                risk,
+                description,
+            });
+        }
+        return tcs;
+    }
+
+    public bool ResolveApproval(string token, bool approved)
+    {
+        lock (_eventsLock)
+        {
+            if (_pendingApprovals.TryGetValue(token, out var tcs))
+            {
+                _pendingApprovals.Remove(token);
+                return tcs.TrySetResult(approved);
+            }
+        }
+        return false;
+    }
+
+    public void ExpireApproval(string token)
+    {
+        lock (_eventsLock)
+        {
+            if (_pendingApprovals.TryGetValue(token, out var tcs))
+            {
+                _pendingApprovals.Remove(token);
+                tcs.TrySetCanceled();
+            }
+        }
     }
 
     private void AddEvent(string type, string? text, object? data = null)

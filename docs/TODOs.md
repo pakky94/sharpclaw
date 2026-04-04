@@ -17,7 +17,7 @@
 ## Other stuff:
 
 ### Workspace support
-- [ ] allow the agent to access a folder and work within it.
+- [X] allow the agent to access a folder and work within it.
 - [ ] when workspace support update the `Environment.EnvPrompt`
 
 ### Multi-agent communication
@@ -29,6 +29,9 @@
 
 ### Multi-model support
 - [ ] allow the agent to change model to handle different tasks (eg. one default, one for coding, one for simpler tasks like summarizing, ecc...)
+
+### Secrets management
+- [ ] where to store secrets? and how to give access to the agent? some form of proxy?
 
 ### LCM
 - [ ] validate that tokens(summary) < tokens(history) and use aggressive directive if necessary

@@ -22,6 +22,10 @@ public static class LcmTools
             Grep,
             "lcm_grep",
             "Search prior conversation messages with a regex pattern."),
+        AIFunctionFactory.Create(
+            LcmRead,
+            "lcm_read",
+            "Read the content of a file artifact (file_xxx) stored in the workspace."),
     ];
 
     public static async Task<object> Describe(IServiceProvider serviceProvider, string id)
@@ -41,7 +45,7 @@ public static class LcmTools
             return await DescribeSummary(serviceProvider, trimmedId);
 
         if (LcmId.IsFile(trimmedId))
-            return DescribeFilePhase1(trimmedId);
+            return await DescribeFilePhase1(serviceProvider, trimmedId);
 
         return new
         {
@@ -51,19 +55,32 @@ public static class LcmTools
         };
     }
 
-    private static object DescribeFilePhase1(string fileId)
+    private static async Task<object> DescribeFilePhase1(IServiceProvider serviceProvider, string fileId)
     {
+        var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+        var workspaceRepo = new WorkspaceRepository(configuration);
+        var artifact = await workspaceRepo.GetLcmFileArtifact(fileId);
+
+        if (artifact is null)
+        {
+            return new
+            {
+                title = $"LCM file: {fileId}",
+                metadata = new LcmDescribeMetadata(fileId, "file", false),
+                output = $"File artifact not found: {fileId}",
+            };
+        }
+
         return new
         {
             title = $"LCM file: {fileId}",
-            metadata = new LcmDescribeMetadata(fileId, "file", false),
-            output =
-                """
-                File lookup is not available yet in this SharpClaw phase.
-
-                Current LCM implementation supports summary metadata first. File-backed LCM storage/retrieval
-                will be added in the next phase with dedicated tables and repository queries.
-                """.Trim(),
+            metadata = new LcmDescribeMetadata(fileId, "file", true),
+            workspace_path = artifact.WorkspacePath,
+            byte_count = artifact.ByteCount,
+            storage_kind = artifact.StorageKind,
+            filesystem_path = artifact.FilesystemPath,
+            created_at = artifact.CreatedAt,
+            output = $"File artifact: {fileId}\nPath: {artifact.WorkspacePath}\nSize: {artifact.ByteCount} bytes\nStorage: {artifact.StorageKind}",
         };
     }
 
@@ -329,5 +346,50 @@ public static class LcmTools
             return singleLine;
 
         return singleLine[..(maxLength - 3)] + "...";
+    }
+
+    public static async Task<object> LcmRead(IServiceProvider serviceProvider, string file_id)
+    {
+        var trimmedId = (file_id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(trimmedId))
+        {
+            return new { error = "Missing file_id. Expected file_xxx." };
+        }
+
+        var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+        var workspaceRepo = new WorkspaceRepository(configuration);
+        var artifact = await workspaceRepo.GetLcmFileArtifact(trimmedId);
+
+        if (artifact is null)
+        {
+            return new { error = $"File artifact not found: {trimmedId}" };
+        }
+
+        if (artifact.StorageKind != "filesystem" || string.IsNullOrWhiteSpace(artifact.FilesystemPath))
+        {
+            return new { error = $"File content not available on filesystem: {trimmedId}" };
+        }
+
+        if (!File.Exists(artifact.FilesystemPath))
+        {
+            return new { error = $"File not found on disk: {artifact.FilesystemPath}" };
+        }
+
+        try
+        {
+            var content = await File.ReadAllTextAsync(artifact.FilesystemPath);
+            return new
+            {
+                title = $"LCM file read: {trimmedId}",
+                file_id = trimmedId,
+                workspace_path = artifact.WorkspacePath,
+                byte_count = artifact.ByteCount,
+                content,
+            };
+        }
+        catch (Exception ex)
+        {
+            return new { error = $"Failed to read file: {ex.Message}" };
+        }
     }
 }

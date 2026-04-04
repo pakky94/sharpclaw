@@ -2,11 +2,13 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.AI;
+using SharpClaw.API.Helpers;
 
 namespace SharpClaw.API.Agents.Memory.Lcm;
 
 public partial class Summarizer(ChatProvider chatProvider)
 {
+    private const string Alphabet = "0123456789abcdefghijklmnopqrstuvwxyz";
     private const string LcmSummaryLevelKey = "lcm_summary_level";
     private const string LcmSummaryIdKey = "lcm_summary_id";
 
@@ -120,7 +122,8 @@ public partial class Summarizer(ChatProvider chatProvider)
         var timestampBytes = BitConverter.GetBytes(timestamp.Ticks);
         var combinedBytes = contentBytes.Concat(timestampBytes).ToArray();
         var hashBytes = sha.ComputeHash(combinedBytes);
-        return $"sum_{Convert.ToHexStringLower(hashBytes)}";
+        var encoder = new RadixEncoding(Alphabet);
+        return $"sum_{encoder.Encode(hashBytes)[..16]}";
     }
 
     private static string FormatSummaries(List<ChatResponse> messages)

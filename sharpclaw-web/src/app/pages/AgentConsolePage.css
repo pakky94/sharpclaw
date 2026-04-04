@@ -156,6 +156,11 @@
   background: #edf3ff;
 }
 
+.session-card-selected {
+  border-color: #1f4db8;
+  background: #edf3ff;
+}
+
 .session-id {
   font-family: 'IBM Plex Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
   font-size: 0.85rem;
@@ -212,6 +217,67 @@
   flex-direction: column;
   align-items: flex-end;
   gap: 8px;
+}
+
+.active-workspaces-bar {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.active-workspace-tag {
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: #ede4d6;
+  border: 1px solid #c9bba6;
+  border-radius: 6px;
+  padding: 2px 8px;
+  color: #3d3528;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+.workspace-dropdown-wrapper {
+  position: relative;
+}
+
+.workspace-dropdown-btn {
+  font-size: 0.78rem;
+  padding: 4px 10px;
+}
+
+.workspace-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: #fffcf6;
+  border: 1px solid #d3c6b3;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(29, 34, 51, 0.12);
+  padding: 6px 0;
+  min-width: 180px;
+  z-index: 100;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.workspace-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  font-size: 0.82rem;
+  color: #31384b;
+  cursor: pointer;
+}
+
+.workspace-dropdown-item:hover {
+  background: #f5efe3;
+}
+
+.workspace-dropdown-item input[type="checkbox"] {
+  accent-color: #1f4db8;
 }
 
 .tool-toggle {
@@ -563,4 +629,282 @@
   .bubble {
     max-width: 94%;
   }
+}
+
+.workspace-status-card {
+  border: 1px solid #d5c8b5;
+  border-radius: 12px;
+  background: #fcf7ec;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workspace-status-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6e7483;
+}
+
+.workspace-status-value {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.workspace-status-value.configured {
+  color: #203f28;
+}
+
+.workspace-status-value.unconfigured {
+  color: #a1332f;
+}
+
+.workspace-status-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: #4b5366;
+}
+
+.workspace-status-row code {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.75rem;
+  background: #efe5d5;
+  border-radius: 4px;
+  padding: 2px 6px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-approvals-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workspace-approvals-section h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.approvals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.approval-card {
+  border: 1px solid #afbdd4;
+  border-radius: 10px;
+  background: #f4f7fb;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.approval-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.approval-risk {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.approval-risk.low {
+  background: #eef6ef;
+  color: #203f28;
+}
+
+.approval-risk.medium {
+  background: #fef7e0;
+  color: #7a6520;
+}
+
+.approval-risk.high {
+  background: #fde8e8;
+  color: #a1332f;
+}
+
+.approval-risk.critical {
+  background: #a1332f;
+  color: #fff;
+}
+
+.approval-action {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #31384b;
+  text-transform: capitalize;
+}
+
+.approval-detail {
+  display: flex;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: #4b5366;
+}
+
+.approval-detail code {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.72rem;
+  background: #ffffff;
+  border-radius: 4px;
+  padding: 2px 6px;
+  word-break: break-all;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.policy-description {
+  font-size: 0.8rem;
+  color: #646a79;
+  margin: 0 0 4px;
+}
+
+.pattern-list {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.8rem;
+  min-height: 80px;
+  resize: vertical;
+}
+
+.approval-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(29, 34, 51, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fade-in 150ms ease;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.approval-dialog {
+  background: #fffcf6;
+  border: 1px solid #d3c6b3;
+  border-radius: 18px;
+  box-shadow: 0 16px 40px rgba(29, 34, 51, 0.18);
+  width: 420px;
+  max-width: 90vw;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: dialog-enter 200ms ease;
+}
+
+@keyframes dialog-enter {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.approval-dialog-header {
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid #dbcfbe;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.approval-dialog-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: #1d2233;
+}
+
+.approval-risk-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.approval-risk-badge.low {
+  background: #eef6ef;
+  color: #203f28;
+}
+
+.approval-risk-badge.medium {
+  background: #fef7e0;
+  color: #7a6520;
+}
+
+.approval-risk-badge.high {
+  background: #fde8e8;
+  color: #a1332f;
+}
+
+.approval-risk-badge.critical {
+  background: #a1332f;
+  color: #fff;
+}
+
+.approval-dialog-body {
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.approval-description {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #31384b;
+  line-height: 1.4;
+}
+
+.approval-dialog-body .approval-detail {
+  display: flex;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: #4b5366;
+  align-items: baseline;
+}
+
+.approval-dialog-body .approval-detail code {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.76rem;
+  background: #efe5d5;
+  border-radius: 4px;
+  padding: 2px 6px;
+  word-break: break-all;
+  flex: 1;
+}
+
+.approval-action-type {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.approval-dialog-footer {
+  padding: 12px 18px 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid #dbcfbe;
 }
