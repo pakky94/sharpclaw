@@ -1,14 +1,21 @@
+using Microsoft.Extensions.Configuration;
+
 var builder = DistributedApplication.CreateBuilder(args);
 
 var dbUser = builder.AddParameter("dbUser", "sharpclaw");
 var dbPassword = builder.AddParameter("dbPassword", "password", secret: true);
+var volatileDb = builder.Configuration.GetValue<bool?>("SHARPCLAW_VOLATILE_DATABASE") ?? false;
 
-var db = builder.AddPostgres("sharpclaw-pg", dbUser, dbPassword)
+var dbBuilder = builder.AddPostgres("sharpclaw-pg", dbUser, dbPassword)
     .WithImage("pgvector/pgvector:pg18-trixie")
-    .WithHostPort(5532)
-    .WithVolume("sharpclaw-pg-data", "/var/lib/postgresql")
-    .WithLifetime(ContainerLifetime.Persistent)
-    .AddDatabase("sharpclaw");
+    .WithHostPort(5532);
+
+if (!volatileDb)
+    dbBuilder
+        .WithVolume("sharpclaw-pg-data", "/var/lib/postgresql")
+        .WithLifetime(ContainerLifetime.Persistent);
+
+var db = dbBuilder.AddDatabase("sharpclaw");
 
 var sharpclaw = builder.AddProject<Projects.SharpClaw_API>("sharpclaw-api");
 

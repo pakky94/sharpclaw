@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/tests/">
+    <Project Path="tests/SharpClaw.Backend.Tests/SharpClaw.Backend.Tests.csproj" />
+  </Folder>
   <Project Path="SharpClaw.API/SharpClaw.API.csproj" />
   <Project Path="SharpClaw.AppHost/SharpClaw.AppHost.csproj" />
   <Project Path="SharpClaw.ServiceDefaults/SharpClaw.ServiceDefaults.csproj" />
