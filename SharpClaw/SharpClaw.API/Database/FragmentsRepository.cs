@@ -613,6 +613,44 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
         return rows.Select(path => new AgentDocumentSummary(path)).ToArray();
     }
 
+    public async Task<IReadOnlyList<AgentFragmentSummary>> ListFragmentChildren(long agentId, string? parentPath = null)
+    {
+        var rootId = await EnsureRootFragment(agentId);
+        var effectiveParentPath = string.IsNullOrWhiteSpace(parentPath) ? null : parentPath.Trim();
+        var parentId = rootId;
+
+        if (effectiveParentPath is not null)
+        {
+            var parentFragment = await ResolvePath(agentId, effectiveParentPath);
+            if (parentFragment is null)
+                return [];
+            parentId = parentFragment.Id;
+        }
+
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<FragmentTreeRow>(
+            """
+            select c.name as Name,
+                   case
+                       when @parentPath is null or @parentPath = '' then c.name
+                       else @parentPath || '/' || c.name
+                   end as Path,
+                   exists(
+                       select 1
+                       from fragments gc
+                       where gc.owner_agent_id = @agentId
+                         and gc.parent_id = c.id
+                   ) as HasChildren
+            from fragments c
+            where c.owner_agent_id = @agentId
+              and c.parent_id = @parentId
+            order by c.name, c.id;
+            """,
+            new { agentId, parentId, parentPath = effectiveParentPath });
+
+        return rows.Select(r => new AgentFragmentSummary(r.Name, r.Path, r.HasChildren)).ToArray();
+    }
+
     public async Task<AgentDocument?> ReadFragmentByPath(long agentId, string path)
     {
         var fragment = await ResolvePath(agentId, path);
@@ -891,6 +929,13 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
         public required string Content { get; init; }
         public DateTime UpdatedAt { get; init; }
     }
+
+    private sealed class FragmentTreeRow
+    {
+        public required string Name { get; init; }
+        public required string Path { get; init; }
+        public bool HasChildren { get; init; }
+    }
 }
 
 public sealed record FragmentReadResponse(
@@ -925,4 +970,3 @@ public sealed record PendingFragmentEmbedding(
     string? Type,
     string Content,
     DateTime UpdatedAt);
-

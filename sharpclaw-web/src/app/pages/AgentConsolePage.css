@@ -508,6 +508,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -524,6 +525,8 @@
   margin: 0 auto;
   padding: 18px;
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .manager-sidebar,
@@ -540,7 +543,7 @@
   flex-direction: column;
   gap: 8px;
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .manager-main {
@@ -573,6 +576,50 @@
   flex: 1 1 auto;
   min-height: 0;
   max-height: none;
+}
+
+.fragment-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fragment-toggle {
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  border: 1px solid #d5c8b5;
+  background: #fcf7ec;
+  border-radius: 6px;
+  padding: 0;
+  line-height: 1;
+  color: #4b5366;
+  cursor: pointer;
+}
+
+.fragment-toggle:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.fragment-entry {
+  width: 100%;
+  text-align: left;
+  border: 1px solid #d5c8b5;
+  background: #fcf7ec;
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.fragment-entry.selected {
+  border-color: #1f4db8;
+  background: #edf3ff;
+}
+
+.fragment-tree-loading {
+  font-size: 0.82rem;
+  color: #6e7483;
 }
 
 .file-editor {

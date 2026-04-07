@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { API_BASE_URL, fetchJson } from '../services/chatApi'
-import type { AgentConfig, AgentFileSummary } from '../types/chat'
+import type { AgentConfig, AgentFragmentSummary } from '../types/chat'
 import { asErrorMessage } from '../utils/chatUtils'
 import './AgentConsolePage.css'
 
 const DEFAULT_MODEL = 'openai/gpt-oss-20b'
+const ROOT_FRAGMENT_KEY = '__root__'
 
 type AgentManagementPageProps = {
   onUnsavedChange?: (hasUnsaved: boolean) => void
@@ -26,13 +27,19 @@ function getNewFileDraftKey(agentId: number) {
   return `new:${agentId}`
 }
 
+function getFragmentParentKey(parentPath: string | null) {
+  return parentPath ?? ROOT_FRAGMENT_KEY
+}
+
 export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProps) {
   const [agents, setAgents] = useState<AgentConfig[]>([])
   const [selectedAgentId, setSelectedAgentId] = useState<number | null>(null)
   const [agentName, setAgentName] = useState('')
   const [agentModel, setAgentModel] = useState(DEFAULT_MODEL)
   const [agentTemperature, setAgentTemperature] = useState('0.1')
-  const [files, setFiles] = useState<AgentFileSummary[]>([])
+  const [fragmentChildrenByParent, setFragmentChildrenByParent] = useState<Record<string, AgentFragmentSummary[]>>({})
+  const [expandedFragmentPaths, setExpandedFragmentPaths] = useState<Set<string>>(new Set())
+  const [loadingFragmentParents, setLoadingFragmentParents] = useState<Set<string>>(new Set())
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
   const [activeDraftKey, setActiveDraftKey] = useState<string | null>(null)
   const [fileDrafts, setFileDrafts] = useState<Record<string, FileDraft>>({})
@@ -61,12 +68,14 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
 
   useEffect(() => {
     if (selectedAgentId === null) {
-      setFiles([])
+      setFragmentChildrenByParent({})
+      setExpandedFragmentPaths(new Set())
+      setLoadingFragmentParents(new Set())
       resetEditor()
       return
     }
 
-    void refreshFiles(selectedAgentId)
+    void refreshFragments(selectedAgentId)
   }, [selectedAgentId])
 
   useEffect(() => {
@@ -110,17 +119,64 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
     }
   }
 
-  async function refreshFiles(agentId: number) {
+  async function loadFragmentChildren(agentId: number, parentPath: string | null) {
+    const parentKey = getFragmentParentKey(parentPath)
+    setLoadingFragmentParents((prev) => {
+      const next = new Set(prev)
+      next.add(parentKey)
+      return next
+    })
+
     try {
       setError(null)
-      const data = await fetchJson<{ agentId: number; files: AgentFileSummary[] }>(`${API_BASE_URL}/agents/${agentId}/files`)
-      setFiles(data.files)
-
-      if (selectedFilePath && !data.files.some((file) => file.name === selectedFilePath)) {
-        resetEditor()
-      }
+      const query = parentPath ? `?parentPath=${encodeURIComponent(parentPath)}` : ''
+      const data = await fetchJson<{ agentId: number; parentPath: string | null; fragments: AgentFragmentSummary[] }>(
+        `${API_BASE_URL}/agents/${agentId}/fragments${query}`,
+      )
+      setFragmentChildrenByParent((prev) => ({
+        ...prev,
+        [parentKey]: data.fragments,
+      }))
     } catch (e) {
       setError(asErrorMessage(e))
+    } finally {
+      setLoadingFragmentParents((prev) => {
+        const next = new Set(prev)
+        next.delete(parentKey)
+        return next
+      })
+    }
+  }
+
+  async function refreshFragments(agentId: number) {
+    setExpandedFragmentPaths(new Set())
+    setFragmentChildrenByParent({})
+    await loadFragmentChildren(agentId, null)
+  }
+
+  async function toggleExpandFragment(path: string) {
+    if (selectedAgentId === null) {
+      return
+    }
+
+    const willExpand = !expandedFragmentPaths.has(path)
+    setExpandedFragmentPaths((prev) => {
+      const next = new Set(prev)
+      if (willExpand) {
+        next.add(path)
+      } else {
+        next.delete(path)
+      }
+      return next
+    })
+
+    if (!willExpand) {
+      return
+    }
+
+    const parentKey = getFragmentParentKey(path)
+    if (!fragmentChildrenByParent[parentKey]) {
+      await loadFragmentChildren(selectedAgentId, path)
     }
   }
 
@@ -138,7 +194,7 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
 
       resetEditor()
       await loadAgents(created.id)
-      await refreshFiles(created.id)
+      await refreshFragments(created.id)
     } catch (e) {
       setError(asErrorMessage(e))
     }
@@ -188,7 +244,7 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
       setError(null)
       setFileLoading(true)
       const data = await fetchJson<{ path: string; content: string }>(
-        `${API_BASE_URL}/agents/${selectedAgentId}/file?path=${encodeURIComponent(path)}`,
+        `${API_BASE_URL}/agents/${selectedAgentId}/fragments/file?path=${encodeURIComponent(path)}`,
       )
       setSelectedFilePath(data.path)
       setFileDrafts((prev) => ({
@@ -218,7 +274,7 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
       setError(null)
       setFileLoading(true)
       const path = filePath.trim()
-      await fetchJson<{ agentId: number; path: string }>(`${API_BASE_URL}/agents/${selectedAgentId}/file`, {
+      await fetchJson<{ agentId: number; path: string }>(`${API_BASE_URL}/agents/${selectedAgentId}/fragments/file`, {
         method: 'PUT',
         body: JSON.stringify({ path, content: fileContent }),
       })
@@ -239,7 +295,7 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
       })
       setActiveDraftKey(savedDraftKey)
       setSelectedFilePath(path)
-      await refreshFiles(selectedAgentId)
+      await refreshFragments(selectedAgentId)
     } catch (e) {
       setError(asErrorMessage(e))
     } finally {
@@ -256,7 +312,7 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
       setError(null)
       const fileDraftKey = getExistingFileDraftKey(selectedAgentId, selectedFilePath)
       await fetchJson<{ agentId: number; path: string }>(
-        `${API_BASE_URL}/agents/${selectedAgentId}/file?path=${encodeURIComponent(selectedFilePath)}`,
+        `${API_BASE_URL}/agents/${selectedAgentId}/fragments/file?path=${encodeURIComponent(selectedFilePath)}`,
         { method: 'DELETE' },
       )
       setFileDrafts((prev) => {
@@ -265,7 +321,7 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
         return next
       })
       resetEditor()
-      await refreshFiles(selectedAgentId)
+      await refreshFragments(selectedAgentId)
     } catch (e) {
       setError(asErrorMessage(e))
     }
@@ -282,7 +338,7 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
       setError(null)
       setFileLoading(true)
       const data = await fetchJson<{ path: string; content: string }>(
-        `${API_BASE_URL}/agents/${selectedAgentId}/file?path=${encodeURIComponent(selectedFilePath)}`,
+        `${API_BASE_URL}/agents/${selectedAgentId}/fragments/file?path=${encodeURIComponent(selectedFilePath)}`,
       )
       setSelectedFilePath(data.path)
       setActiveDraftKey(draftKey)
@@ -339,12 +395,70 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
     })
   }
 
+  function renderFragmentTree(parentPath: string | null, depth: number) {
+    const parentKey = getFragmentParentKey(parentPath)
+    const fragments = fragmentChildrenByParent[parentKey] ?? []
+
+    return fragments.flatMap((fragment) => {
+      const isExpanded = expandedFragmentPaths.has(fragment.path)
+      const hasLoadedChildren = fragmentChildrenByParent[getFragmentParentKey(fragment.path)] !== undefined
+      const isLoadingChildren = loadingFragmentParents.has(getFragmentParentKey(fragment.path))
+      const isSelected = selectedFilePath === fragment.path
+      const fileDraftKey = selectedAgentId !== null ? getExistingFileDraftKey(selectedAgentId, fragment.path) : null
+      const hasUnsaved = fileDraftKey ? unsavedFileKeys.has(fileDraftKey) : false
+
+      const rows = [
+        <div key={fragment.path} className="fragment-tree-item" style={{ paddingLeft: `${depth * 14}px` }}>
+          <button
+            type="button"
+            className="fragment-toggle"
+            onClick={() => void toggleExpandFragment(fragment.path)}
+            disabled={!fragment.hasChildren}
+            aria-label={fragment.hasChildren ? (isExpanded ? 'Collapse fragment' : 'Expand fragment') : 'No child fragments'}
+          >
+            {fragment.hasChildren ? (isExpanded ? '▾' : '▸') : '•'}
+          </button>
+          <button
+            type="button"
+            className={`fragment-entry ${isSelected ? 'selected' : ''}`}
+            onClick={() => {
+              if (isSelected) {
+                resetEditor()
+                return
+              }
+              void loadFile(fragment.path)
+            }}
+          >
+            <span className="session-id">
+              {fragment.name}
+              {hasUnsaved ? ' *' : ''}
+            </span>
+          </button>
+        </div>,
+      ]
+
+      if (fragment.hasChildren && isExpanded) {
+        if (hasLoadedChildren) {
+          rows.push(...renderFragmentTree(fragment.path, depth + 1))
+        } else if (isLoadingChildren) {
+          rows.push(
+            <div key={`${fragment.path}:loading`} className="fragment-tree-loading" style={{ paddingLeft: `${(depth + 1) * 14}px` }}>
+              Loading...
+            </div>,
+          )
+        }
+      }
+
+      return rows
+    })
+  }
+
   return (
     <div className="manager-shell">
       <aside className="manager-sidebar">
         <div className="panel-header">
           <h1>Agents</h1>
-          <p>Create, configure, and manage files.</p>
+          <p>Create, configure, and manage fragments.</p>
         </div>
 
         <label className="field-label" htmlFor="agent-select-manager">
@@ -417,12 +531,12 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
         </div>
 
         <div className="files-header">
-          <h3>Files{unsavedNewFileForSelectedAgent ? ' *' : ''}</h3>
+          <h3>Fragments{unsavedNewFileForSelectedAgent ? ' *' : ''}</h3>
           <div className="inline-actions">
             <button
               type="button"
               className="button ghost"
-              onClick={() => selectedAgentId !== null && void refreshFiles(selectedAgentId)}
+              onClick={() => selectedAgentId !== null && void refreshFragments(selectedAgentId)}
               disabled={!selectedAgentId}
             >
               Refresh
@@ -449,50 +563,29 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
               New
             </button>
             <button type="button" className="button ghost" onClick={() => void deleteFile()} disabled={!selectedFilePath || !selectedAgentId}>
-              Delete
+              Delete Fragment
             </button>
           </div>
         </div>
 
         <div className="files-list">
-          {files.map((file) => {
-            const isSelected = selectedFilePath === file.name
-            const fileDraftKey = selectedAgentId !== null ? getExistingFileDraftKey(selectedAgentId, file.name) : null
-            const hasUnsaved = fileDraftKey ? unsavedFileKeys.has(fileDraftKey) : false
-            return (
-              <button
-                key={file.name}
-                type="button"
-                className={`session-card ${isSelected ? 'selected' : ''}`}
-                onClick={() => {
-                  if (isSelected) {
-                    resetEditor()
-                    return
-                  }
-                  void loadFile(file.name)
-                }}
-              >
-                <div className="session-id">
-                  {file.name}
-                  {hasUnsaved ? ' *' : ''}
-                </div>
-              </button>
-            )
-          })}
-          {files.length === 0 && <div className="empty-state">No files yet.</div>}
+          {renderFragmentTree(null, 0)}
+          {(fragmentChildrenByParent[ROOT_FRAGMENT_KEY]?.length ?? 0) === 0 &&
+            !loadingFragmentParents.has(ROOT_FRAGMENT_KEY) && <div className="empty-state">No fragments yet.</div>}
+          {loadingFragmentParents.has(ROOT_FRAGMENT_KEY) && <div className="empty-state">Loading...</div>}
         </div>
       </aside>
 
       <main className="manager-main">
         <div className="chat-header">
           <div>
-            <h2>{selectedFilePath ?? 'No File Selected'}{fileDirty ? ' *' : ''}</h2>
-            <p>{selectedFilePath ? 'Editing selected file.' : 'Select a file from the sidebar or click New.'}</p>
+            <h2>{selectedFilePath ?? 'No Fragment Selected'}{fileDirty ? ' *' : ''}</h2>
+            <p>{selectedFilePath ? 'Editing selected fragment.' : 'Select a fragment from the sidebar or click New.'}</p>
           </div>
         </div>
 
         <label className="field-label" htmlFor="file-path-input-manager">
-          File Path
+          Fragment Path
         </label>
         <input
           id="file-path-input-manager"
@@ -570,7 +663,7 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
               onClick={() => void saveFile()}
               disabled={!selectedAgentId || fileLoading || !filePath.trim() || !fileDirty}
             >
-              Save File
+              Save Fragment
             </button>
           </div>
         </div>

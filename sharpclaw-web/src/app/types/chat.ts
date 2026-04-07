@@ -18,6 +18,12 @@ export type AgentFileSummary = {
   name: string
 }
 
+export type AgentFragmentSummary = {
+  name: string
+  path: string
+  hasChildren: boolean
+}
+
 export type AgentFile = {
   path: string
   content: string

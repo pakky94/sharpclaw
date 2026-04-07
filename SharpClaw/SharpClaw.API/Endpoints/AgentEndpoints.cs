@@ -62,8 +62,9 @@ public static class AgentEndpoints
                 : Results.Ok(updated);
         });
 
-        app.MapGet("/agents/{agentId:long}/files", async (
+        app.MapGet("/agents/{agentId:long}/fragments", async (
             long agentId,
+            [FromQuery] string? parentPath,
             [FromServices] Repository repository,
             [FromServices] FragmentsRepository fragmentsRepository
         ) =>
@@ -72,11 +73,11 @@ public static class AgentEndpoints
             if (agent is null)
                 return Results.NotFound(new { error = $"Agent {agentId} was not found." });
 
-            var files = await fragmentsRepository.ListFragmentsAsFiles(agentId);
-            return Results.Ok(new { agentId, files });
+            var fragments = await fragmentsRepository.ListFragmentChildren(agentId, parentPath);
+            return Results.Ok(new { agentId, parentPath, fragments });
         });
 
-        app.MapGet("/agents/{agentId:long}/file", async (
+        app.MapGet("/agents/{agentId:long}/fragments/file", async (
             long agentId,
             [FromQuery] string path,
             [FromServices] FragmentsRepository fragmentsRepository
@@ -87,11 +88,11 @@ public static class AgentEndpoints
 
             var file = await fragmentsRepository.ReadFragmentByPath(agentId, path);
             return file is null
-                ? Results.NotFound(new { error = $"File '{path}' was not found for agent {agentId}." })
+                ? Results.NotFound(new { error = $"Fragment '{path}' was not found for agent {agentId}." })
                 : Results.Ok(file);
         });
 
-        app.MapPut("/agents/{agentId:long}/file", async (
+        app.MapPut("/agents/{agentId:long}/fragments/file", async (
             long agentId,
             [FromBody] UpsertAgentFileRequest request,
             [FromServices] Repository repository,
@@ -110,7 +111,7 @@ public static class AgentEndpoints
             return Results.Ok(new { agentId, path });
         });
 
-        app.MapDelete("/agents/{agentId:long}/file", async (
+        app.MapDelete("/agents/{agentId:long}/fragments/file", async (
             long agentId,
             [FromQuery] string path,
             [FromServices] FragmentsRepository fragmentsRepository
@@ -122,7 +123,7 @@ public static class AgentEndpoints
             var deleted = await fragmentsRepository.DeleteFragmentByPath(agentId, path);
             return deleted
                 ? Results.Ok(new { agentId, path })
-                : Results.NotFound(new { error = $"File '{path}' was not found for agent {agentId}." });
+                : Results.NotFound(new { error = $"Fragment '{path}' was not found for agent {agentId}." });
         });
     }
 }

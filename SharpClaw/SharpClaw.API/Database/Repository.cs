@@ -905,6 +905,7 @@ public record LcmGrepMessageRecord(
     int? CoveringSummaryLevel);
 public record AgentConfig(long Id, string Name, string LlmModel, float Temperature, DateTime CreatedAt, DateTime UpdatedAt);
 public record AgentDocumentSummary(string Name);
+public record AgentFragmentSummary(string Name, string Path, bool HasChildren);
 public record AgentDocument(string Path, string Content);
 
 internal sealed class PersistedChatResponse
