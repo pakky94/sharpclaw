@@ -142,6 +142,16 @@ public sealed class TestLlmServer : IAsyncDisposable
         _mocks.Add((condition, c => WriteToolCallSseAsync(c, callId, toolName, argumentsJson)));
     }
 
+    public void ToolCallsSse(
+        string[] toolNames,
+        string[] argumentsJsons,
+        Func<RequestContext, bool> condition,
+        string[]? callIds = null)
+    {
+        callIds ??= Enumerable.Range(0, toolNames.Length).Select(_ => $"call_{Guid.NewGuid():N}").ToArray();
+        _mocks.Add((condition, c => WriteToolCallSseAsync(c, callIds, toolNames, argumentsJsons)));
+    }
+
     public void TextSse(string text, Func<RequestContext, bool> condition)
     {
         _mocks.Add((condition, c => WriteTextSseAsync(c, text)));
@@ -157,7 +167,7 @@ public sealed class TestLlmServer : IAsyncDisposable
         context.Response.ContentType = "text/event-stream";
         context.Response.SendChunked = true;
 
-        using var writer = new StreamWriter(context.Response.OutputStream, new UTF8Encoding(false));
+        await using var writer = new StreamWriter(context.Response.OutputStream, new UTF8Encoding(false));
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var chunkId = $"chatcmpl-mock-{Guid.NewGuid():N}";
 
@@ -185,6 +195,71 @@ public sealed class TestLlmServer : IAsyncDisposable
                                 function = new { name = toolName, arguments = argumentsJson },
                             },
                         },
+                    },
+                    finish_reason = (string?)null,
+                },
+            },
+        });
+        var finalChunk = JsonSerializer.Serialize(new
+        {
+            id = chunkId,
+            @object = "chat.completion.chunk",
+            created = now,
+            model = "mock-model",
+            choices = new[]
+            {
+                new
+                {
+                    index = 0,
+                    delta = new { },
+                    finish_reason = "tool_calls",
+                },
+            },
+        });
+
+        await WriteSseDataAsync(writer, firstChunk);
+        await WriteSseDataAsync(writer, finalChunk);
+        await WriteSseDataAsync(writer, "[DONE]");
+        context.Response.Close();
+    }
+
+    private static async Task WriteToolCallSseAsync(
+        HttpListenerContext context,
+        string[] callIds,
+        string[] toolNames,
+        string[] argumentsJsons)
+    {
+        context.Response.StatusCode = (int)HttpStatusCode.OK;
+        context.Response.ContentType = "text/event-stream";
+        context.Response.SendChunked = true;
+
+        await using var writer = new StreamWriter(context.Response.OutputStream, new UTF8Encoding(false));
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var chunkId = $"chatcmpl-mock-{Guid.NewGuid():N}";
+
+        var firstChunk = JsonSerializer.Serialize(new
+        {
+            id = chunkId,
+            @object = "chat.completion.chunk",
+            created = now,
+            model = "mock-model",
+            choices = new[]
+            {
+                new
+                {
+                    index = 0,
+                    delta = new
+                    {
+                        role = "assistant",
+                        tool_calls = toolNames.Zip(argumentsJsons, callIds)
+                            .Select((x, idx) =>
+                                new
+                                {
+                                    index = idx,
+                                    id = x.Third,
+                                    type = "function",
+                                    function = new { name = x.First, arguments = x.Second },
+                                }),
                     },
                     finish_reason = (string?)null,
                 },

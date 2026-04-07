@@ -105,4 +105,37 @@ public sealed class ToolInvocationTests(SharpClawAppFixture fixture)
         using var run = await fixture.Api.WaitForRunTerminalStateAsync(sessionId, runId, TimeSpan.FromSeconds(30));
         Assert.Equal("completed", run.RootElement.GetProperty("status").GetString());
     }
+
+    [Fact]
+    public async Task MultipleCallInvocations()
+    {
+        await fixture.ResetStateAsync();
+
+        fixture.LlmServer?.ToolCallsSse(["ws_list_files", "ws_list_files"],
+            ["""{"path":".","recursive":false}""", """{"path":".","recursive":false}"""],
+            c => c.Messages.Last().Role == "user"
+                 && c.Messages.Last().Content ==  "TEST_TOOL_LIST_FILES");
+
+        fixture.LlmServer?.TextSse("Tool invocation finished.",
+            c => c.Messages.Last().Role == "tool");
+
+        var sessionId = await fixture.Api.CreateSessionAsync();
+        var runId = await fixture.Api.EnqueueMessageAsync(sessionId, "TEST_TOOL_LIST_FILES");
+        using var run = await fixture.Api.WaitForRunTerminalStateAsync(sessionId, runId, TimeSpan.FromSeconds(30));
+
+        Assert.Equal("completed", run.RootElement.GetProperty("status").GetString());
+
+        using var history = await fixture.Api.GetHistoryAsync(sessionId);
+        var messageContents = ResponseHelpers.FlattenMessageContents(history);
+
+        Assert.Contains(messageContents, content =>
+            content.GetProperty("type").GetString() == "tool_call" &&
+            content.GetProperty("toolName").GetString() == "ws_list_files");
+
+        Assert.Contains(messageContents, content =>
+            content.GetProperty("type").GetString() == "tool_result");
+
+        Assert.Contains(ResponseHelpers.GetMessageTexts(history),
+            text => text.Contains("Tool invocation finished.", StringComparison.Ordinal));
+    }
 }
