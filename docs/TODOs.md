@@ -17,11 +17,14 @@
 ## Other stuff:
 
 ### Workspace support
+!!!Check if this actually makes sense, it seems to confuse the LLM a lot.
 - [X] allow the agent to access a folder and work within it.
+- [ ] remove redundant data in list files response
 - [ ] when workspace support update the `Environment.EnvPrompt`
 
 ### Multi-agent communication
-- [ ] allow an agent to delegate a task to another agent
+- [X] allow an agent to delegate a task to another agent
+- [ ] implement `tasks` tool as well
 - [ ] async tasks with sharing of a memory fragment for communication
 
 ### Models Multiprovider support
@@ -40,5 +43,6 @@
 - [ ] TBC: during summarization remove fragments content and save only their Id's
 
 ### General improvements
-- [ ] backup/export/restore functionality of database
 - [ ] TBD: add delete of agents, older sessions, ecc... how should this work? do we delete the sessions or just mark them as deleted? what about agents?
+- [ ] persistence of runs between turns and resume, especially in the case of `task`/`tasks` tool calls or other delegations that might make tool calls extremely long
+- [ ] backup/export/restore functionality of database

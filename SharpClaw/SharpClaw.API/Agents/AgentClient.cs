@@ -7,12 +7,14 @@ using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace SharpClaw.API.Agents;
 
-public class AgentClient(ChatClient chatClient, AgentExecutionContext context, IConfiguration configuration)
+public class AgentClient(ChatClient chatClient, AgentExecutionContext context, IServiceProvider serviceProvider)
 {
     public async Task<List<ChatResponse>> GetResponse(List<ChatMessage> messages, List<AIFunction> tools,
         AgentRunState? runState = null,
         Func<ChatResponseUpdate, Task>? onUpdate = null)
     {
+        var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+
         var services = new ServiceCollection()
             .Configure<LmStudioConfiguration>(configuration)
             .AddSingleton(context)
@@ -21,15 +23,19 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
             .AddSingleton<FragmentsRepository>()
             .AddSingleton<FragmentEmbeddingService>()
             .AddSingleton<WorkspaceRepository>()
-            .AddSingleton<ApprovalService>();
+            .AddSingleton<ApprovalService>()
+            .AddSingleton(serviceProvider.GetRequiredService<Agent>());
 
         if (runState is not null)
             services.AddSingleton(runState);
 
         var agent = chatClient.AsAIAgent(
-            tools: [..tools],
-            services: services.BuildServiceProvider()
-        );
+                tools: [..tools],
+                services: services.BuildServiceProvider()
+            )
+            .AsBuilder()
+            .Use(Callback)
+            .Build();
 
         var response = new List<ChatResponse>();
         var messageUpdates = new List<ChatResponseUpdate>();
@@ -42,7 +48,7 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
                                ChatOptions = new ChatOptions
                                {
                                    Temperature = context.Temperature,
-                               }
+                               },
                            }))
         {
             var chatUpdate = update.AsChatResponseUpdate();
@@ -67,7 +73,7 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
 
             // TODO: maybe split only when MessageId changes?
             // if (chatUpdate.FinishReason is not null)
-                // FlushMessageUpdates();
+            // FlushMessageUpdates();
         }
 
         FlushMessageUpdates();
@@ -87,5 +93,13 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
             messageUpdates.Clear();
             currentMessageId = null;
         }
+    }
+
+    private static async ValueTask<object?> Callback(AIAgent agent,
+        FunctionInvocationContext functionContext,
+        Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next,
+        CancellationToken ct)
+    {
+        return await next(functionContext, ct);
     }
 }

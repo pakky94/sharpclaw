@@ -4,6 +4,7 @@ using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Memory.Lcm;
 using SharpClaw.API.Agents.Tools.Fragments;
 using SharpClaw.API.Agents.Tools.Lcm;
+using SharpClaw.API.Agents.Tools.Tasks;
 using SharpClaw.API.Agents.Tools.Workspace;
 using SharpClaw.API.Database;
 
@@ -64,129 +65,158 @@ public class Agent(
             session.Runs[run.RunId] = run;
         }
 
-        _ = Task.Run(async () =>
+        _ = Task.Run(() => GetMessageResponse(sessionId, prompt, session, run));
+
+        return run;
+    }
+
+    public async Task<string?> GetMessageResponse(Guid sessionId, string prompt)
+    {
+        var session = await GetOrLoadSession(sessionId);
+
+        AgentRunState run;
+        lock (session.RunsLock)
         {
+            var hasActiveRun = session.Runs.Values.Any(r => r.Status is AgentRunStatus.Pending or AgentRunStatus.Running);
+            if (hasActiveRun)
+                throw new InvalidOperationException($"Session {sessionId} already has an active run.");
+
+            run = new AgentRunState(Guid.NewGuid(), sessionId);
+            session.Runs[run.RunId] = run;
+        }
+
+        return await GetMessageResponse(sessionId, prompt, session, run);
+    }
+
+    private async Task<string?> GetMessageResponse(Guid sessionId, string prompt, AgentSessionState session, AgentRunState run)
+    {
+        await session.Mutex.WaitAsync();
+        run.MarkStarted();
+        try
+        {
+            var userMessage = new ChatResponse(
+                new ChatMessage(ChatRole.User, prompt)
+                {
+                    MessageId = Guid.NewGuid().ToString().Replace("-", ""),
+                    AdditionalProperties = new AdditionalPropertiesDictionary
+                    {
+                        ["lcm_type"] = "user_message",
+                    },
+                });
+
+            await repository.PersistMessage(sessionId, run.RunId, userMessage);
+            session.Context.Messages.Add(userMessage);
+
+            var rootFragment = await fragmentsRepository.EnsureRootFragment(session.Context.AgentId);
+            var fragments = await fragmentsRepository.ReadFragment(
+                session.Context.AgentId,
+                rootFragment,
+                includeChildren: true,
+                maxDepth: 1,
+                childNamesOnly: true);
+
+            var systemMessage = string.Join('\n', [
+                Environment.EnvPrompt(session.Context.LlmModel, DateTimeOffset.Now, rootFragment, fragments?.Children, session.Context.Workspace),
+                Prompts.LcmPrompt,
+                Memory.Fragments.Prompts.FragmentPrompt,
+                session.Context.SystemMessage,
+            ]);
+
+            var agent = chatProvider.GetClient(session.Context);
+            var response = await agent.GetResponse(
+                [
+                    new ChatMessage(ChatRole.System, systemMessage),
+                    ..session.Context.Messages.SelectMany(r => r.Messages)
+                ],
+                BuildTools(),
+                run,
+                update =>
+                {
+                    if (!string.IsNullOrEmpty(update.Text))
+                        run.AppendDelta(update.Text);
+
+                    foreach (var content in update.Contents)
+                    {
+                        switch (content)
+                        {
+                            case FunctionCallContent functionCall:
+                                run.AppendToolCall(
+                                    functionCall.CallId,
+                                    functionCall.Name,
+                                    SerializeToolPayload(functionCall.Arguments));
+                                break;
+                            case FunctionResultContent functionResult:
+                                run.AppendToolResult(
+                                    functionResult.CallId,
+                                    SerializeToolPayload(functionResult.Result));
+                                break;
+                        }
+                    }
+
+                    return Task.CompletedTask;
+                });
+
+            foreach (var message in response)
+            {
+                await repository.PersistMessage(sessionId, run.RunId, message);
+            }
+
+            session.Context.Messages = [..session.Context.Messages, ..response];
+
+            run.MarkCompleted();
+
+            var inputTokens = response.LastOrDefault(m => m.Usage is not null)?.Usage?.InputTokenCount;
+
+            if (inputTokens is not null && inputTokens > session.Context.SoftCompactThreshold)
+            {
+                _ = Task.Run(SoftCompactHistory(sessionId, session, run));
+            }
+
+            return response.LastOrDefault(m => !string.IsNullOrWhiteSpace(m.Text))?.Text;
+        }
+        catch (Exception ex)
+        {
+            run.MarkFailed(ex.Message);
+        }
+        finally
+        {
+            session.Mutex.Release();
+        }
+
+        return null; // TODO: return error from here? possibly yes
+    }
+
+    private Func<Task?> SoftCompactHistory(Guid sessionId, AgentSessionState session, AgentRunState run)
+    {
+        return async () =>
+        {
+            var split = Summarizer.SplitMessages(session.Context.Messages, session.Context.FreshMessagesCount);
+
+            if (split.Depth < 0) return; // TODO: handle failure case for split message
+
+            var summarizer = new Summarizer(chatProvider);
+            var summary = await summarizer.Summarize(session.Context, [], split.ToSummarize, split.Depth);
             await session.Mutex.WaitAsync();
-            run.MarkStarted();
             try
             {
-                var userMessage = new ChatResponse(
-                    new ChatMessage(ChatRole.User, prompt)
-                    {
-                        MessageId = Guid.NewGuid().ToString().Replace("-", ""),
-                        AdditionalProperties = new AdditionalPropertiesDictionary
-                        {
-                            ["lcm_type"] = "user_message",
-                        },
-                    });
-
-                await repository.PersistMessage(sessionId, run.RunId, userMessage);
-                session.Context.Messages.Add(userMessage);
-
-                var rootFragment = await fragmentsRepository.EnsureRootFragment(session.Context.AgentId);
-                var fragments = await fragmentsRepository.ReadFragment(
-                    session.Context.AgentId,
-                    rootFragment,
-                    includeChildren: true,
-                    maxDepth: 1,
-                    childNamesOnly: true);
-
-                var systemMessage = string.Join('\n', [
-                    Environment.EnvPrompt(session.Context.LlmModel, DateTimeOffset.Now, rootFragment, fragments?.Children, session.Context.Workspace),
-                    Prompts.LcmPrompt,
-                    Memory.Fragments.Prompts.FragmentPrompt,
-                    session.Context.SystemMessage,
-                ]);
-
-                var agent = chatProvider.GetClient(session.Context);
-                var response = await agent.GetResponse(
-                    [
-                        new ChatMessage(ChatRole.System, systemMessage),
-                        ..session.Context.Messages.SelectMany(r => r.Messages)
-                    ],
-                    BuildTools(),
-                    run,
-                    update =>
-                    {
-                        if (!string.IsNullOrEmpty(update.Text))
-                            run.AppendDelta(update.Text);
-
-                        foreach (var content in update.Contents)
-                        {
-                            switch (content)
-                            {
-                                case FunctionCallContent functionCall:
-                                    run.AppendToolCall(
-                                        functionCall.CallId,
-                                        functionCall.Name,
-                                        SerializeToolPayload(functionCall.Arguments));
-                                    break;
-                                case FunctionResultContent functionResult:
-                                    run.AppendToolResult(
-                                        functionResult.CallId,
-                                        SerializeToolPayload(functionResult.Result));
-                                    break;
-                            }
-                        }
-
-                        return Task.CompletedTask;
-                    });
-
-                foreach (var message in response)
+                if (split.PreSummary.All(m => session.Context.Messages.Contains(m))
+                    && split.ToSummarize.All(m => session.Context.Messages.Contains(m))
+                    && split.PostSummary.All(m => session.Context.Messages.Contains(m)))
                 {
-                    await repository.PersistMessage(sessionId, run.RunId, message);
+                    await repository.PersistSummaryAndCompactHistory(
+                        sessionId,
+                        run.RunId,
+                        summary,
+                        split.ToSummarize);
+
+                    session.Context.Messages = [..split.PreSummary, summary, ..split.PostSummary];
                 }
-
-                session.Context.Messages = [..session.Context.Messages, ..response];
-
-                run.MarkCompleted();
-
-                var inputTokens = response.LastOrDefault(m => m.Usage is not null)?.Usage?.InputTokenCount;
-
-                if (inputTokens is not null && inputTokens > session.Context.SoftCompactThreshold)
-                {
-                    _ = Task.Run(async () =>
-                    {
-                        var split = Summarizer.SplitMessages(session.Context.Messages, session.Context.FreshMessagesCount);
-
-                        if (split.Depth < 0) return; // TODO: handle failure case for split message
-
-                        var summarizer = new Summarizer(chatProvider);
-                        var summary = await summarizer.Summarize(session.Context, [], split.ToSummarize, split.Depth);
-                        await session.Mutex.WaitAsync();
-                        try
-                        {
-                            if (split.PreSummary.All(m => session.Context.Messages.Contains(m))
-                                && split.ToSummarize.All(m => session.Context.Messages.Contains(m))
-                                && split.PostSummary.All(m => session.Context.Messages.Contains(m)))
-                            {
-                                await repository.PersistSummaryAndCompactHistory(
-                                    sessionId,
-                                    run.RunId,
-                                    summary,
-                                    split.ToSummarize);
-
-                                session.Context.Messages = [..split.PreSummary, summary, ..split.PostSummary];
-                            }
-                        }
-                        finally
-                        {
-                            session.Mutex.Release();
-                        }
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                run.MarkFailed(ex.Message);
             }
             finally
             {
                 session.Mutex.Release();
             }
-        });
-
-        return run;
+        };
     }
 
     public async Task<SessionHistoryDto> GetHistory(Guid sessionId)
@@ -328,6 +358,7 @@ public class Agent(
         ..WorkspaceTools.Functions,
         ..CommandTools.Functions,
         ..SessionWorkspaceTools.Functions,
+        TasksTools.TaskTool([("Main", "the main agent")]), // TODO: get these agents from where?
     ];
 
     private static string? SerializeToolPayload(object? payload)

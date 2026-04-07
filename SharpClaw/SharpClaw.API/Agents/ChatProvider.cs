@@ -4,7 +4,7 @@ using OpenAI;
 
 namespace SharpClaw.API.Agents;
 
-public class ChatProvider(IConfiguration configuration, IOptions<LmStudioConfiguration> lmStudioConfiguration)
+public class ChatProvider(IServiceProvider serviceProvider, IOptions<LmStudioConfiguration> lmStudioConfiguration)
 {
     public AgentClient GetClient(AgentExecutionContext context)
     {
@@ -23,6 +23,6 @@ public class ChatProvider(IConfiguration configuration, IOptions<LmStudioConfigu
         // var chatClient = client.GetChatClient("zai-org/glm-4.7-flash");
         // var chatClient = client.GetChatClient("qwen3.5-13b-glm-4.7-flash-grande-deep-thinking-i1");
 
-        return new AgentClient(chatClient, context, configuration);
+        return new AgentClient(chatClient, context, serviceProvider);
     }
 }
