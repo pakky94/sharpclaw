@@ -278,7 +278,7 @@ public class Repository(IConfiguration configuration)
 
         await tx.CommitAsync();
 
-        SetDbReference(response, "message", messageId);
+        SetDbReference(response, "message", messageId, nextSequence);
         return messageId;
     }
 
@@ -413,10 +413,11 @@ public class Repository(IConfiguration configuration)
                        else s.payload::text
                    end as Payload,
                    ch.entry_type as EntryType,
+                   ch.sequence as SequenceId,
                    m.id as MessageId,
                    s.id as SummaryId,
                    m.parent_summary_id as MessageParentSummaryId,
-                   s.parent_summary_id as SummaryParentSummaryId
+                   s.parent_summary_id as SummaryParentSummaryId,
             from conversation_history ch
             left join messages m on ch.message_id = m.id
             left join summaries s on ch.summary_id = s.id
@@ -430,7 +431,7 @@ public class Repository(IConfiguration configuration)
         {
             var response = DeserializeResponse(r.Payload);
             if (r.EntryType == "message" && r.MessageId is not null)
-                SetDbReference(response, "message", r.MessageId.Value, r.MessageParentSummaryId);
+                SetDbReference(response, "message", r.MessageId.Value, r.SequenceId, r.MessageParentSummaryId);
             else if (r.EntryType == "summary" && r.SummaryId is not null)
                 SetDbReference(response, "summary", r.SummaryId.Value, r.SummaryParentSummaryId);
             return response;
@@ -442,14 +443,16 @@ public class Repository(IConfiguration configuration)
         await using var connection = new NpgsqlConnection(ConnectionString);
         var rows = await connection.QueryAsync<RawMessageRow>(
             """
-            select id as MessageId,
-                   run_id as RunId,
-                   created_at as CreatedAt,
-                   payload::text as Payload,
-                   parent_summary_id as ParentSummaryId
-            from messages
-            where session_id = @sessionId
-            order by created_at, id;
+            select m.id as MessageId,
+                   m.run_id as RunId,
+                   m.created_at as CreatedAt,
+                   m.payload::text as Payload,
+                   m.parent_summary_id as ParentSummaryId,
+                   ch.sequence as SequenceId
+            from messages m
+            join conversation_history ch on m.id = ch.message_id
+            where m.session_id = @sessionId
+            order by ch.sequence;
             """,
             new { sessionId });
 
@@ -644,6 +647,17 @@ public class Repository(IConfiguration configuration)
         return rows.Select(ToLcmGrepMessageRecord).ToArray();
     }
 
+    private static void SetDbReference(ChatResponse response, string type, long id, long sequenceId, long? parentSummaryId = null)
+    {
+        response.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+        response.AdditionalProperties[DbEntryTypeKey] = type;
+        response.AdditionalProperties[DbEntryIdKey] = id;
+        response.AdditionalProperties[Constants.SequenceIdKey] = sequenceId;
+
+        if (parentSummaryId is not null)
+            response.AdditionalProperties[ParentSummaryIdKey] = parentSummaryId.Value;
+    }
+
     private static void SetDbReference(ChatResponse response, string type, long id, long? parentSummaryId = null)
     {
         response.AdditionalProperties ??= new AdditionalPropertiesDictionary();
@@ -833,6 +847,7 @@ public class Repository(IConfiguration configuration)
     {
         public required string Payload { get; init; }
         public required string EntryType { get; init; }
+        public required long SequenceId { get; init; }
         public long? MessageId { get; init; }
         public long? SummaryId { get; init; }
         public long? MessageParentSummaryId { get; init; }
@@ -842,6 +857,7 @@ public class Repository(IConfiguration configuration)
     private sealed class RawMessageRow
     {
         public long MessageId { get; init; }
+        public long SequenceId { get; init; }
         public Guid? RunId { get; init; }
         public DateTime CreatedAt { get; init; }
         public required string Payload { get; init; }
