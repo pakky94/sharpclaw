@@ -9,7 +9,9 @@ namespace SharpClaw.API.Agents;
 
 public class AgentClient(ChatClient chatClient, AgentExecutionContext context, IServiceProvider serviceProvider)
 {
-    public async Task<List<ChatResponse>> GetResponse(List<ChatMessage> messages, List<AIFunction> tools,
+    private bool _shouldContinue;
+
+    public async Task<AgentClientResponse> GetResponse(List<ChatMessage> messages, List<AIFunction> tools,
         AgentRunState? runState = null,
         Func<ChatResponseUpdate, Task>? onUpdate = null)
     {
@@ -37,6 +39,7 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
             .Use(Callback)
             .Build();
 
+        _shouldContinue = false;
         var response = new List<ChatResponse>();
         var messageUpdates = new List<ChatResponseUpdate>();
         string? currentMessageId = null;
@@ -78,7 +81,11 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
 
         FlushMessageUpdates();
 
-        return response;
+        return new AgentClientResponse
+        {
+            Responses = response,
+            ShouldContinue = _shouldContinue,
+        };
 
         void FlushMessageUpdates()
         {
@@ -95,11 +102,23 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
         }
     }
 
-    private static async ValueTask<object?> Callback(AIAgent agent,
+    private async ValueTask<object?> Callback(AIAgent agent,
         FunctionInvocationContext functionContext,
         Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next,
         CancellationToken ct)
     {
-        return await next(functionContext, ct);
+        var t = await next(functionContext, ct);
+        if (functionContext.FunctionCallIndex + 1 >= functionContext.FunctionCount)
+        {
+            functionContext.Terminate = true;
+            _shouldContinue = true;
+        }
+        return t;
     }
+}
+
+public class AgentClientResponse
+{
+    public required List<ChatResponse> Responses { get; init; }
+    public required bool ShouldContinue { get; init; }
 }

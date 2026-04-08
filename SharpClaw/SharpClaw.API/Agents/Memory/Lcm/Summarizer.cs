@@ -33,6 +33,7 @@ public partial class Summarizer(ChatProvider chatProvider)
         if (aggressive)
             prompt = $"{prompt.Trim()}\n\n{PromptAggressiveDirective}";
 
+        // TODO: set up client without tools / other useless stuff
         var result = await chatProvider
             .GetClient(context)
             .GetResponse(
@@ -42,7 +43,7 @@ public partial class Summarizer(ChatProvider chatProvider)
                 ], []
             );
 
-        var msgTxt = result.FirstOrDefault(m => !string.IsNullOrEmpty(m.Text));
+        var msgTxt = result.Responses.FirstOrDefault(m => !string.IsNullOrEmpty(m.Text));
 
         if (string.IsNullOrEmpty(msgTxt?.Text))
             throw new Exception("No summary message found");

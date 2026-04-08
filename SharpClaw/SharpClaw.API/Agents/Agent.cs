@@ -24,7 +24,6 @@ public class Agent(
     {
         var agentConfig = await repository.GetAgent(agentId)
                           ?? throw new KeyNotFoundException($"Agent {agentId} was not found.");
-        var systemPrompt = (await fragmentsRepository.ReadFragmentByPath(agentId, "AGENTS.md"))?.Content ?? string.Empty;
         var sessionId = Guid.NewGuid();
 
         var defaultWs = await workspaceRepository.ResolveDefaultWorkspace(agentId);
@@ -39,13 +38,12 @@ public class Agent(
             AgentId = agentId,
             LlmModel = agentConfig.LlmModel,
             Temperature = agentConfig.Temperature,
-            SystemMessage = systemPrompt,
             Messages = [],
             Workspace = defaultWs,
             ActiveWorkspaceNames = activeWorkspaces,
         };
 
-        await repository.CreateSession(sessionId, agentId, systemPrompt);
+        await repository.CreateSession(sessionId, agentId);
         _sessions[sessionId] = new AgentSessionState(sessionId, context);
         return sessionId;
     }
@@ -94,6 +92,7 @@ public class Agent(
         run.MarkStarted();
         try
         {
+            AgentClientResponse? response = null;
             var userMessage = new ChatResponse(
                 new ChatMessage(ChatRole.User, prompt)
                 {
@@ -107,72 +106,77 @@ public class Agent(
             await repository.PersistMessage(sessionId, run.RunId, userMessage);
             session.Context.Messages.Add(userMessage);
 
-            var rootFragment = await fragmentsRepository.EnsureRootFragment(session.Context.AgentId);
-            var fragments = await fragmentsRepository.ReadFragment(
-                session.Context.AgentId,
-                rootFragment,
-                includeChildren: true,
-                maxDepth: 1,
-                childNamesOnly: true);
+            while (response is null or { ShouldContinue: true })
+            {
+                var agentsMd = (await fragmentsRepository.ReadFragmentByPath(session.Context.AgentId, "AGENTS.md"))?.Content ?? string.Empty;
+                var rootFragment = await fragmentsRepository.EnsureRootFragment(session.Context.AgentId);
+                var fragments = await fragmentsRepository.ReadFragment(
+                    session.Context.AgentId,
+                    rootFragment,
+                    includeChildren: true,
+                    maxDepth: 1,
+                    childNamesOnly: true);
 
-            var systemMessage = string.Join('\n', [
-                Environment.EnvPrompt(session.Context.LlmModel, DateTimeOffset.Now, rootFragment, fragments?.Children, session.Context.Workspace),
-                Prompts.LcmPrompt,
-                Memory.Fragments.Prompts.FragmentPrompt,
-                session.Context.SystemMessage,
-            ]);
+                var systemMessage = string.Join('\n', [
+                    Environment.EnvPrompt(session.Context.LlmModel, DateTimeOffset.Now, rootFragment, fragments?.Children, session.Context.Workspace),
+                    Prompts.LcmPrompt,
+                    Memory.Fragments.Prompts.FragmentPrompt,
+                    agentsMd,
+                ]);
 
-            var agent = chatProvider.GetClient(session.Context);
-            var response = await agent.GetResponse(
-                [
-                    new ChatMessage(ChatRole.System, systemMessage),
-                    ..session.Context.Messages.SelectMany(r => r.Messages)
-                ],
-                BuildTools(),
-                run,
-                update =>
-                {
-                    if (!string.IsNullOrEmpty(update.Text))
-                        run.AppendDelta(update.Text);
-
-                    foreach (var content in update.Contents)
+                var agent = chatProvider.GetClient(session.Context);
+                response = await agent.GetResponse(
+                    [
+                        new ChatMessage(ChatRole.System, systemMessage),
+                        ..session.Context.Messages.SelectMany(r => r.Messages)
+                    ],
+                    BuildTools(),
+                    run,
+                    update =>
                     {
-                        switch (content)
+                        if (!string.IsNullOrEmpty(update.Text))
+                            run.AppendDelta(update.Text);
+
+                        foreach (var content in update.Contents)
                         {
-                            case FunctionCallContent functionCall:
-                                run.AppendToolCall(
-                                    functionCall.CallId,
-                                    functionCall.Name,
-                                    SerializeToolPayload(functionCall.Arguments));
-                                break;
-                            case FunctionResultContent functionResult:
-                                run.AppendToolResult(
-                                    functionResult.CallId,
-                                    SerializeToolPayload(functionResult.Result));
-                                break;
+                            switch (content)
+                            {
+                                case FunctionCallContent functionCall:
+                                    run.AppendToolCall(
+                                        functionCall.CallId,
+                                        functionCall.Name,
+                                        SerializeToolPayload(functionCall.Arguments));
+                                    break;
+                                case FunctionResultContent functionResult:
+                                    run.AppendToolResult(
+                                        functionResult.CallId,
+                                        SerializeToolPayload(functionResult.Result));
+                                    break;
+                            }
                         }
-                    }
 
-                    return Task.CompletedTask;
-                });
+                        return Task.CompletedTask;
+                    });
 
-            foreach (var message in response)
-            {
-                await repository.PersistMessage(sessionId, run.RunId, message);
+                foreach (var message in response.Responses)
+                {
+                    await repository.PersistMessage(sessionId, run.RunId, message);
+                }
+
+                session.Context.Messages = [..session.Context.Messages, ..response.Responses];
+
+                if (!response.ShouldContinue)
+                    run.MarkCompleted(); // TODO: rework this
+
+                var inputTokens = response.Responses.LastOrDefault(m => m.Usage is not null)?.Usage?.InputTokenCount;
+
+                if (inputTokens is not null && inputTokens > session.Context.SoftCompactThreshold)
+                {
+                    _ = Task.Run(SoftCompactHistory(sessionId, session, run));
+                }
             }
 
-            session.Context.Messages = [..session.Context.Messages, ..response];
-
-            run.MarkCompleted();
-
-            var inputTokens = response.LastOrDefault(m => m.Usage is not null)?.Usage?.InputTokenCount;
-
-            if (inputTokens is not null && inputTokens > session.Context.SoftCompactThreshold)
-            {
-                _ = Task.Run(SoftCompactHistory(sessionId, session, run));
-            }
-
-            return response.LastOrDefault(m => !string.IsNullOrWhiteSpace(m.Text))?.Text;
+            return response.Responses.LastOrDefault(m => !string.IsNullOrWhiteSpace(m.Text))?.Text;
         }
         catch (Exception ex)
         {
@@ -332,7 +336,6 @@ public class Agent(
                 AgentId = persistedSession.AgentId,
                 LlmModel = agentConfig.LlmModel,
                 Temperature = agentConfig.Temperature,
-                SystemMessage = (await fragmentsRepository.ReadFragmentByPath(persistedSession.AgentId, "AGENTS.md"))?.Content ?? string.Empty,
                 Messages = [..await repository.LoadActiveConversation(sessionId)],
                 Workspace = defaultWs,
                 ActiveWorkspaceNames = activeWsNames,

@@ -48,7 +48,6 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                 create table if not exists sessions(
                     id uuid primary key,
                     agent_id bigint not null references agents(id),
-                    system_prompt text not null,
                     created_at timestamptz not null default now()
                 );
 

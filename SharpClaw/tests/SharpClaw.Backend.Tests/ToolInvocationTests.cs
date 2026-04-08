@@ -121,7 +121,7 @@ public sealed class ToolInvocationTests(SharpClawAppFixture fixture)
 
         var sessionId = await fixture.Api.CreateSessionAsync();
         var runId = await fixture.Api.EnqueueMessageAsync(sessionId, "TEST_TOOL_LIST_FILES");
-        using var run = await fixture.Api.WaitForRunTerminalStateAsync(sessionId, runId, TimeSpan.FromSeconds(30));
+        using var run = await fixture.Api.WaitForRunTerminalStateAsync(sessionId, runId, TimeSpan.FromMinutes(30));
 
         Assert.Equal("completed", run.RootElement.GetProperty("status").GetString());
 

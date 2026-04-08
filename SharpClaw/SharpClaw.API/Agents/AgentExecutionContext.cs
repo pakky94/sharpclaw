@@ -10,7 +10,6 @@ public class AgentExecutionContext
     public required long AgentId { get; set; }
     public required string LlmModel { get; set; }
     public required float Temperature { get; set; }
-    public string? SystemMessage { get; set; }
     public List<ChatResponse> Messages { get; set; } = [];
     public ResolvedWorkspace? Workspace { get; set; }
     public string? SessionWorkspaceOverride { get; set; }

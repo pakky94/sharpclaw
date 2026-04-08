@@ -193,16 +193,16 @@ public class Repository(IConfiguration configuration)
         return true;
     }
 
-    public async Task CreateSession(Guid sessionId, long agentId, string systemPrompt)
+    public async Task CreateSession(Guid sessionId, long agentId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.ExecuteAsync(
             """
-            insert into sessions (id, agent_id, system_prompt)
-            values (@sessionId, @agentId, @systemPrompt)
+            insert into sessions (id, agent_id)
+            values (@sessionId, @agentId)
             on conflict (id) do nothing;
             """,
-            new { sessionId, agentId, systemPrompt });
+            new { sessionId, agentId });
     }
 
     public async Task<PersistedSession?> GetSession(Guid sessionId)
@@ -212,7 +212,6 @@ public class Repository(IConfiguration configuration)
             """
             select id as SessionId,
                    agent_id as AgentId,
-                   system_prompt as SystemPrompt,
                    created_at as CreatedAt
             from sessions
             where id = @sessionId;
