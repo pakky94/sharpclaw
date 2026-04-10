@@ -5,7 +5,7 @@ info:
 
 http:
   method: GET
-  url: "{{baseUrl}}/sessions/{{sessionId}}/runs/{{runId}}/stream"
+  url: "{{baseUrl}}/sessions/{{sessionId}}/messages/{{latestSequenceId}}/stream"
   auth: inherit
 
 settings:

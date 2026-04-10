@@ -13,7 +13,8 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
 
     public async Task<AgentClientResponse> GetResponse(List<ChatMessage> messages, List<AIFunction> tools,
         AgentRunState? runState = null,
-        Func<ChatResponseUpdate, Task>? onUpdate = null)
+        Func<ChatResponseUpdate, Task>? onUpdate = null,
+        Func<Task>? onMessageFlushed = null)
     {
         var configuration = serviceProvider.GetRequiredService<IConfiguration>();
 
@@ -62,7 +63,7 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
                                         !string.Equals(chatUpdate.MessageId, currentMessageId, StringComparison.Ordinal);
 
             if (hasNewMessageBoundary)
-                FlushMessageUpdates();
+                await FlushMessageUpdates();
 
             if (!string.IsNullOrEmpty(chatUpdate.MessageId))
                 currentMessageId ??= chatUpdate.MessageId;
@@ -79,7 +80,7 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
             // FlushMessageUpdates();
         }
 
-        FlushMessageUpdates();
+        await FlushMessageUpdates();
 
         return new AgentClientResponse
         {
@@ -87,7 +88,7 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
             ShouldContinue = _shouldContinue,
         };
 
-        void FlushMessageUpdates()
+        async Task FlushMessageUpdates()
         {
             if (messageUpdates.Count == 0)
                 return;
@@ -99,6 +100,8 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
             response.Add(m);
             messageUpdates.Clear();
             currentMessageId = null;
+            if (onMessageFlushed is not null)
+                await onMessageFlushed();
         }
     }
 

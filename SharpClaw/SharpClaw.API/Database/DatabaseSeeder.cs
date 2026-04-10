@@ -242,7 +242,7 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                 await connection.ExecuteAsync(
                     """
                     insert into agents (name, llm_model, temperature)
-                    values ('Main', 'zai-org/glm-4.7-flash', 0.1);
+                    values ('Main', 'qwen/qwen3.5-35b-a3b', 0.1);
                     """);
 
             await connection.ExecuteAsync(

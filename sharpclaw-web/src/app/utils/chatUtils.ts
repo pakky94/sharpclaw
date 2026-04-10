@@ -83,7 +83,6 @@ export function formatToolResult(value: unknown): { text: string; format: 'text'
 
 export function mapHistoryMessageToBubbles(
   sessionId: string,
-  messageIndex: number,
   message: SessionHistoryMessage,
 ): ChatBubble[] {
   const role = normalizeRole(message.role)
@@ -91,7 +90,7 @@ export function mapHistoryMessageToBubbles(
 
   if (contents.length > 0) {
     const bubbles = contents
-      .map((content, contentIndex) => mapHistoryContentToBubble(sessionId, messageIndex, contentIndex, role, message.runId, content))
+      .map((content, contentIndex) => mapHistoryContentToBubble(sessionId, message.messageId, contentIndex, role, content))
       .filter((bubble): bubble is ChatBubble => bubble !== null)
 
     if (bubbles.length > 0) {
@@ -105,23 +104,22 @@ export function mapHistoryMessageToBubbles(
 
   return [
     {
-      id: `${sessionId}-${messageIndex}`,
+      id: `${sessionId}-${message.messageId}`,
       role,
       text: message.text,
-      runId: message.runId,
+      messageId: message.messageId,
     },
   ]
 }
 
 function mapHistoryContentToBubble(
   sessionId: string,
-  messageIndex: number,
+  messageId: number,
   contentIndex: number,
   role: 'user' | 'assistant' | 'system',
-  runId: string | null,
   content: SessionMessageContent,
 ): ChatBubble | null {
-  const id = `${sessionId}-${messageIndex}-${contentIndex}`
+  const id = `${sessionId}-${messageId}-${contentIndex}`
 
   if (content.type === 'text') {
     if (!content.text) {
@@ -132,7 +130,7 @@ function mapHistoryContentToBubble(
       id,
       role,
       text: content.text,
-      runId,
+      messageId,
     }
   }
 
@@ -141,7 +139,7 @@ function mapHistoryContentToBubble(
       id,
       role: 'tool',
       text: '',
-      runId,
+      messageId,
       toolEventType: 'tool_call',
       toolCallId: content.callId ?? null,
       toolName: content.toolName ?? null,
@@ -157,7 +155,7 @@ function mapHistoryContentToBubble(
       id,
       role: 'tool',
       text: '',
-      runId,
+      messageId,
       toolEventType: 'tool_result',
       toolCallId: content.callId ?? null,
       toolResult: formattedResult.text,
@@ -175,7 +173,7 @@ function mapHistoryContentToBubble(
     id,
     role: 'tool',
     text: '',
-    runId,
+    messageId,
     toolEventType: 'tool_result',
     toolResult: formattedPayload.text,
     toolResultFormat: formattedPayload.format,
@@ -206,7 +204,6 @@ export function mergeToolResultBubble(messages: ChatBubble[], resultBubble: Chat
       candidate.role === 'tool' &&
       candidate.toolEventType === 'tool_call' &&
       candidate.toolCallId === callId &&
-      candidate.runId === resultBubble.runId &&
       !candidate.toolResult
     ) {
       const next = [...messages]

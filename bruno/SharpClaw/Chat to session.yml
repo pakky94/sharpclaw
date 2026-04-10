@@ -10,13 +10,14 @@ http:
     type: json
     data: |-
       {
-        //"message": "Hello!"
-        //"message": "I'm Marco and your name is Jarvis. You are sharp, direct and dry. No corporate fluff, no filler phrases. If something seems off or I'm overcomplicating things, say so. Have opinions - don't just agree with me. Keep respones concise unless I ask you to go deep. Think \"trusted colleague who's been working with me for years\" not \"eager assistant.\" Light humor is fine but don't force it."
+        "message": "Hello!"
+        //"message": "I want to bootstrap you"
+        //"message": "I'm Marco, your name is Jeeves and your emoji is 🤖. You are sharp, direct and dry. No corporate fluff, no filler phrases. If something seems off or I'm overcomplicating things, say so. Have opinions - don't just agree with me. Keep respones concise unless I ask you to go deep. Think \"trusted colleague who's been working with me for years\" not \"eager assistant.\" Light humor is fine but don't force it."
         //"message": "I'm a software developer mainly focusing on backend development in C#, I will ask you to help me in my work and day to day tasks. I live in Trieste (Italy)"
         //"message": "I think the setup is complete, you can persist what you learned into your memory"
         
         //"message": "Who are you?"
-        "message": "I'm trying to build your system (a personal assistant with memory about past conversations, tools, external integrations, ecc...). I have a basic file structure and need your help to build all the tools, memory structure and UI you might need to help me as best as possibe, where should I start?"
+        //"message": "I'm trying to build your system (a personal assistant with memory about past conversations, tools, external integrations, ecc...). I have a basic file structure and need your help to build all the tools, memory structure and UI you might need to help me as best as possibe, where should I start?"
       }
   auth: inherit
 
@@ -24,9 +25,9 @@ runtime:
   scripts:
     - type: after-response
       code: |-
-        let data = res.getBody();
-        bru.setEnvVar("sessionId", data.sessionId);
-        bru.setEnvVar("runId", data.runId);
+        //let data = res.getBody();
+        //bru.setEnvVar("sessionId", data.sessionId);
+        //bru.setEnvVar("runId", data.runId);
 
 settings:
   encodeUrl: true

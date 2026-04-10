@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Memory.Lcm;
@@ -52,44 +53,42 @@ public class Agent(
     {
         var session = await GetOrLoadSession(sessionId);
 
-        AgentRunState run;
         lock (session.RunsLock)
         {
-            var hasActiveRun = session.Runs.Values.Any(r => r.Status is AgentRunStatus.Pending or AgentRunStatus.Running);
+            var hasActiveRun = session.Run is { Status: AgentRunStatus.Pending or AgentRunStatus.Running };
             if (hasActiveRun)
                 throw new InvalidOperationException($"Session {sessionId} already has an active run.");
 
-            run = new AgentRunState(Guid.NewGuid(), sessionId);
-            session.Runs[run.RunId] = run;
+            session.Run ??= new AgentRunState(Guid.NewGuid(), sessionId);
+            session.Run.MarkStarted(session.Context.MaxSequenceId() + 1);
         }
 
-        _ = Task.Run(() => GetMessageResponse(sessionId, prompt, session, run));
+        _ = Task.Run(() => GetMessageResponse(sessionId, prompt, session, session.Run));
 
-        return run;
+        return session.Run;
     }
 
     public async Task<string?> GetMessageResponse(Guid sessionId, string prompt)
     {
         var session = await GetOrLoadSession(sessionId);
 
-        AgentRunState run;
         lock (session.RunsLock)
         {
-            var hasActiveRun = session.Runs.Values.Any(r => r.Status is AgentRunStatus.Pending or AgentRunStatus.Running);
+            var hasActiveRun = session.Run is { Status: AgentRunStatus.Pending or AgentRunStatus.Running };
             if (hasActiveRun)
                 throw new InvalidOperationException($"Session {sessionId} already has an active run.");
 
-            run = new AgentRunState(Guid.NewGuid(), sessionId);
-            session.Runs[run.RunId] = run;
+            session.Run ??= new AgentRunState(Guid.NewGuid(), sessionId);
+            session.Run.MarkStarted(session.Context.MaxSequenceId() + 1);
         }
 
-        return await GetMessageResponse(sessionId, prompt, session, run);
+        return await GetMessageResponse(sessionId, prompt, session, session.Run);
     }
 
     private async Task<string?> GetMessageResponse(Guid sessionId, string prompt, AgentSessionState session, AgentRunState run)
     {
         await session.Mutex.WaitAsync();
-        run.MarkStarted();
+
         try
         {
             AgentClientResponse? response = null;
@@ -105,6 +104,7 @@ public class Agent(
 
             await repository.PersistMessage(sessionId, run.RunId, userMessage);
             session.Context.Messages.Add(userMessage);
+            session.Run?.NextMessage();
 
             while (response is null or { ShouldContinue: true })
             {
@@ -134,6 +134,7 @@ public class Agent(
                     run,
                     update =>
                     {
+                        // TODO: move this inside run
                         if (!string.IsNullOrEmpty(update.Text))
                             run.AppendDelta(update.Text);
 
@@ -155,6 +156,11 @@ public class Agent(
                             }
                         }
 
+                        return Task.CompletedTask;
+                    },
+                    () =>
+                    {
+                        run.NextMessage();
                         return Task.CompletedTask;
                     });
 
@@ -227,13 +233,6 @@ public class Agent(
     {
         var session = await GetOrLoadSession(sessionId);
 
-        var runsByCreatedAt = session.Runs.Values
-            .OrderBy(r => r.CreatedAt)
-            .ToArray();
-
-        var runsById = session.Runs.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-        var activeRun = runsByCreatedAt.LastOrDefault(r => r.Status is AgentRunStatus.Pending or AgentRunStatus.Running);
-
         var rawMessages = await repository.LoadRawMessages(sessionId);
         var messages = new List<SessionMessageDto>(rawMessages.Count);
 
@@ -241,25 +240,23 @@ public class Agent(
         {
             foreach (var message in raw.Response.Messages)
             {
-                var runStatus = raw.RunId is not null && runsById.TryGetValue(raw.RunId.Value, out var run)
-                    ? run.Status.ToString().ToLowerInvariant()
-                    : null;
+                var sequenceId = raw.Response.AdditionalProperties?[Constants.SequenceIdKey] as long?
+                    ?? throw new UnreachableException("all messages should have a sequenceId");
 
                 messages.Add(new SessionMessageDto(
                     Role: message.Role.Value,
                     Text: message.Text,
                     Contents: GetMessageContents(message),
                     AuthorName: message.AuthorName,
-                    RunId: raw.RunId,
-                    RunStatus: runStatus
+                    MessageId: sequenceId
                 ));
             }
         }
 
         return new SessionHistoryDto(
             SessionId: sessionId,
-            ActiveRunId: activeRun?.RunId,
-            ActiveRunStatus: activeRun?.Status.ToString().ToLowerInvariant(),
+            LatestSequenceId: session.Context.Messages.LastOrDefault()?.AdditionalProperties?[Constants.SequenceIdKey] as long? ?? 0, // TODO: check this
+            RunStatus: session.Run?.Status.ToString().ToLowerInvariant(),
             Messages: messages
         );
     }
@@ -276,23 +273,14 @@ public class Agent(
             .ToArray();
     }
 
-    public AgentRunState GetRun(Guid sessionId, Guid runId)
-    {
-        if (!_sessions.TryGetValue(sessionId, out var session))
-            throw new KeyNotFoundException($"Session {sessionId} was not found.");
-
-        if (!session.Runs.TryGetValue(runId, out var run))
-            throw new KeyNotFoundException($"Run {runId} was not found in session {sessionId}.");
-
-        return run;
-    }
-
     public AgentRunState? GetActiveRunForSession(Guid sessionId)
     {
         if (!_sessions.TryGetValue(sessionId, out var session))
             return null;
 
-        return session.Runs.Values.FirstOrDefault(r => r.Status is AgentRunStatus.Pending or AgentRunStatus.Running);
+        return session.Run is { Status: AgentRunStatus.Pending or AgentRunStatus.Running }
+            ? session.Run
+            : null;
     }
 
     public bool TryUpdateSessionActiveWorkspaces(Guid sessionId, string[] workspaceNames)
@@ -304,7 +292,7 @@ public class Agent(
         return true;
     }
 
-    private async Task<AgentSessionState> GetOrLoadSession(Guid sessionId)
+    public async Task<AgentSessionState> GetOrLoadSession(Guid sessionId)
     {
         if (_sessions.TryGetValue(sessionId, out var existing))
             return existing;
@@ -440,7 +428,7 @@ public class AgentSessionState(Guid sessionId, AgentExecutionContext context, Da
     public AgentExecutionContext Context { get; } = context;
     public SemaphoreSlim Mutex { get; } = new(1, 1);
     public object RunsLock { get; } = new();
-    public ConcurrentDictionary<Guid, AgentRunState> Runs { get; } = new();
+    public AgentRunState? Run { get; set; }
 }
 
 public enum AgentRunStatus
@@ -451,13 +439,14 @@ public enum AgentRunStatus
     Failed,
 }
 
-public record AgentRunEvent(long Sequence, string Type, string? Text, DateTimeOffset Timestamp, object? Data = null);
+public record AgentRunEvent(long MessageId, long Sequence, string Type, string? Text, DateTimeOffset Timestamp, object? Data = null);
 
 public class AgentRunState(Guid runId, Guid sessionId)
 {
     private readonly object _eventsLock = new();
     private readonly List<AgentRunEvent> _events = [];
     private readonly Dictionary<string, TaskCompletionSource<bool>> _pendingApprovals = [];
+    private long _currentMessageId = 0;
     private long _sequence = 0;
 
     public Guid RunId { get; } = runId;
@@ -468,24 +457,30 @@ public class AgentRunState(Guid runId, Guid sessionId)
     public AgentRunStatus Status { get; private set; } = AgentRunStatus.Pending;
     public string? Error { get; private set; }
 
-    public AgentRunEvent[] GetEventsAfter(long sequence)
+    public AgentRunEvent[] GetEventsAfter(long messageId, long sequence)
     {
         lock (_eventsLock)
         {
-            return _events.Where(e => e.Sequence > sequence).ToArray();
+            return _events.Where(e => e.MessageId >= messageId && e.Sequence > sequence).ToArray();
         }
     }
 
-    public void MarkStarted()
+    public void MarkStarted(long messageId)
     {
+        _currentMessageId = messageId;
         StartedAt = DateTimeOffset.UtcNow;
         Status = AgentRunStatus.Running;
-        AddEvent("started", null);
+        AddEvent(messageId, "started", null);
     }
 
-    public void AppendDelta(string text) => AddEvent("delta", text);
+    public void NextMessage()
+    {
+        _currentMessageId++;
+    }
+
+    public void AppendDelta(string text) => AddEvent(_currentMessageId, "delta", text);
     public void AppendToolCall(string? callId, string? toolName, string? arguments) =>
-        AddEvent("tool_call", null, new
+        AddEvent(_currentMessageId, "tool_call", null, new
         {
             callId,
             toolName,
@@ -493,7 +488,7 @@ public class AgentRunState(Guid runId, Guid sessionId)
         });
 
     public void AppendToolResult(string? callId, string? result) =>
-        AddEvent("tool_result", null, new
+        AddEvent(_currentMessageId, "tool_result", null, new
         {
             callId,
             result,
@@ -503,7 +498,7 @@ public class AgentRunState(Guid runId, Guid sessionId)
     {
         CompletedAt = DateTimeOffset.UtcNow;
         Status = AgentRunStatus.Completed;
-        AddEvent("completed", null);
+        AddEvent(_events.Max(e => e.MessageId), "completed", null);
     }
 
     public void MarkFailed(string error)
@@ -511,7 +506,7 @@ public class AgentRunState(Guid runId, Guid sessionId)
         CompletedAt = DateTimeOffset.UtcNow;
         Status = AgentRunStatus.Failed;
         Error = error;
-        AddEvent("failed", error);
+        AddEvent(_currentMessageId, "failed", error);
     }
 
     public TaskCompletionSource<bool> CreateApprovalRequest(string token, string action, string? target, string? commandPreview, string risk, string description)
@@ -520,7 +515,7 @@ public class AgentRunState(Guid runId, Guid sessionId)
         lock (_eventsLock)
         {
             _pendingApprovals[token] = tcs;
-            AddEvent("approval_required", null, new
+            AddEvent(_currentMessageId, "approval_required", null, new
             {
                 approval_token = token,
                 action,
@@ -546,6 +541,7 @@ public class AgentRunState(Guid runId, Guid sessionId)
         return false;
     }
 
+    // TODO: what is this method for?
     public void ExpireApproval(string token)
     {
         lock (_eventsLock)
@@ -558,12 +554,13 @@ public class AgentRunState(Guid runId, Guid sessionId)
         }
     }
 
-    private void AddEvent(string type, string? text, object? data = null)
+    private void AddEvent(long messageId, string type, string? text, object? data = null)
     {
+        // TODO: purge old events, keep only the ones relevant to active conversation + some buffer (how much?)
         lock (_eventsLock)
         {
             _sequence += 1;
-            _events.Add(new AgentRunEvent(_sequence, type, text, DateTimeOffset.UtcNow, data));
+            _events.Add(new AgentRunEvent(messageId, _sequence, type, text, DateTimeOffset.UtcNow, data));
         }
     }
 }
@@ -571,8 +568,8 @@ public class AgentRunState(Guid runId, Guid sessionId)
 public record AgentSessionDto(Guid SessionId, long AgentId, DateTimeOffset CreatedAt, int MessagesCount);
 public record SessionHistoryDto(
     Guid SessionId,
-    Guid? ActiveRunId,
-    string? ActiveRunStatus,
+    long LatestSequenceId,
+    string? RunStatus,
     IReadOnlyList<SessionMessageDto> Messages
 );
 
@@ -581,8 +578,7 @@ public record SessionMessageDto(
     string? Text,
     IReadOnlyList<SessionMessageContentDto> Contents,
     string? AuthorName,
-    Guid? RunId,
-    string? RunStatus
+    long MessageId
 );
 
 public record SessionMessageContentDto(

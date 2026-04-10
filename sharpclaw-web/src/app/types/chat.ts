@@ -34,7 +34,7 @@ export type SessionHistoryMessage = {
   text: string | null
   contents: SessionMessageContent[]
   authorName: string | null
-  runId: string | null
+  messageId: number
   runStatus: RunStatus | null
 }
 
@@ -50,15 +50,15 @@ export type SessionMessageContent = {
 
 export type SessionHistoryResponse = {
   sessionId: string
-  activeRunId: string | null
-  activeRunStatus: RunStatus | null
+  runStatus: RunStatus | null
+  latestSequenceId: number
   messages: SessionHistoryMessage[]
 }
 
 export type RunStatus = 'pending' | 'running' | 'completed' | 'failed'
 
 export type StreamEvent = {
-  runId: string
+  messageId: number
   sessionId: string
   sequence: number
   type: 'started' | 'delta' | 'completed' | 'failed' | 'tool_call' | 'tool_result' | 'approval_required'
@@ -73,7 +73,7 @@ export type ChatBubble = {
   role: 'user' | 'assistant' | 'system' | 'tool'
   text: string
   isStreaming?: boolean
-  runId?: string | null
+  messageId: number
   toolEventType?: 'tool_call' | 'tool_result'
   toolCallId?: string | null
   toolName?: string | null

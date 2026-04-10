@@ -17,4 +17,8 @@ public class AgentExecutionContext
 
     public long SoftCompactThreshold = 35 * 1024;
     public int FreshMessagesCount = 8;
+
+    public long MaxSequenceId() => Messages.Count > 0
+        ? Messages.Max(m => m.AdditionalProperties?.GetValueOrDefault(Constants.SequenceIdKey, 0L) as long? ?? 0)
+        : 0;
 }

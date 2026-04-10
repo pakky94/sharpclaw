@@ -417,7 +417,7 @@ public class Repository(IConfiguration configuration)
                    m.id as MessageId,
                    s.id as SummaryId,
                    m.parent_summary_id as MessageParentSummaryId,
-                   s.parent_summary_id as SummaryParentSummaryId,
+                   s.parent_summary_id as SummaryParentSummaryId
             from conversation_history ch
             left join messages m on ch.message_id = m.id
             left join summaries s on ch.summary_id = s.id
@@ -460,7 +460,7 @@ public class Repository(IConfiguration configuration)
             .Select(r =>
             {
                 var response = DeserializeResponse(r.Payload);
-                SetDbReference(response, "message", r.MessageId, r.ParentSummaryId);
+                SetDbReference(response, "message", r.MessageId, r.SequenceId, r.ParentSummaryId);
                 return new PersistedRawMessage(r.MessageId, r.RunId, r.CreatedAt, response);
             })
             .ToArray();
@@ -894,7 +894,7 @@ public class Repository(IConfiguration configuration)
     }
 }
 
-public record PersistedSession(Guid SessionId, long AgentId, string SystemPrompt, DateTime CreatedAt);
+public record PersistedSession(Guid SessionId, long AgentId, DateTime CreatedAt);
 public record PersistedSessionSummary(Guid SessionId, long AgentId, DateTime CreatedAt, long MessagesCount);
 public record PersistedRawMessage(long MessageId, Guid? RunId, DateTime CreatedAt, ChatResponse Response);
 public record LcmSummaryRecord(
