@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Text.Json;
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Memory.Lcm;
 using SharpClaw.API.Agents.Tools.Fragments;
@@ -8,6 +7,7 @@ using SharpClaw.API.Agents.Tools.Lcm;
 using SharpClaw.API.Agents.Tools.Tasks;
 using SharpClaw.API.Agents.Tools.Workspace;
 using SharpClaw.API.Database;
+using SharpClaw.API.Helpers;
 
 namespace SharpClaw.API.Agents;
 
@@ -131,38 +131,7 @@ public class Agent(
                         ..session.Context.Messages.SelectMany(r => r.Messages)
                     ],
                     BuildTools(),
-                    run,
-                    update =>
-                    {
-                        // TODO: move this inside run
-                        if (!string.IsNullOrEmpty(update.Text))
-                            run.AppendDelta(update.Text);
-
-                        foreach (var content in update.Contents)
-                        {
-                            switch (content)
-                            {
-                                case FunctionCallContent functionCall:
-                                    run.AppendToolCall(
-                                        functionCall.CallId,
-                                        functionCall.Name,
-                                        SerializeToolPayload(functionCall.Arguments));
-                                    break;
-                                case FunctionResultContent functionResult:
-                                    run.AppendToolResult(
-                                        functionResult.CallId,
-                                        SerializeToolPayload(functionResult.Result));
-                                    break;
-                            }
-                        }
-
-                        return Task.CompletedTask;
-                    },
-                    () =>
-                    {
-                        run.NextMessage();
-                        return Task.CompletedTask;
-                    });
+                    run);
 
                 foreach (var message in response.Responses)
                 {
@@ -352,24 +321,6 @@ public class Agent(
         TasksTools.TaskTool([("Main", "the main agent")]), // TODO: get these agents from where?
     ];
 
-    private static string? SerializeToolPayload(object? payload)
-    {
-        if (payload is null)
-            return null;
-
-        if (payload is string text)
-            return text;
-
-        try
-        {
-            return JsonSerializer.Serialize(payload);
-        }
-        catch
-        {
-            return payload.ToString();
-        }
-    }
-
     private static IReadOnlyList<SessionMessageContentDto> GetMessageContents(ChatMessage message)
     {
         if (message.Contents.Count == 0)
@@ -400,18 +351,18 @@ public class Agent(
                         Type: "tool_call",
                         CallId: functionCall.CallId,
                         ToolName: functionCall.Name,
-                        Arguments: SerializeToolPayload(functionCall.Arguments)));
+                        Arguments: Serialization.SerializeToolPayload(functionCall.Arguments)));
                     break;
                 case FunctionResultContent functionResult:
                     contents.Add(new SessionMessageContentDto(
                         Type: "tool_result",
                         CallId: functionResult.CallId,
-                        Result: SerializeToolPayload(functionResult.Result)));
+                        Result: Serialization.SerializeToolPayload(functionResult.Result)));
                     break;
                 default:
                     contents.Add(new SessionMessageContentDto(
                         Type: "unknown",
-                        Payload: SerializeToolPayload(content)));
+                        Payload: Serialization.SerializeToolPayload(content)));
                     break;
             }
         }
@@ -453,6 +404,7 @@ public class AgentRunState(Guid runId, Guid sessionId)
     public Guid SessionId { get; } = sessionId;
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? StartedAt { get; private set; }
+    public long StartMessageId { get; set; }
     public DateTimeOffset? CompletedAt { get; private set; }
     public AgentRunStatus Status { get; private set; } = AgentRunStatus.Pending;
     public string? Error { get; private set; }
@@ -469,6 +421,7 @@ public class AgentRunState(Guid runId, Guid sessionId)
     {
         _currentMessageId = messageId;
         StartedAt = DateTimeOffset.UtcNow;
+        StartMessageId = messageId;
         Status = AgentRunStatus.Running;
         AddEvent(messageId, "started", null);
     }
@@ -478,8 +431,32 @@ public class AgentRunState(Guid runId, Guid sessionId)
         _currentMessageId++;
     }
 
-    public void AppendDelta(string text) => AddEvent(_currentMessageId, "delta", text);
-    public void AppendToolCall(string? callId, string? toolName, string? arguments) =>
+    public void AppendUpdate(ChatResponseUpdate update)
+    {
+        if (!string.IsNullOrEmpty(update.Text))
+            AppendDelta(update.Text);
+
+        foreach (var content in update.Contents)
+        {
+            switch (content)
+            {
+                case FunctionCallContent functionCall:
+                    AppendToolCall(
+                        functionCall.CallId,
+                        functionCall.Name,
+                        Serialization.SerializeToolPayload(functionCall.Arguments));
+                    break;
+                case FunctionResultContent functionResult:
+                    AppendToolResult(
+                        functionResult.CallId,
+                        Serialization.SerializeToolPayload(functionResult.Result));
+                    break;
+            }
+        }
+    }
+
+    private void AppendDelta(string text) => AddEvent(_currentMessageId, "delta", text);
+    private void AppendToolCall(string? callId, string? toolName, string? arguments) =>
         AddEvent(_currentMessageId, "tool_call", null, new
         {
             callId,
@@ -487,7 +464,7 @@ public class AgentRunState(Guid runId, Guid sessionId)
             arguments,
         });
 
-    public void AppendToolResult(string? callId, string? result) =>
+    private void AppendToolResult(string? callId, string? result) =>
         AddEvent(_currentMessageId, "tool_result", null, new
         {
             callId,

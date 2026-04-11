@@ -61,43 +61,17 @@ public sealed class BackendApiClient(HttpClient client)
         return payload.RootElement.GetProperty("sessionId").GetGuid();
     }
 
-    public async Task<Guid> EnqueueMessageAsync(Guid sessionId, string message, CancellationToken cancellationToken = default)
+    public async Task<long> EnqueueMessageAsync(Guid sessionId, string message, CancellationToken cancellationToken = default)
     {
         var response = await client.PostAsJsonAsync($"/sessions/{sessionId}/messages", new { message }, cancellationToken);
         using var payload = await ReadDocumentAsync(response, cancellationToken);
-        return payload.RootElement.GetProperty("runId").GetGuid();
+        return payload.RootElement.GetProperty("latestSequenceId").GetInt64();
     }
 
     public async Task<JsonDocument> GetRunAsync(Guid sessionId, Guid runId, CancellationToken cancellationToken = default)
     {
         var response = await client.GetAsync($"/sessions/{sessionId}/runs/{runId}", cancellationToken);
         return await ReadDocumentAsync(response, cancellationToken);
-    }
-
-    public async Task<JsonDocument> WaitForRunTerminalStateAsync(
-        Guid sessionId,
-        Guid runId,
-        TimeSpan timeout,
-        CancellationToken cancellationToken = default)
-    {
-        var start = DateTimeOffset.UtcNow;
-        while (true)
-        {
-            var run = await GetRunAsync(sessionId, runId, cancellationToken);
-            var status = run.RootElement.GetProperty("status").GetString();
-
-            if (status is "completed" or "failed")
-                return run;
-
-            if (DateTimeOffset.UtcNow - start > timeout)
-            {
-                run.Dispose();
-                throw new TimeoutException($"Run {runId} in session {sessionId} did not reach a terminal status.");
-            }
-
-            run.Dispose();
-            await Task.Delay(100, cancellationToken);
-        }
     }
 
     public async Task<JsonDocument> GetHistoryAsync(Guid sessionId, CancellationToken cancellationToken = default)
@@ -139,9 +113,18 @@ public sealed class BackendApiClient(HttpClient client)
         response.EnsureSuccessStatusCode();
     }
 
-    public async Task<IReadOnlyList<string>> WaitForStreamEventTypesAsync(
+    public Task<IReadOnlyList<StreamEvent>> WaitForStreamCompleted(
         Guid sessionId,
-        Guid runId,
+        long messageId,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
+        => WaitForStreamEventTypes(sessionId, messageId, ["completed"],
+            timeout ?? TimeSpan.FromSeconds(30),
+            cancellationToken);
+
+    public async Task<IReadOnlyList<StreamEvent>> WaitForStreamEventTypes(
+        Guid sessionId,
+        long messageId,
         IReadOnlyCollection<string> requiredTypes,
         TimeSpan timeout,
         CancellationToken cancellationToken = default)
@@ -149,7 +132,7 @@ public sealed class BackendApiClient(HttpClient client)
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"/sessions/{sessionId}/runs/{runId}/stream");
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/sessions/{sessionId}/messages/{messageId}/stream");
         using var response = await client.SendAsync(
             request,
             HttpCompletionOption.ResponseHeadersRead,
@@ -158,7 +141,7 @@ public sealed class BackendApiClient(HttpClient client)
 
         await using var stream = await response.Content.ReadAsStreamAsync(timeoutCts.Token);
         using var reader = new StreamReader(stream);
-        var seen = new List<string>();
+        var seen = new List<StreamEvent>();
 
         while (!timeoutCts.IsCancellationRequested)
         {
@@ -170,14 +153,18 @@ public sealed class BackendApiClient(HttpClient client)
                 continue;
 
             var eventType = line["event: ".Length..].Trim();
-            seen.Add(eventType);
+            var payload = await reader.ReadLineAsync(timeoutCts.Token);
+            seen.Add(new StreamEvent
+            {
+                Type = eventType,
+                Payload = payload,
+            });
 
-            if (requiredTypes.All(type => seen.Contains(type, StringComparer.Ordinal)))
+            if (eventType == "completed" || requiredTypes.All(r => seen.Any(s => s.Type == r)))
                 return seen;
         }
 
-        throw new TimeoutException(
-            $"Did not receive required stream events in time. Required: {string.Join(", ", requiredTypes)}. Seen: {string.Join(", ", seen)}");
+        throw new TimeoutException("Did not receive 'completed' stream events in time.");
     }
 
     private static async Task<JsonDocument> ReadDocumentAsync(HttpResponseMessage response, CancellationToken cancellationToken)
@@ -186,4 +173,10 @@ public sealed class BackendApiClient(HttpClient client)
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
     }
+}
+
+public class StreamEvent
+{
+    public required string Type { get; set; }
+    public required string Payload { get; set; }
 }

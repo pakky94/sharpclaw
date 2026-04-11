@@ -13,8 +13,8 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
 
     public async Task<AgentClientResponse> GetResponse(List<ChatMessage> messages, List<AIFunction> tools,
         AgentRunState? runState = null,
-        Func<ChatResponseUpdate, Task>? onUpdate = null,
-        Func<Task>? onMessageFlushed = null)
+        Func<ChatResponseUpdate, ValueTask>? onUpdate = null,
+        Func<ValueTask>? onMessageFlushed = null)
     {
         var configuration = serviceProvider.GetRequiredService<IConfiguration>();
 
@@ -70,6 +70,7 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
 
             messageUpdates.Add(chatUpdate);
 
+            runState?.AppendUpdate(chatUpdate);
             if (onUpdate is not null)
                 await onUpdate(chatUpdate);
 
@@ -100,6 +101,7 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
             response.Add(m);
             messageUpdates.Clear();
             currentMessageId = null;
+            runState?.NextMessage();
             if (onMessageFlushed is not null)
                 await onMessageFlushed();
         }

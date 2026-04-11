@@ -8,36 +8,6 @@ public static class ChatEndpoints
 {
     public static void Register(WebApplication app)
     {
-        /*
-        app.MapPost("/chat", async (
-            [FromBody] MessageRequest request,
-            [FromServices] Agent agent
-        ) =>
-        {
-            var sessionId = await agent.CreateSession(request.AgentId ?? 1);
-            var run = await agent.EnqueueMessage(sessionId, request.Message);
-
-            while (run.Status is AgentRunStatus.Pending or AgentRunStatus.Running)
-                await Task.Delay(100);
-
-            if (run.Status == AgentRunStatus.Failed)
-                return Results.Problem(run.Error ?? "Agent run failed.");
-
-            var events = run.GetEventsAfter(0);
-            var text = string.Concat(events
-                .Where(e => e.Type == "delta")
-                .Select(e => e.Text));
-
-            return Results.Ok(new
-            {
-                sessionId,
-                runId = run.RunId,
-                response = text,
-                events,
-            });
-        });
-        */
-
         app.MapPost("/sessions", async (
             [FromBody] CreateSessionRequest? request,
             [FromServices] Agent agent
@@ -58,7 +28,7 @@ public static class ChatEndpoints
                 var run = await agent.EnqueueMessage(sessionId, request.Message);
                 return Results.Ok(new
                 {
-                    // TODO: return messageId
+                    latestSequenceId = run.StartMessageId,
                     sessionId = run.SessionId,
                     status = run.Status.ToString().ToLowerInvariant(),
                 });

@@ -1,5 +1,4 @@
 using SharpClaw.Backend.Tests.Infrastructure;
-using System.Text.Json;
 
 namespace SharpClaw.Backend.Tests;
 
@@ -14,15 +13,9 @@ public sealed class ChatEndpointsTests(SharpClawAppFixture fixture)
         fixture.LlmServer!.TextSse("Mock response from integration test.", _ => true);
 
         var sessionId = await fixture.Api.CreateSessionAsync();
-        var runId = await fixture.Api.EnqueueMessageAsync(sessionId, "Reply with one sentence.");
+        var messageId = await fixture.Api.EnqueueMessageAsync(sessionId, "Reply with one sentence.");
 
-        using var run = await fixture.Api.WaitForRunTerminalStateAsync(
-            sessionId,
-            runId,
-            timeout: TimeSpan.FromSeconds(30));
-
-        Assert.Equal("completed", run.RootElement.GetProperty("status").GetString());
-        Assert.True(run.RootElement.GetProperty("error").ValueKind is JsonValueKind.Null or JsonValueKind.Undefined);
+        await fixture.Api.WaitForStreamCompleted(sessionId, messageId);
 
         using var history = await fixture.Api.GetHistoryAsync(sessionId);
         var messages = history.RootElement.GetProperty("messages").EnumerateArray().ToArray();

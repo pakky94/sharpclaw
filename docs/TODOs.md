@@ -7,7 +7,7 @@
 - [ ] paginated children when reading a fragment, sorted by most recent?
 
 ### Remove persistence of system prompt as it should be calculated on the fly. It contains the current date and other stuff.
-- [ ] delete the column from the database
+- [X] delete the column from the database
 
 ### rework the registration of the `Repository` service and other services used by tools
 

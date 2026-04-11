@@ -1,5 +1,4 @@
 using Microsoft.Extensions.AI;
-using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database;
 
 namespace SharpClaw.API.Agents.Tools.Workspace;
