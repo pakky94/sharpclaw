@@ -26,8 +26,7 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
             .AddSingleton<FragmentsRepository>()
             .AddSingleton<FragmentEmbeddingService>()
             .AddSingleton<WorkspaceRepository>()
-            .AddSingleton<ApprovalService>()
-            .AddSingleton(serviceProvider.GetRequiredService<Agent>());
+            .AddSingleton<ApprovalService>();
 
         if (runState is not null)
             services.AddSingleton(runState);
@@ -83,10 +82,14 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
 
         await FlushMessageUpdates();
 
+        var queuedTasks = context.QueuedTasks;
+        context.QueuedTasks = [];
+
         return new AgentClientResponse
         {
             Responses = response,
             ShouldContinue = _shouldContinue,
+            QueuedTasks = queuedTasks,
         };
 
         async Task FlushMessageUpdates()
@@ -112,6 +115,9 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
         Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next,
         CancellationToken ct)
     {
+        functionContext.Arguments.Context ??= new Dictionary<object, object?>();
+        functionContext.Arguments.Context["CallId"] = functionContext.CallContent.CallId;
+
         var t = await next(functionContext, ct);
         if (functionContext.FunctionCallIndex + 1 >= functionContext.FunctionCount)
         {
@@ -126,4 +132,21 @@ public class AgentClientResponse
 {
     public required List<ChatResponse> Responses { get; init; }
     public required bool ShouldContinue { get; init; }
+    public List<AgentClientTask> QueuedTasks { get; init; } = [];
+}
+
+public class AgentClientTask
+{
+    public required string CallId { get; init; }
+    public required TaskType Type { get; init; }
+
+    // TODO: how to handle these parameters? a dictionary?
+    public string? ChildDescription { get; init; }
+    public string? ChildPrompt { get; init; }
+    public long? AgentId { get; set; }
+
+    public enum TaskType
+    {
+        ChildSession,
+    }
 }

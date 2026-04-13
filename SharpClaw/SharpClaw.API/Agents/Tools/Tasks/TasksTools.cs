@@ -56,30 +56,35 @@ public static class TasksTools
     .describe("Run this task in the background and return immediately with a task_id")
     .optional(),
      */
-    private static async Task<object> RunTask(
+    private static async Task<object?> RunTask(
         IServiceProvider serviceProvider,
+        AIFunctionArguments args,
         [Description("A short (3-5 words) description of the task")] string description,
         [Description("The task for the agent to perform")] string prompt,
         [Description("Run this task in the background and return immediately with a task_id")] bool run_in_background = false
         )
     {
         var agentContext = serviceProvider.GetRequiredService<AgentExecutionContext>();
-        var agent = serviceProvider.GetRequiredService<Agent>();
-
-        var sessionId = await agent.CreateSession(agentContext.AgentId);
-        var response = await agent.GetMessageResponse(sessionId, prompt);
-
-        return new
+        agentContext.QueuedTasks.Add(new AgentClientTask
         {
-            title = description,
-            output = $"""
-                      {response}
-                      
-                      <task_metadata>
-                        {sessionId}
-                      </task_metadata>"
-                      """
-        };
+            CallId = args.Context?["CallId"] as string ?? throw new InvalidOperationException("CallId is missing."),
+            Type = AgentClientTask.TaskType.ChildSession,
+            ChildDescription = description,
+            ChildPrompt = prompt,
+        });
+
+        return null;
+//         return new
+//         {
+//             title = description,
+//             output = $"""
+//                       {response}
+//
+//                       <task_metadata>
+//                         {sessionId}
+//                       </task_metadata>"
+//                       """
+//         };
     }
 
     private static async Task<object> RunTasks()

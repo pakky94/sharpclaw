@@ -15,6 +15,8 @@ public class AgentExecutionContext
     public string? SessionWorkspaceOverride { get; set; }
     public HashSet<string> ActiveWorkspaceNames { get; set; } = [];
 
+    public List<AgentClientTask> QueuedTasks { get; set; } = [];
+
     public long SoftCompactThreshold = 35 * 1024;
     public int FreshMessagesCount = 8;
 

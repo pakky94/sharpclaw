@@ -134,4 +134,56 @@ public sealed class ToolInvocationTests(SharpClawAppFixture fixture)
         Assert.Contains(ResponseHelpers.GetMessageTexts(history),
             text => text.Contains("Tool invocation finished.", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public async Task MultipleCallInvocations_TaskTool()
+    {
+        await fixture.ResetStateAsync();
+
+        fixture.LlmServer?.ToolCallsSse(["task", "task"],
+            [
+                """
+                {
+                  "description": "task1",
+                  "prompt": "task prompt 1"
+                }
+                """,
+                """
+                {
+                  "description": "task2",
+                  "prompt": "task prompt 2"
+                }
+                """,
+            ],
+            c => c.Messages.Last().Role == "user"
+                 && c.Messages.Last().Content ==  "TEST_TOOL_LIST_FILES");
+
+        fixture.LlmServer?.TextSse("Tool invocation finished.",
+            c => c.Messages.Last().Role == "tool");
+
+        fixture.LlmServer?.TextSse("task result 1",
+            c => c.Messages.Last().Role == "user"
+                 && c.Messages.Last().Content ==  "task prompt 1");
+
+        fixture.LlmServer?.TextSse("task result 2",
+            c => c.Messages.Last().Role == "user"
+                 && c.Messages.Last().Content ==  "task prompt 2");
+
+        var sessionId = await fixture.Api.CreateSessionAsync();
+        var messageId = await fixture.Api.EnqueueMessageAsync(sessionId, "TEST_TOOL_LIST_FILES");
+        await fixture.Api.WaitForStreamCompleted(sessionId, messageId);
+
+        using var history = await fixture.Api.GetHistoryAsync(sessionId);
+        var messageContents = ResponseHelpers.FlattenMessageContents(history);
+
+        Assert.Contains(messageContents, content =>
+            content.GetProperty("type").GetString() == "tool_call" &&
+            content.GetProperty("toolName").GetString() == "ws_list_files");
+
+        Assert.Contains(messageContents, content =>
+            content.GetProperty("type").GetString() == "tool_result");
+
+        Assert.Contains(ResponseHelpers.GetMessageTexts(history),
+            text => text.Contains("Tool invocation finished.", StringComparison.Ordinal));
+    }
 }

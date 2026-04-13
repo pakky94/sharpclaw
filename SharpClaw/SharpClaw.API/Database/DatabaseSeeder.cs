@@ -48,7 +48,10 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                 create table if not exists sessions(
                     id uuid primary key,
                     agent_id bigint not null references agents(id),
-                    created_at timestamptz not null default now()
+                    status varchar(32) not null default 'completed'
+                        check (status in ('waiting', 'pending', 'running', 'completed', 'failed')),
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
                 );
 
                 create table if not exists fragments(
@@ -92,7 +95,6 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                 create table if not exists messages(
                     id bigserial primary key,
                     session_id uuid not null references sessions(id) on delete cascade,
-                    run_id uuid null,
                     parent_summary_id bigint null references summaries(id),
                     payload jsonb not null,
                     role varchar(32) null,

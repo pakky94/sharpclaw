@@ -49,6 +49,8 @@ public class Agent(
         return sessionId;
     }
 
+    // TODO: get a context as param to persist message inside transaction
+    // TODO: move task.run to a separate method
     public async Task<AgentRunState> EnqueueMessage(Guid sessionId, string prompt)
     {
         var session = await GetOrLoadSession(sessionId);
@@ -60,38 +62,12 @@ public class Agent(
                 throw new InvalidOperationException($"Session {sessionId} already has an active run.");
 
             session.Run ??= new AgentRunState(Guid.NewGuid(), sessionId);
-            session.Run.MarkStarted(session.Context.MaxSequenceId() + 1);
         }
 
-        _ = Task.Run(() => GetMessageResponse(sessionId, prompt, session, session.Run));
-
-        return session.Run;
-    }
-
-    public async Task<string?> GetMessageResponse(Guid sessionId, string prompt)
-    {
-        var session = await GetOrLoadSession(sessionId);
-
-        lock (session.RunsLock)
-        {
-            var hasActiveRun = session.Run is { Status: AgentRunStatus.Pending or AgentRunStatus.Running };
-            if (hasActiveRun)
-                throw new InvalidOperationException($"Session {sessionId} already has an active run.");
-
-            session.Run ??= new AgentRunState(Guid.NewGuid(), sessionId);
-            session.Run.MarkStarted(session.Context.MaxSequenceId() + 1);
-        }
-
-        return await GetMessageResponse(sessionId, prompt, session, session.Run);
-    }
-
-    private async Task<string?> GetMessageResponse(Guid sessionId, string prompt, AgentSessionState session, AgentRunState run)
-    {
         await session.Mutex.WaitAsync();
 
         try
         {
-            AgentClientResponse? response = null;
             var userMessage = new ChatResponse(
                 new ChatMessage(ChatRole.User, prompt)
                 {
@@ -102,11 +78,39 @@ public class Agent(
                     },
                 });
 
-            await repository.PersistMessage(sessionId, run.RunId, userMessage);
+            await repository.PersistMessage(sessionId, userMessage);
+            await repository.UpdateSession(sessionId, AgentRunStatus.Pending);
             session.Context.Messages.Add(userMessage);
-            session.Run?.NextMessage();
+        }
+        catch (Exception ex)
+        {
+            session.Run.MarkFailed(ex.Message);
+            throw;
+        }
+        finally
+        {
+            session.Mutex.Release();
+        }
 
-            while (response is null or { ShouldContinue: true })
+        _ = Task.Run(() => GetMessageResponse(sessionId, session, session.Run));
+
+        return session.Run;
+    }
+
+    private async Task<string?> GetMessageResponse(Guid sessionId, AgentSessionState session, AgentRunState run)
+    {
+        await session.Mutex.WaitAsync();
+
+        try
+        {
+            if (session.Run is null)
+                throw new InvalidOperationException($"Session {sessionId} has no Run.");
+
+            session.Run.MarkStarted(session.Context.MaxSequenceId() + 1); // TODO: move this inside running task
+
+            AgentClientResponse? response = null;
+
+            while (response is null or { ShouldContinue: true, QueuedTasks.Count: 0 })
             {
                 var agentsMd = (await fragmentsRepository.ReadFragmentByPath(session.Context.AgentId, "AGENTS.md"))?.Content ?? string.Empty;
                 var rootFragment = await fragmentsRepository.EnsureRootFragment(session.Context.AgentId);
@@ -133,21 +137,37 @@ public class Agent(
                     BuildTools(),
                     run);
 
+                // TODO: add transaction here
                 foreach (var message in response.Responses)
                 {
-                    await repository.PersistMessage(sessionId, run.RunId, message);
+                    await repository.PersistMessage(sessionId, message);
+                }
+
+                foreach (var queuedTask in response.QueuedTasks)
+                {
+                    if (queuedTask.Type == AgentClientTask.TaskType.ChildSession)
+                    {
+                        if (queuedTask.ChildPrompt is null)
+                            // TODO: improve error message
+                            throw new Exception("ChildPrompt cannot be null when task is of type ChildSession");
+
+                        var childSessionId = await CreateSession(queuedTask.AgentId ?? session.Context.AgentId);
+                        await EnqueueMessage(childSessionId, queuedTask.ChildPrompt);
+                    }
                 }
 
                 session.Context.Messages = [..session.Context.Messages, ..response.Responses];
 
-                if (!response.ShouldContinue)
+                if (response is not { ShouldContinue: true, QueuedTasks.Count: 0 })
                     run.MarkCompleted(); // TODO: rework this
+
+                // TODO: transaction ends here
 
                 var inputTokens = response.Responses.LastOrDefault(m => m.Usage is not null)?.Usage?.InputTokenCount;
 
                 if (inputTokens is not null && inputTokens > session.Context.SoftCompactThreshold)
                 {
-                    _ = Task.Run(SoftCompactHistory(sessionId, session, run));
+                    _ = Task.Run(SoftCompactHistory(sessionId, session));
                 }
             }
 
@@ -165,7 +185,7 @@ public class Agent(
         return null; // TODO: return error from here? possibly yes
     }
 
-    private Func<Task?> SoftCompactHistory(Guid sessionId, AgentSessionState session, AgentRunState run)
+    private Func<Task?> SoftCompactHistory(Guid sessionId, AgentSessionState session)
     {
         return async () =>
         {
@@ -184,7 +204,6 @@ public class Agent(
                 {
                     await repository.PersistSummaryAndCompactHistory(
                         sessionId,
-                        run.RunId,
                         summary,
                         split.ToSummarize);
 
@@ -210,7 +229,7 @@ public class Agent(
             foreach (var message in raw.Response.Messages)
             {
                 var sequenceId = raw.Response.AdditionalProperties?[Constants.SequenceIdKey] as long?
-                    ?? throw new UnreachableException("all messages should have a sequenceId");
+                                 ?? throw new UnreachableException("all messages should have a sequenceId");
 
                 messages.Add(new SessionMessageDto(
                     Role: message.Role.Value,
@@ -385,6 +404,7 @@ public class AgentSessionState(Guid sessionId, AgentExecutionContext context, Da
 public enum AgentRunStatus
 {
     Pending,
+    Waiting,
     Running,
     Completed,
     Failed,

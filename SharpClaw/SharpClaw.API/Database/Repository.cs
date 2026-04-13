@@ -2,6 +2,7 @@ using System.Text.Json;
 using Dapper;
 using Microsoft.Extensions.AI;
 using Npgsql;
+using SharpClaw.API.Agents;
 
 namespace SharpClaw.API.Database;
 
@@ -219,6 +220,23 @@ public class Repository(IConfiguration configuration)
             new { sessionId });
     }
 
+    public async Task<PersistedSession?> UpdateSession(Guid sessionId, AgentRunStatus status)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        return await connection.QueryFirstOrDefaultAsync<PersistedSession>(
+            """
+            update sessions
+            set status = @status,
+                updated_at = now()
+            where id = @sessionId;
+            """,
+            new
+            {
+                sessionId,
+                status = status.ToString().ToLowerInvariant(),
+            });
+    }
+
     public async Task<IReadOnlyList<PersistedSessionSummary>> GetSessions(long agentId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
@@ -241,7 +259,7 @@ public class Repository(IConfiguration configuration)
         return rows.ToArray();
     }
 
-    public async Task<long> PersistMessage(Guid sessionId, Guid? runId, ChatResponse response)
+    public async Task<long> PersistMessage(Guid sessionId, ChatResponse response)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
@@ -252,11 +270,11 @@ public class Repository(IConfiguration configuration)
 
         var messageId = await connection.ExecuteScalarAsync<long>(
             """
-            insert into messages (session_id, run_id, payload, role, search_text)
-            values (@sessionId, @runId, cast(@payload as jsonb), @role, @searchText)
+            insert into messages (session_id, payload, role, search_text)
+            values (@sessionId, cast(@payload as jsonb), @role, @searchText)
             returning id;
             """,
-            new { sessionId, runId, payload, role, searchText },
+            new { sessionId, payload, role, searchText },
             tx);
 
         var nextSequence = await connection.ExecuteScalarAsync<long>(
@@ -282,7 +300,7 @@ public class Repository(IConfiguration configuration)
         return messageId;
     }
 
-    public async Task<long> PersistSummaryAndCompactHistory(Guid sessionId, Guid? runId, ChatResponse summary,
+    public async Task<long> PersistSummaryAndCompactHistory(Guid sessionId, ChatResponse summary,
         IReadOnlyList<ChatResponse> summarizedItems)
     {
         var messageIds = summarizedItems
@@ -309,11 +327,11 @@ public class Repository(IConfiguration configuration)
 
         var summaryId = await connection.ExecuteScalarAsync<long>(
             """
-            insert into summaries (session_id, run_id, payload, search_text, lcm_summary_id, lcm_summary_level)
-            values (@sessionId, @runId, cast(@payload as jsonb), @searchText, @lcmSummaryId, @lcmSummaryLevel)
+            insert into summaries (session_id, payload, search_text, lcm_summary_id, lcm_summary_level)
+            values (@sessionId, cast(@payload as jsonb), @searchText, @lcmSummaryId, @lcmSummaryLevel)
             returning id;
             """,
-            new { sessionId, runId, payload, searchText, lcmSummaryId, lcmSummaryLevel },
+            new { sessionId, payload, searchText, lcmSummaryId, lcmSummaryLevel },
             tx);
 
         if (messageIds.Length > 0)
@@ -444,7 +462,6 @@ public class Repository(IConfiguration configuration)
         var rows = await connection.QueryAsync<RawMessageRow>(
             """
             select m.id as MessageId,
-                   m.run_id as RunId,
                    m.created_at as CreatedAt,
                    m.payload::text as Payload,
                    m.parent_summary_id as ParentSummaryId,
@@ -461,7 +478,7 @@ public class Repository(IConfiguration configuration)
             {
                 var response = DeserializeResponse(r.Payload);
                 SetDbReference(response, "message", r.MessageId, r.SequenceId, r.ParentSummaryId);
-                return new PersistedRawMessage(r.MessageId, r.RunId, r.CreatedAt, response);
+                return new PersistedRawMessage(r.MessageId, r.CreatedAt, response);
             })
             .ToArray();
     }
@@ -563,7 +580,6 @@ public class Repository(IConfiguration configuration)
                 where child.session_id = @sessionId
             )
             select m.id as MessageDbId,
-                   m.run_id as RunId,
                    m.created_at as CreatedAt,
                    m.payload::text as Payload
             from messages m
@@ -721,7 +737,6 @@ public class Repository(IConfiguration configuration)
 
         return new LcmExpandedMessageRecord(
             row.MessageDbId,
-            row.RunId,
             role,
             content,
             row.CreatedAt);
@@ -858,7 +873,6 @@ public class Repository(IConfiguration configuration)
     {
         public long MessageId { get; init; }
         public long SequenceId { get; init; }
-        public Guid? RunId { get; init; }
         public DateTime CreatedAt { get; init; }
         public required string Payload { get; init; }
         public long? ParentSummaryId { get; init; }
@@ -879,7 +893,6 @@ public class Repository(IConfiguration configuration)
     private sealed class LcmExpandedMessageRow
     {
         public long MessageDbId { get; init; }
-        public Guid? RunId { get; init; }
         public DateTime CreatedAt { get; init; }
         public required string Payload { get; init; }
     }
@@ -896,7 +909,7 @@ public class Repository(IConfiguration configuration)
 
 public record PersistedSession(Guid SessionId, long AgentId, DateTime CreatedAt);
 public record PersistedSessionSummary(Guid SessionId, long AgentId, DateTime CreatedAt, long MessagesCount);
-public record PersistedRawMessage(long MessageId, Guid? RunId, DateTime CreatedAt, ChatResponse Response);
+public record PersistedRawMessage(long MessageId, DateTime CreatedAt, ChatResponse Response);
 public record LcmSummaryRecord(
     long DbId,
     Guid SessionId,
@@ -907,7 +920,6 @@ public record LcmSummaryRecord(
     DateTime CreatedAt);
 public record LcmExpandedMessageRecord(
     long MessageDbId,
-    Guid? RunId,
     string Role,
     string Content,
     DateTime CreatedAt);
