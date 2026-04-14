@@ -259,6 +259,43 @@ public class Repository(IConfiguration configuration)
             });
     }
 
+    public async Task<string> CompleteSessionTask(Guid childSessionId, Guid parentSessionId, string? result)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var res = await connection.ExecuteAsync(
+            """
+            update session_tasks
+            set result = @result,
+                completed = true,
+                updated_at = now()
+            where completed = false
+              and child_session_id = @childSessionId
+              and session_id = @parentSessionId;
+            """,
+            new
+            {
+                parentSessionId,
+                childSessionId,
+                result,
+            });
+
+        if (res != 1)
+            throw new Exception($"Expected task to affect exactly 1 row, got {res}");
+
+        return await connection.QueryFirstAsync<string>(
+            """
+            select call_id
+            from session_tasks
+            where child_session_id = @childSessionId
+              and session_id = @parentSessionId;
+            """,
+            new
+            {
+                parentSessionId,
+                childSessionId,
+            });
+    }
+
     public async Task<IReadOnlyList<PersistedSessionSummary>> GetSessions(long agentId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
@@ -320,6 +357,30 @@ public class Repository(IConfiguration configuration)
 
         SetDbReference(response, "message", messageId, nextSequence);
         return messageId;
+    }
+
+    public async Task UpdateMessage(ChatResponse response)
+    {
+        var payload = SerializeResponse(response);
+        var (_, searchText) = BuildIndexFields(response);
+
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var res = await connection.ExecuteAsync(
+            """
+            update messages
+            set payload = cast(@payload as jsonb),
+                search_text = @searchText
+            where id = @id
+            """,
+            new
+            {
+                id = response.AdditionalProperties![DbEntryIdKey],
+                payload,
+                searchText,
+            });
+
+        if (res != 1)
+            throw new Exception($"Expected update to affect exactly 1 row, got {res}");
     }
 
     public async Task<long> PersistSummaryAndCompactHistory(Guid sessionId, ChatResponse summary,

@@ -13,7 +13,6 @@ namespace SharpClaw.API.Agents;
 
 public class Agent(
     ChatProvider chatProvider,
-    IConfiguration configuration,
     Repository repository,
     FragmentsRepository fragmentsRepository,
     WorkspaceRepository workspaceRepository)
@@ -35,7 +34,6 @@ public class Agent(
         var context = new AgentExecutionContext
         {
             SessionId = sessionId,
-            DbConnectionString = configuration.GetConnectionString("sharpclaw")!,
             AgentId = agentId,
             LlmModel = agentConfig.LlmModel,
             Temperature = agentConfig.Temperature,
@@ -61,7 +59,7 @@ public class Agent(
             if (hasActiveRun)
                 throw new InvalidOperationException($"Session {sessionId} already has an active run.");
 
-            session.Run ??= new AgentRunState(Guid.NewGuid(), sessionId);
+            // session.Run ??= new AgentRunState(sessionId);
         }
 
         await session.Mutex.WaitAsync();
@@ -156,6 +154,7 @@ public class Agent(
                             queuedTask.AgentId ?? session.Context.AgentId,
                             parentSessionId: sessionId);
                         await repository.AddSessionTask(sessionId, queuedTask.CallId, childSessionId);
+                        session.Run.SessionDependencies.Add(new SessionDependency(childSessionId, queuedTask.CallId));
                         await EnqueueMessage(childSessionId, queuedTask.ChildPrompt);
                     }
                 }
@@ -163,10 +162,62 @@ public class Agent(
                 if (response.QueuedTasks.Count > 0)
                 {
                     await repository.UpdateSession(sessionId, AgentRunStatus.Waiting);
-                }
-
-                if (response is not { ShouldContinue: true, QueuedTasks.Count: 0 })
+                } else if (response is not { ShouldContinue: true, QueuedTasks.Count: 0 })
+                {
                     run.MarkCompleted(); // TODO: rework this
+                    await repository.UpdateSession(sessionId, AgentRunStatus.Completed);
+
+                    if (session.ParentSessionId is not null)
+                    {
+                        var taskResult = response.Responses.LastOrDefault(m => !string.IsNullOrWhiteSpace(m.Text))?.Text;
+                        var callId = await repository.CompleteSessionTask(
+                            sessionId,
+                            session.ParentSessionId.Value,
+                            taskResult);
+
+                        // _ = Task.Run(async () =>
+                        // {
+                        var parentSession = await GetOrLoadSession(session.ParentSessionId.Value);
+                        await parentSession.Mutex.WaitAsync();
+                        try
+                        {
+                            var dep = parentSession.Run?.SessionDependencies.SingleOrDefault(d => d.CallId == callId);
+
+                            if (dep is null)
+                                throw new Exception("Parent content from task not found");
+
+                            var message = parentSession.Context.Messages
+                                .FirstOrDefault(r => r.Messages
+                                    .SelectMany(m => m.Contents)
+                                    .Any(m => m is FunctionResultContent trc
+                                              && trc.CallId == callId));
+
+                            if (message is null)
+                                throw new Exception("Parent content from task not found");
+
+                            var content = message.Messages
+                                .SelectMany(m => m.Contents)
+                                .FirstOrDefault(m => m is FunctionResultContent trc
+                                                     && trc.CallId == callId) as FunctionResultContent;
+
+                            if (content is null)
+                                throw new Exception("Parent content from task not found");
+
+                            content.Result = taskResult;
+                            await repository.UpdateMessage(message);
+
+                            parentSession.Run!.SessionDependencies.Remove(dep);
+
+                            if (parentSession.Run.SessionDependencies.Count == 0)
+                                _ = Task.Run(() => GetMessageResponse(parentSession.SessionId, parentSession, parentSession.Run));
+                        }
+                        finally
+                        {
+                            parentSession.Mutex.Release();
+                        }
+                        // });
+                    }
+                }
 
                 // TODO: transaction ends here
 
@@ -307,6 +358,8 @@ public class Agent(
             var activeWsRows = await workspaceRepository.GetActiveWorkspacesForSession(sessionId);
             var activeWsNames = new HashSet<string>(activeWsRows.Select(r => r.WorkspaceName));
 
+            // TODO: load pending dependencies
+
             if (activeWsNames.Count == 0 && defaultWs is not null)
             {
                 activeWsNames.Add(defaultWs.Name);
@@ -315,7 +368,6 @@ public class Agent(
             var context = new AgentExecutionContext
             {
                 SessionId = sessionId,
-                DbConnectionString = configuration.GetConnectionString("sharpclaw")!,
                 AgentId = persistedSession.AgentId,
                 LlmModel = agentConfig.LlmModel,
                 Temperature = agentConfig.Temperature,
@@ -408,9 +460,10 @@ public class AgentSessionState(Guid sessionId, AgentExecutionContext context,
     public AgentExecutionContext Context { get; } = context;
     public SemaphoreSlim Mutex { get; } = new(1, 1);
     public object RunsLock { get; } = new();
-    public AgentRunState? Run { get; set; }
+    public AgentRunState Run { get; } = new(sessionId);
 }
 
+// TODO: check all status transitions, they are probably wrong in places
 public enum AgentRunStatus
 {
     Pending,
@@ -422,7 +475,9 @@ public enum AgentRunStatus
 
 public record AgentRunEvent(long MessageId, long Sequence, string Type, string? Text, DateTimeOffset Timestamp, object? Data = null);
 
-public class AgentRunState(Guid runId, Guid sessionId)
+public record SessionDependency(Guid ChildSessionId, string CallId);
+
+public class AgentRunState(Guid sessionId)
 {
     private readonly object _eventsLock = new();
     private readonly List<AgentRunEvent> _events = [];
@@ -430,14 +485,14 @@ public class AgentRunState(Guid runId, Guid sessionId)
     private long _currentMessageId = 0;
     private long _sequence = 0;
 
-    public Guid RunId { get; } = runId;
     public Guid SessionId { get; } = sessionId;
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? StartedAt { get; private set; }
     public long StartMessageId { get; set; }
     public DateTimeOffset? CompletedAt { get; private set; }
-    public AgentRunStatus Status { get; private set; } = AgentRunStatus.Pending;
+    public AgentRunStatus Status { get; private set; } = AgentRunStatus.Completed;
     public string? Error { get; private set; }
+    public List<SessionDependency> SessionDependencies = [];
 
     public AgentRunEvent[] GetEventsAfter(long messageId, long sequence)
     {
@@ -503,6 +558,7 @@ public class AgentRunState(Guid runId, Guid sessionId)
 
     public void MarkCompleted()
     {
+        Console.WriteLine($"completing session {sessionId}");
         CompletedAt = DateTimeOffset.UtcNow;
         Status = AgentRunStatus.Completed;
         AddEvent(_events.Max(e => e.MessageId), "completed", null);

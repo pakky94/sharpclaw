@@ -6,7 +6,6 @@ namespace SharpClaw.API.Agents;
 public class AgentExecutionContext
 {
     public required Guid SessionId { get; set; }
-    public required string DbConnectionString { get; set; }
     public required long AgentId { get; set; }
     public required string LlmModel { get; set; }
     public required float Temperature { get; set; }
