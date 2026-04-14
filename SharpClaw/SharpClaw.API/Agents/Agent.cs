@@ -21,7 +21,7 @@ public class Agent(
     private readonly ConcurrentDictionary<Guid, AgentSessionState> _sessions = new();
     private readonly SemaphoreSlim _sessionsMutex = new(1, 1);
 
-    public async Task<Guid> CreateSession(long agentId = 1)
+    public async Task<Guid> CreateSession(long agentId = 1, Guid? parentSessionId = null)
     {
         var agentConfig = await repository.GetAgent(agentId)
                           ?? throw new KeyNotFoundException($"Agent {agentId} was not found.");
@@ -44,8 +44,8 @@ public class Agent(
             ActiveWorkspaceNames = activeWorkspaces,
         };
 
-        await repository.CreateSession(sessionId, agentId);
-        _sessions[sessionId] = new AgentSessionState(sessionId, context);
+        await repository.CreateSession(sessionId, agentId, parentSessionId);
+        _sessions[sessionId] = new AgentSessionState(sessionId, context, parentSessionId: parentSessionId);
         return sessionId;
     }
 
@@ -142,6 +142,7 @@ public class Agent(
                 {
                     await repository.PersistMessage(sessionId, message);
                 }
+                session.Context.Messages = [..session.Context.Messages, ..response.Responses];
 
                 foreach (var queuedTask in response.QueuedTasks)
                 {
@@ -151,12 +152,18 @@ public class Agent(
                             // TODO: improve error message
                             throw new Exception("ChildPrompt cannot be null when task is of type ChildSession");
 
-                        var childSessionId = await CreateSession(queuedTask.AgentId ?? session.Context.AgentId);
+                        var childSessionId = await CreateSession(
+                            queuedTask.AgentId ?? session.Context.AgentId,
+                            parentSessionId: sessionId);
+                        await repository.AddSessionTask(sessionId, queuedTask.CallId, childSessionId);
                         await EnqueueMessage(childSessionId, queuedTask.ChildPrompt);
                     }
                 }
 
-                session.Context.Messages = [..session.Context.Messages, ..response.Responses];
+                if (response.QueuedTasks.Count > 0)
+                {
+                    await repository.UpdateSession(sessionId, AgentRunStatus.Waiting);
+                }
 
                 if (response is not { ShouldContinue: true, QueuedTasks.Count: 0 })
                     run.MarkCompleted(); // TODO: rework this
@@ -320,7 +327,7 @@ public class Agent(
             var loadedSession = new AgentSessionState(
                 sessionId,
                 context,
-                new DateTimeOffset(DateTime.SpecifyKind(persistedSession.CreatedAt, DateTimeKind.Utc)));
+                createdAt: new DateTimeOffset(DateTime.SpecifyKind(persistedSession.CreatedAt, DateTimeKind.Utc)));
             _sessions[sessionId] = loadedSession;
             return loadedSession;
         }
@@ -391,9 +398,12 @@ public class Agent(
 
 }
 
-public class AgentSessionState(Guid sessionId, AgentExecutionContext context, DateTimeOffset? createdAt = null)
+public class AgentSessionState(Guid sessionId, AgentExecutionContext context,
+    Guid? parentSessionId = null,
+    DateTimeOffset? createdAt = null)
 {
     public Guid SessionId { get; } = sessionId;
+    public Guid? ParentSessionId { get; } = parentSessionId;
     public DateTimeOffset CreatedAt { get; } = createdAt ?? DateTimeOffset.UtcNow;
     public AgentExecutionContext Context { get; } = context;
     public SemaphoreSlim Mutex { get; } = new(1, 1);

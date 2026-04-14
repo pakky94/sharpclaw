@@ -194,16 +194,16 @@ public class Repository(IConfiguration configuration)
         return true;
     }
 
-    public async Task CreateSession(Guid sessionId, long agentId)
+    public async Task CreateSession(Guid sessionId, long agentId, Guid? parentSessionId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.ExecuteAsync(
             """
-            insert into sessions (id, agent_id)
-            values (@sessionId, @agentId)
+            insert into sessions (id, agent_id, parent_session_id)
+            values (@sessionId, @agentId, @parentSessionId)
             on conflict (id) do nothing;
             """,
-            new { sessionId, agentId });
+            new { sessionId, agentId, parentSessionId });
     }
 
     public async Task<PersistedSession?> GetSession(Guid sessionId)
@@ -234,6 +234,28 @@ public class Repository(IConfiguration configuration)
             {
                 sessionId,
                 status = status.ToString().ToLowerInvariant(),
+            });
+    }
+
+    public async Task AddSessionTask(Guid sessionId,
+        string callId,
+        Guid? childSessionId,
+        bool blocking = true
+    )
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.ExecuteAsync(
+            """
+            insert into session_tasks (session_id, type, call_id, child_session_id, blocking)
+            values (@sessionId, 'task', @callId, @childSessionId, @blocking)
+            on conflict (id) do nothing;
+            """,
+            new
+            {
+                sessionId,
+                callId,
+                childSessionId,
+                blocking,
             });
     }
 

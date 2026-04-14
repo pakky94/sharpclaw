@@ -169,8 +169,13 @@ public sealed class ToolInvocationTests(SharpClawAppFixture fixture)
             c => c.Messages.Last().Role == "user"
                  && c.Messages.Last().Content ==  "task prompt 2");
 
+        fixture.LlmServer?.TextSse("result after both tasks",
+            c => (c.Messages.Last().Content?.Contains("task result 1") ?? false)
+                 && (c.Messages.Last().Content?.Contains("task result 2") ?? false));
+
         var sessionId = await fixture.Api.CreateSessionAsync();
         var messageId = await fixture.Api.EnqueueMessageAsync(sessionId, "TEST_TOOL_LIST_FILES");
+        await Task.Delay(5_000_000);
         await fixture.Api.WaitForStreamCompleted(sessionId, messageId);
 
         using var history = await fixture.Api.GetHistoryAsync(sessionId);

@@ -50,6 +50,22 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     agent_id bigint not null references agents(id),
                     status varchar(32) not null default 'completed'
                         check (status in ('waiting', 'pending', 'running', 'completed', 'failed')),
+                    parent_session_id uuid null references sessions(id),
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
+                );
+
+                create table if not exists session_tasks
+                (
+                    id bigserial primary key,
+                    session_id uuid not null references sessions(id) on delete cascade,
+                    type varchar(255) not null constraint session_task_type_check check
+                        (type in ('task')),
+                    call_id varchar(255) not null,
+                    child_session_id uuid null references sessions(id) on delete cascade,
+                    result text null,
+                    completed boolean not null default false,
+                    blocking boolean not null default true,
                     created_at timestamptz not null default now(),
                     updated_at timestamptz not null default now()
                 );
