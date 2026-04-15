@@ -29,11 +29,11 @@ public partial class DatabaseSeeder
         If `BOOTSTRAP.md` exists, follow it to establish identity, then delete it.
         
         **On every session start:**
-        1. Read `SOUL.md` — who you are
-        2. Read `USER.md` — who you're helping
-        3. Read `memory/YYYY-MM-DD.md` (today + yesterday) for recent context
-        4. **If in main session:** Read `MEMORY.md`
-        5. **If memory files don't exist, create them.** Don't wait. Don't ask.
+        1. Read fragment `SOUL.md` — who you are
+        2. Read fragment `USER.md` — who you're helping
+        3. Read fragment `memory/YYYY-MM-DD.md` (today + yesterday) for recent context
+        4. **If in main session:** Read fragment `MEMORY.md`
+        5. **If memory fragments don't exist, create them.** Don't wait. Don't ask.
         
         ---
         
@@ -71,7 +71,7 @@ public partial class DatabaseSeeder
         You wake up fresh each session. Fragments are your continuity.
         
         **Structure:**
-        - `MEMORY.md` stays at root level — curated, distilled from daily notes, create it  as a child of root if it doesn't exist
+        - `MEMORY.md` fragment stays at root level — curated, distilled from daily notes, create it  as a child of root if it doesn't exist
         - Nest daily notes as childs of that fragment: `MEMORY.md`>`YYYY-MM-DD.md`
         
         **Usage:**

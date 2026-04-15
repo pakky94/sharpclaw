@@ -2,6 +2,7 @@ using System.Text.Json;
 using Dapper;
 using Microsoft.Extensions.AI;
 using Npgsql;
+using SharpClaw.API.Agents;
 
 namespace SharpClaw.API.Database;
 
@@ -193,16 +194,16 @@ public class Repository(IConfiguration configuration)
         return true;
     }
 
-    public async Task CreateSession(Guid sessionId, long agentId, string systemPrompt)
+    public async Task CreateSession(Guid sessionId, long agentId, Guid? parentSessionId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.ExecuteAsync(
             """
-            insert into sessions (id, agent_id, system_prompt)
-            values (@sessionId, @agentId, @systemPrompt)
+            insert into sessions (id, agent_id, parent_session_id)
+            values (@sessionId, @agentId, @parentSessionId)
             on conflict (id) do nothing;
             """,
-            new { sessionId, agentId, systemPrompt });
+            new { sessionId, agentId, parentSessionId });
     }
 
     public async Task<PersistedSession?> GetSession(Guid sessionId)
@@ -212,12 +213,88 @@ public class Repository(IConfiguration configuration)
             """
             select id as SessionId,
                    agent_id as AgentId,
-                   system_prompt as SystemPrompt,
+                   parent_session_id as ParentSessionId,
                    created_at as CreatedAt
             from sessions
             where id = @sessionId;
             """,
             new { sessionId });
+    }
+
+    public async Task<PersistedSession?> UpdateSession(Guid sessionId, AgentRunStatus status)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        return await connection.QueryFirstOrDefaultAsync<PersistedSession>(
+            """
+            update sessions
+            set status = @status,
+                updated_at = now()
+            where id = @sessionId;
+            """,
+            new
+            {
+                sessionId,
+                status = status.ToString().ToLowerInvariant(),
+            });
+    }
+
+    public async Task AddSessionTask(Guid sessionId,
+        string callId,
+        Guid? childSessionId,
+        bool blocking = true
+    )
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.ExecuteAsync(
+            """
+            insert into session_tasks (session_id, type, call_id, child_session_id, blocking)
+            values (@sessionId, 'task', @callId, @childSessionId, @blocking)
+            on conflict (id) do nothing;
+            """,
+            new
+            {
+                sessionId,
+                callId,
+                childSessionId,
+                blocking,
+            });
+    }
+
+    public async Task<string> CompleteSessionTask(Guid childSessionId, Guid parentSessionId, string? result)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var res = await connection.ExecuteAsync(
+            """
+            update session_tasks
+            set result = @result,
+                completed = true,
+                updated_at = now()
+            where completed = false
+              and child_session_id = @childSessionId
+              and session_id = @parentSessionId;
+            """,
+            new
+            {
+                parentSessionId,
+                childSessionId,
+                result,
+            });
+
+        if (res != 1)
+            throw new Exception($"Expected task to affect exactly 1 row, got {res}");
+
+        return await connection.QueryFirstAsync<string>(
+            """
+            select call_id
+            from session_tasks
+            where child_session_id = @childSessionId
+              and session_id = @parentSessionId;
+            """,
+            new
+            {
+                parentSessionId,
+                childSessionId,
+            });
     }
 
     public async Task<IReadOnlyList<PersistedSessionSummary>> GetSessions(long agentId)
@@ -227,6 +304,7 @@ public class Repository(IConfiguration configuration)
             """
             select s.id as SessionId,
                    s.agent_id as AgentId,
+                   s.parent_session_id as ParentSessionId,
                    s.created_at as CreatedAt,
                    coalesce((
                        select count(*)
@@ -242,7 +320,25 @@ public class Repository(IConfiguration configuration)
         return rows.ToArray();
     }
 
-    public async Task<long> PersistMessage(Guid sessionId, Guid? runId, ChatResponse response)
+    public async Task<IReadOnlyList<SessionTaskLink>> GetSessionTaskLinks(Guid sessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<SessionTaskLink>(
+            """
+            select call_id as CallId,
+                   child_session_id as ChildSessionId,
+                   completed as Completed
+            from session_tasks
+            where session_id = @sessionId
+              and child_session_id is not null
+            order by created_at, id;
+            """,
+            new { sessionId });
+
+        return rows.ToArray();
+    }
+
+    public async Task<long> PersistMessage(Guid sessionId, ChatResponse response)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
@@ -253,11 +349,11 @@ public class Repository(IConfiguration configuration)
 
         var messageId = await connection.ExecuteScalarAsync<long>(
             """
-            insert into messages (session_id, run_id, payload, role, search_text)
-            values (@sessionId, @runId, cast(@payload as jsonb), @role, @searchText)
+            insert into messages (session_id, payload, role, search_text)
+            values (@sessionId, cast(@payload as jsonb), @role, @searchText)
             returning id;
             """,
-            new { sessionId, runId, payload, role, searchText },
+            new { sessionId, payload, role, searchText },
             tx);
 
         var nextSequence = await connection.ExecuteScalarAsync<long>(
@@ -279,11 +375,35 @@ public class Repository(IConfiguration configuration)
 
         await tx.CommitAsync();
 
-        SetDbReference(response, "message", messageId);
+        SetDbReference(response, "message", messageId, nextSequence);
         return messageId;
     }
 
-    public async Task<long> PersistSummaryAndCompactHistory(Guid sessionId, Guid? runId, ChatResponse summary,
+    public async Task UpdateMessage(ChatResponse response)
+    {
+        var payload = SerializeResponse(response);
+        var (_, searchText) = BuildIndexFields(response);
+
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var res = await connection.ExecuteAsync(
+            """
+            update messages
+            set payload = cast(@payload as jsonb),
+                search_text = @searchText
+            where id = @id
+            """,
+            new
+            {
+                id = response.AdditionalProperties![DbEntryIdKey],
+                payload,
+                searchText,
+            });
+
+        if (res != 1)
+            throw new Exception($"Expected update to affect exactly 1 row, got {res}");
+    }
+
+    public async Task<long> PersistSummaryAndCompactHistory(Guid sessionId, ChatResponse summary,
         IReadOnlyList<ChatResponse> summarizedItems)
     {
         var messageIds = summarizedItems
@@ -310,11 +430,11 @@ public class Repository(IConfiguration configuration)
 
         var summaryId = await connection.ExecuteScalarAsync<long>(
             """
-            insert into summaries (session_id, run_id, payload, search_text, lcm_summary_id, lcm_summary_level)
-            values (@sessionId, @runId, cast(@payload as jsonb), @searchText, @lcmSummaryId, @lcmSummaryLevel)
+            insert into summaries (session_id, payload, search_text, lcm_summary_id, lcm_summary_level)
+            values (@sessionId, cast(@payload as jsonb), @searchText, @lcmSummaryId, @lcmSummaryLevel)
             returning id;
             """,
-            new { sessionId, runId, payload, searchText, lcmSummaryId, lcmSummaryLevel },
+            new { sessionId, payload, searchText, lcmSummaryId, lcmSummaryLevel },
             tx);
 
         if (messageIds.Length > 0)
@@ -414,6 +534,7 @@ public class Repository(IConfiguration configuration)
                        else s.payload::text
                    end as Payload,
                    ch.entry_type as EntryType,
+                   ch.sequence as SequenceId,
                    m.id as MessageId,
                    s.id as SummaryId,
                    m.parent_summary_id as MessageParentSummaryId,
@@ -431,7 +552,7 @@ public class Repository(IConfiguration configuration)
         {
             var response = DeserializeResponse(r.Payload);
             if (r.EntryType == "message" && r.MessageId is not null)
-                SetDbReference(response, "message", r.MessageId.Value, r.MessageParentSummaryId);
+                SetDbReference(response, "message", r.MessageId.Value, r.SequenceId, r.MessageParentSummaryId);
             else if (r.EntryType == "summary" && r.SummaryId is not null)
                 SetDbReference(response, "summary", r.SummaryId.Value, r.SummaryParentSummaryId);
             return response;
@@ -443,14 +564,15 @@ public class Repository(IConfiguration configuration)
         await using var connection = new NpgsqlConnection(ConnectionString);
         var rows = await connection.QueryAsync<RawMessageRow>(
             """
-            select id as MessageId,
-                   run_id as RunId,
-                   created_at as CreatedAt,
-                   payload::text as Payload,
-                   parent_summary_id as ParentSummaryId
-            from messages
-            where session_id = @sessionId
-            order by created_at, id;
+            select m.id as MessageId,
+                   m.created_at as CreatedAt,
+                   m.payload::text as Payload,
+                   m.parent_summary_id as ParentSummaryId,
+                   ch.sequence as SequenceId
+            from messages m
+            join conversation_history ch on m.id = ch.message_id
+            where m.session_id = @sessionId
+            order by ch.sequence;
             """,
             new { sessionId });
 
@@ -458,8 +580,8 @@ public class Repository(IConfiguration configuration)
             .Select(r =>
             {
                 var response = DeserializeResponse(r.Payload);
-                SetDbReference(response, "message", r.MessageId, r.ParentSummaryId);
-                return new PersistedRawMessage(r.MessageId, r.RunId, r.CreatedAt, response);
+                SetDbReference(response, "message", r.MessageId, r.SequenceId, r.ParentSummaryId);
+                return new PersistedRawMessage(r.MessageId, r.CreatedAt, response);
             })
             .ToArray();
     }
@@ -561,7 +683,6 @@ public class Repository(IConfiguration configuration)
                 where child.session_id = @sessionId
             )
             select m.id as MessageDbId,
-                   m.run_id as RunId,
                    m.created_at as CreatedAt,
                    m.payload::text as Payload
             from messages m
@@ -645,6 +766,17 @@ public class Repository(IConfiguration configuration)
         return rows.Select(ToLcmGrepMessageRecord).ToArray();
     }
 
+    private static void SetDbReference(ChatResponse response, string type, long id, long sequenceId, long? parentSummaryId = null)
+    {
+        response.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+        response.AdditionalProperties[DbEntryTypeKey] = type;
+        response.AdditionalProperties[DbEntryIdKey] = id;
+        response.AdditionalProperties[Constants.SequenceIdKey] = sequenceId;
+
+        if (parentSummaryId is not null)
+            response.AdditionalProperties[ParentSummaryIdKey] = parentSummaryId.Value;
+    }
+
     private static void SetDbReference(ChatResponse response, string type, long id, long? parentSummaryId = null)
     {
         response.AdditionalProperties ??= new AdditionalPropertiesDictionary();
@@ -708,7 +840,6 @@ public class Repository(IConfiguration configuration)
 
         return new LcmExpandedMessageRecord(
             row.MessageDbId,
-            row.RunId,
             role,
             content,
             row.CreatedAt);
@@ -834,6 +965,7 @@ public class Repository(IConfiguration configuration)
     {
         public required string Payload { get; init; }
         public required string EntryType { get; init; }
+        public required long SequenceId { get; init; }
         public long? MessageId { get; init; }
         public long? SummaryId { get; init; }
         public long? MessageParentSummaryId { get; init; }
@@ -843,7 +975,7 @@ public class Repository(IConfiguration configuration)
     private sealed class RawMessageRow
     {
         public long MessageId { get; init; }
-        public Guid? RunId { get; init; }
+        public long SequenceId { get; init; }
         public DateTime CreatedAt { get; init; }
         public required string Payload { get; init; }
         public long? ParentSummaryId { get; init; }
@@ -864,7 +996,6 @@ public class Repository(IConfiguration configuration)
     private sealed class LcmExpandedMessageRow
     {
         public long MessageDbId { get; init; }
-        public Guid? RunId { get; init; }
         public DateTime CreatedAt { get; init; }
         public required string Payload { get; init; }
     }
@@ -879,9 +1010,10 @@ public class Repository(IConfiguration configuration)
     }
 }
 
-public record PersistedSession(Guid SessionId, long AgentId, string SystemPrompt, DateTime CreatedAt);
-public record PersistedSessionSummary(Guid SessionId, long AgentId, DateTime CreatedAt, long MessagesCount);
-public record PersistedRawMessage(long MessageId, Guid? RunId, DateTime CreatedAt, ChatResponse Response);
+public record PersistedSession(Guid SessionId, long AgentId, Guid? ParentSessionId, DateTime CreatedAt);
+public record PersistedSessionSummary(Guid SessionId, long AgentId, Guid? ParentSessionId, DateTime CreatedAt, long MessagesCount);
+public record SessionTaskLink(string CallId, Guid ChildSessionId, bool Completed);
+public record PersistedRawMessage(long MessageId, DateTime CreatedAt, ChatResponse Response);
 public record LcmSummaryRecord(
     long DbId,
     Guid SessionId,
@@ -892,7 +1024,6 @@ public record LcmSummaryRecord(
     DateTime CreatedAt);
 public record LcmExpandedMessageRecord(
     long MessageDbId,
-    Guid? RunId,
     string Role,
     string Content,
     DateTime CreatedAt);

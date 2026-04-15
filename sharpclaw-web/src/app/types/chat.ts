@@ -1,6 +1,7 @@
 export type SessionSummary = {
   sessionId: string
   agentId: number
+  parentSessionId: string | null
   createdAt: string
   messagesCount: number
 }
@@ -34,7 +35,7 @@ export type SessionHistoryMessage = {
   text: string | null
   contents: SessionMessageContent[]
   authorName: string | null
-  runId: string | null
+  messageId: number
   runStatus: RunStatus | null
 }
 
@@ -50,18 +51,26 @@ export type SessionMessageContent = {
 
 export type SessionHistoryResponse = {
   sessionId: string
-  activeRunId: string | null
-  activeRunStatus: RunStatus | null
+  parentSessionId: string | null
+  runStatus: RunStatus | null
+  latestSequenceId: number
   messages: SessionHistoryMessage[]
+  childSessions: SessionChildLink[]
 }
 
-export type RunStatus = 'pending' | 'running' | 'completed' | 'failed'
+export type SessionChildLink = {
+  callId: string
+  childSessionId: string
+  completed: boolean
+}
+
+export type RunStatus = 'pending' | 'waiting' | 'running' | 'completed' | 'failed'
 
 export type StreamEvent = {
-  runId: string
+  messageId: number
   sessionId: string
   sequence: number
-  type: 'started' | 'delta' | 'completed' | 'failed' | 'tool_call' | 'tool_result' | 'approval_required'
+  type: 'started' | 'delta' | 'completed' | 'failed' | 'tool_call' | 'tool_result' | 'approval_required' | 'child_session_spawned'
   text: string | null
   data?: unknown
   timestamp: string
@@ -73,7 +82,7 @@ export type ChatBubble = {
   role: 'user' | 'assistant' | 'system' | 'tool'
   text: string
   isStreaming?: boolean
-  runId?: string | null
+  messageId: number
   toolEventType?: 'tool_call' | 'tool_result'
   toolCallId?: string | null
   toolName?: string | null
@@ -82,6 +91,8 @@ export type ChatBubble = {
   toolResultFormat?: 'text' | 'structured'
   toolExpanded?: boolean
   toolResultExpanded?: boolean
+  childSessionId?: string | null
+  childSessionCompleted?: boolean
 }
 
 export type ToolCallEventData = {
@@ -93,6 +104,12 @@ export type ToolCallEventData = {
 export type ToolResultEventData = {
   callId?: string | null
   result?: unknown
+}
+
+export type ChildSessionSpawnedEventData = {
+  callId?: string | null
+  childSessionId?: string | null
+  description?: string | null
 }
 
 export type WorkspaceConfig = {

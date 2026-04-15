@@ -8,6 +8,7 @@ import { API_BASE_URL, fetchJson } from '../services/chatApi'
 import type {
   AgentConfig,
   ChatBubble,
+  ChildSessionSpawnedEventData,
   RunStatus,
   SessionHistoryResponse,
   SessionSummary,
@@ -17,6 +18,8 @@ import type {
 } from '../types/chat'
 import {
   asErrorMessage,
+  attachChildSessionsToBubbles,
+  extractTaskChildSessionMeta,
   formatToolPayload,
   formatToolResult,
   mapHistoryMessageToBubbles,
@@ -39,7 +42,8 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   const [isSending, setIsSending] = useState(false)
   const [showToolEvents, setShowToolEvents] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [activeRun, setActiveRun] = useState<{ sessionId: string; runId: string; status: RunStatus } | null>(null)
+  const [activeRun, setActiveRun] = useState<{ sessionId: string; status: RunStatus } | null>(null)
+  const [currentParentSessionId, setCurrentParentSessionId] = useState<string | null>(null)
   const [pendingApproval, setPendingApproval] = useState<{
     token: string
     action: string
@@ -48,7 +52,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
     risk: string
     description: string
   } | null>(null)
-  const streamRef = useRef<{ sessionId: string; runId: string; source: EventSource } | null>(null)
+  const streamRef = useRef<{ sessionId: string; latestMessageId: number; source: EventSource } | null>(null)
   const draftSessionKey = selectedSessionId ?? (selectedAgentId !== null ? `__new__:${selectedAgentId}` : '__new__:none')
   const prompt = draftsBySessionKey[draftSessionKey] ?? ''
   const unsavedSessionIds = useMemo(() => {
@@ -77,8 +81,11 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
     activeRun !== null &&
     selectedSessionId !== null &&
     activeRun.sessionId === selectedSessionId &&
-    (activeRun.status === 'pending' || activeRun.status === 'running')
-  const visibleMessages = messages.filter((message) => message.role !== 'system' && (showToolEvents || message.role !== 'tool'))
+    (activeRun.status === 'pending' || activeRun.status === 'waiting' || activeRun.status === 'running')
+  const visibleMessages = messages.filter(
+    (message) => message.role !== 'system' && (showToolEvents || message.role !== 'tool' || Boolean(message.childSessionId)),
+  )
+  const latestMessageId = messages.length > 0 ? messages[messages.length - 1].messageId : -1
 
   useEffect(() => {
     void loadAgents()
@@ -139,6 +146,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
 
       if (!nextSessionId) {
         setSelectedSessionId(null)
+        setCurrentParentSessionId(null)
         setMessages([])
         return
       }
@@ -175,18 +183,22 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
       setError(null)
       closeStream()
       const data = await fetchJson<SessionHistoryResponse>(`${API_BASE_URL}/sessions/${sessionId}/history`)
+      setCurrentParentSessionId(data.parentSessionId ?? null)
 
-      const mapped: ChatBubble[] = data.messages.flatMap((message, index) =>
-        mapHistoryMessageToBubbles(sessionId, index, message),
+      const mapped: ChatBubble[] = data.messages.flatMap((message) =>
+        mapHistoryMessageToBubbles(sessionId, message),
       )
-      const mergedMapped = mergeToolResultBubbles(mapped)
+      const mergedMapped = attachChildSessionsToBubbles(
+        mergeToolResultBubbles(mapped),
+        data.childSessions ?? [],
+      )
 
       let assistantMessageId: string | null = null
-      const hasActiveRun = data.activeRunId !== null && (data.activeRunStatus === 'pending' || data.activeRunStatus === 'running')
+      const hasActiveRun = (data.runStatus === 'pending' || data.runStatus === 'waiting' || data.runStatus === 'running')
 
       if (hasActiveRun) {
         assistantMessageId =
-          mergedMapped.findLast((message) => message.role === 'assistant' && message.runId === data.activeRunId)?.id ?? null
+          mergedMapped.findLast((message) => message.role === 'assistant' && message.messageId === data.latestSequenceId)?.id ?? null
 
         if (!assistantMessageId) {
           assistantMessageId = crypto.randomUUID()
@@ -195,7 +207,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
             role: 'assistant',
             text: '',
             isStreaming: true,
-            runId: data.activeRunId,
+            messageId: data.latestSequenceId + 1,
           })
         } else {
           for (const message of mergedMapped) {
@@ -209,9 +221,9 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
 
       setMessages(mergedMapped)
 
-      if (hasActiveRun && data.activeRunId && data.activeRunStatus && assistantMessageId) {
-        setActiveRun({ sessionId, runId: data.activeRunId, status: data.activeRunStatus })
-        void streamRun(sessionId, data.activeRunId, assistantMessageId)
+      if (hasActiveRun && data.runStatus && assistantMessageId) {
+        setActiveRun({ sessionId, status: data.runStatus })
+        void streamRun(sessionId, data.latestSequenceId, assistantMessageId)
           .then(async () => {
             await loadHistory(sessionId)
             if (selectedAgentId !== null) {
@@ -261,11 +273,17 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
 
       setMessages((prev) => [
         ...prev,
-        { id: localUserId, role: 'user', text },
-        { id: localAssistantId, role: 'assistant', text: '', isStreaming: true },
+        {
+          id: localUserId,
+          role: 'user',
+          text,
+          messageId: latestMessageId + 1,
+        },
+        // { id: localAssistantId, role: 'assistant', text: '', isStreaming: true },
       ])
 
-      const run = await fetchJson<{ runId: string }>(`${API_BASE_URL}/sessions/${sessionId}/messages`, {
+      // TODO: errors?
+      await fetchJson<{ runId: string }>(`${API_BASE_URL}/sessions/${sessionId}/messages`, {
         method: 'POST',
         body: JSON.stringify({ message: text }),
       })
@@ -273,8 +291,8 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         prev[sourceDraftSessionKey] === undefined ? prev : { ...prev, [sourceDraftSessionKey]: '' },
       )
 
-      setActiveRun({ sessionId, runId: run.runId, status: 'pending' })
-      await streamRun(sessionId, run.runId, localAssistantId)
+      setActiveRun({ sessionId, status: 'pending' })
+      await streamRun(sessionId, latestMessageId + 1, localAssistantId)
       await loadHistory(sessionId)
       await refreshSessions(selectedAgentId, sessionId)
     } catch (e) {
@@ -285,17 +303,17 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
     }
   }
 
-  function streamRun(sessionId: string, runId: string, assistantMessageId: string) {
+  function streamRun(sessionId: string, latestMessageId: number, assistantMessageId: string) {
     return new Promise<void>((resolve, reject) => {
       closeStream()
 
-      const streamUrl = `${API_BASE_URL}/sessions/${sessionId}/runs/${runId}/stream`
+      const streamUrl = `${API_BASE_URL}/sessions/${sessionId}/messages/${latestMessageId}/stream`
       const source = new EventSource(streamUrl)
-      streamRef.current = { sessionId, runId, source }
+      streamRef.current = { sessionId, latestMessageId, source }
 
       const close = () => {
         source.close()
-        if (streamRef.current?.runId === runId && streamRef.current?.sessionId === sessionId) {
+        if (streamRef.current?.latestMessageId === latestMessageId && streamRef.current?.sessionId === sessionId) {
           streamRef.current = null
         }
       }
@@ -308,7 +326,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
 
       source.addEventListener('started', (event) => {
         const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
-        setActiveRun({ sessionId, runId, status: payload.status })
+        setActiveRun({ sessionId, status: payload.status })
       })
 
       source.addEventListener('delta', (event) => {
@@ -318,18 +336,32 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
           return
         }
 
-        setActiveRun({ sessionId, runId, status: payload.status })
+        setActiveRun({ sessionId, status: payload.status })
 
         setMessages((prev) =>
-          prev.map((message) =>
-            message.id === assistantMessageId
-              ? {
-                  ...message,
-                  text: `${message.text}${delta}`,
-                  isStreaming: true,
-                }
-              : message,
-          ),
+        {
+          if (prev.some((message) => message.messageId === payload.messageId)) {
+            return prev.map((message) =>
+                message.messageId === payload.messageId
+                    ? {
+                      ...message,
+                      text: `${message.text}${delta}`,
+                      isStreaming: true,
+                    }
+                    : message,
+            )
+          } else {
+            return [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                text: delta,
+                messageId: payload.messageId,
+              }
+            ]
+          }
+        }
         )
       })
 
@@ -337,7 +369,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
         const data = payload.data as ToolCallEventData | undefined
 
-        setActiveRun({ sessionId, runId, status: payload.status })
+        setActiveRun({ sessionId, status: payload.status })
 
         setMessages((prev) => [
           ...prev,
@@ -345,7 +377,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
             id: crypto.randomUUID(),
             role: 'tool',
             text: '',
-            runId,
+            messageId: payload.messageId,
             toolEventType: 'tool_call',
             toolCallId: data?.callId ?? null,
             toolName: data?.toolName ?? null,
@@ -360,22 +392,48 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
         const data = payload.data as ToolResultEventData | undefined
 
-        setActiveRun({ sessionId, runId, status: payload.status })
+        setActiveRun({ sessionId, status: payload.status })
         const formattedResult = formatToolResult(data?.result ?? null)
+        const childMeta = extractTaskChildSessionMeta(data?.result ?? null)
 
         const resultBubble: ChatBubble = {
           id: crypto.randomUUID(),
           role: 'tool',
           text: '',
-          runId,
+          messageId: payload.messageId,
           toolEventType: 'tool_result',
           toolCallId: data?.callId ?? null,
           toolResult: formattedResult.text,
           toolResultFormat: formattedResult.format,
           toolExpanded: false,
+          childSessionId: childMeta.childSessionId,
+          childSessionCompleted: childMeta.completed,
         }
 
         setMessages((prev) => mergeToolResultBubble(prev, resultBubble))
+      })
+
+      source.addEventListener('child_session_spawned', (event) => {
+        const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
+        const data = payload.data as ChildSessionSpawnedEventData | undefined
+        const childSessionId = data?.childSessionId ?? null
+        const callId = data?.callId ?? null
+        if (!childSessionId) {
+          return
+        }
+
+        setActiveRun({ sessionId, status: payload.status })
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.role === 'tool' && message.toolCallId === callId
+              ? {
+                  ...message,
+                  childSessionId,
+                  childSessionCompleted: false,
+                }
+              : message,
+          ),
+        )
       })
 
       source.addEventListener('completed', () => {
@@ -496,16 +554,26 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
       <main className="chat-panel">
         <ChatHeader
           selectedSession={selectedSession}
+          parentSessionId={currentParentSessionId ?? selectedSession?.parentSessionId ?? null}
           hasUnsavedDraft={prompt.trim().length > 0}
           showToolEvents={showToolEvents}
           apiBaseUrl={API_BASE_URL}
           onShowToolEventsChange={setShowToolEvents}
+          onGoToSession={(sessionId) => {
+            setSelectedSessionId(sessionId)
+            void loadHistory(sessionId)
+          }}
           onError={(msg) => setError(msg)}
         />
         <MessagesView
           messages={visibleMessages}
+          showToolEvents={showToolEvents}
           onToggleToolExpanded={toggleToolExpanded}
           onToggleToolResultExpanded={toggleToolResultExpanded}
+          onOpenSession={(sessionId) => {
+            setSelectedSessionId(sessionId)
+            void loadHistory(sessionId)
+          }}
         />
         <Composer
           prompt={prompt}

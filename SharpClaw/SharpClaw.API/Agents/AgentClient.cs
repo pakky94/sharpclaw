@@ -9,9 +9,12 @@ namespace SharpClaw.API.Agents;
 
 public class AgentClient(ChatClient chatClient, AgentExecutionContext context, IServiceProvider serviceProvider)
 {
-    public async Task<List<ChatResponse>> GetResponse(List<ChatMessage> messages, List<AIFunction> tools,
+    private bool _shouldContinue;
+
+    public async Task<AgentClientResponse> GetResponse(List<ChatMessage> messages, List<AIFunction> tools,
         AgentRunState? runState = null,
-        Func<ChatResponseUpdate, Task>? onUpdate = null)
+        Func<ChatResponseUpdate, ValueTask>? onUpdate = null,
+        Func<ValueTask>? onMessageFlushed = null)
     {
         var configuration = serviceProvider.GetRequiredService<IConfiguration>();
 
@@ -23,8 +26,7 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
             .AddSingleton<FragmentsRepository>()
             .AddSingleton<FragmentEmbeddingService>()
             .AddSingleton<WorkspaceRepository>()
-            .AddSingleton<ApprovalService>()
-            .AddSingleton(serviceProvider.GetRequiredService<Agent>());
+            .AddSingleton<ApprovalService>();
 
         if (runState is not null)
             services.AddSingleton(runState);
@@ -37,6 +39,7 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
             .Use(Callback)
             .Build();
 
+        _shouldContinue = false;
         var response = new List<ChatResponse>();
         var messageUpdates = new List<ChatResponseUpdate>();
         string? currentMessageId = null;
@@ -59,13 +62,14 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
                                         !string.Equals(chatUpdate.MessageId, currentMessageId, StringComparison.Ordinal);
 
             if (hasNewMessageBoundary)
-                FlushMessageUpdates();
+                await FlushMessageUpdates();
 
             if (!string.IsNullOrEmpty(chatUpdate.MessageId))
                 currentMessageId ??= chatUpdate.MessageId;
 
             messageUpdates.Add(chatUpdate);
 
+            runState?.AppendUpdate(chatUpdate);
             if (onUpdate is not null)
                 await onUpdate(chatUpdate);
 
@@ -76,11 +80,19 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
             // FlushMessageUpdates();
         }
 
-        FlushMessageUpdates();
+        await FlushMessageUpdates();
 
-        return response;
+        var queuedTasks = context.QueuedTasks;
+        context.QueuedTasks = [];
 
-        void FlushMessageUpdates()
+        return new AgentClientResponse
+        {
+            Responses = response,
+            ShouldContinue = _shouldContinue,
+            QueuedTasks = queuedTasks,
+        };
+
+        async Task FlushMessageUpdates()
         {
             if (messageUpdates.Count == 0)
                 return;
@@ -92,14 +104,49 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
             response.Add(m);
             messageUpdates.Clear();
             currentMessageId = null;
+            runState?.NextMessage();
+            if (onMessageFlushed is not null)
+                await onMessageFlushed();
         }
     }
 
-    private static async ValueTask<object?> Callback(AIAgent agent,
+    private async ValueTask<object?> Callback(AIAgent agent,
         FunctionInvocationContext functionContext,
         Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next,
         CancellationToken ct)
     {
-        return await next(functionContext, ct);
+        functionContext.Arguments.Context ??= new Dictionary<object, object?>();
+        functionContext.Arguments.Context["CallId"] = functionContext.CallContent.CallId;
+
+        var t = await next(functionContext, ct);
+        if (functionContext.FunctionCallIndex + 1 >= functionContext.FunctionCount)
+        {
+            functionContext.Terminate = true;
+            _shouldContinue = true;
+        }
+        return t;
+    }
+}
+
+public class AgentClientResponse
+{
+    public required List<ChatResponse> Responses { get; init; }
+    public required bool ShouldContinue { get; init; }
+    public List<AgentClientTask> QueuedTasks { get; init; } = [];
+}
+
+public class AgentClientTask
+{
+    public required string CallId { get; init; }
+    public required TaskType Type { get; init; }
+
+    // TODO: how to handle these parameters? a dictionary?
+    public string? ChildDescription { get; init; }
+    public string? ChildPrompt { get; init; }
+    public long? AgentId { get; set; }
+
+    public enum TaskType
+    {
+        ChildSession,
     }
 }

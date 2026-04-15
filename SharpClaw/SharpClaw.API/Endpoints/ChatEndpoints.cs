@@ -8,34 +8,6 @@ public static class ChatEndpoints
 {
     public static void Register(WebApplication app)
     {
-        app.MapPost("/chat", async (
-            [FromBody] MessageRequest request,
-            [FromServices] Agent agent
-        ) =>
-        {
-            var sessionId = await agent.CreateSession(request.AgentId ?? 1);
-            var run = await agent.EnqueueMessage(sessionId, request.Message);
-
-            while (run.Status is AgentRunStatus.Pending or AgentRunStatus.Running)
-                await Task.Delay(100);
-
-            if (run.Status == AgentRunStatus.Failed)
-                return Results.Problem(run.Error ?? "Agent run failed.");
-
-            var events = run.GetEventsAfter(0);
-            var text = string.Concat(events
-                .Where(e => e.Type == "delta")
-                .Select(e => e.Text));
-
-            return Results.Ok(new
-            {
-                sessionId,
-                runId = run.RunId,
-                response = text,
-                events,
-            });
-        });
-
         app.MapPost("/sessions", async (
             [FromBody] CreateSessionRequest? request,
             [FromServices] Agent agent
@@ -56,7 +28,7 @@ public static class ChatEndpoints
                 var run = await agent.EnqueueMessage(sessionId, request.Message);
                 return Results.Ok(new
                 {
-                    runId = run.RunId,
+                    latestSequenceId = run.StartMessageId,
                     sessionId = run.SessionId,
                     status = run.Status.ToString().ToLowerInvariant(),
                 });
@@ -95,9 +67,11 @@ public static class ChatEndpoints
                 return Results.Ok(new
                 {
                     sessionId = history.SessionId,
-                    activeRunId = history.ActiveRunId,
-                    activeRunStatus = history.ActiveRunStatus,
+                    parentSessionId = history.ParentSessionId,
+                    latestSequenceId = history.LatestSequenceId,
+                    runStatus = history.RunStatus,
                     messages = history.Messages,
+                    childSessions = history.ChildSessions,
                 });
             }
             catch (KeyNotFoundException ex)
@@ -106,43 +80,17 @@ public static class ChatEndpoints
             }
         });
 
-        app.MapGet("/sessions/{sessionId:guid}/runs/{runId:guid}", (
+        app.MapGet("/sessions/{sessionId:guid}/messages/{latestSequenceId:long}/stream", async (
             Guid sessionId,
-            Guid runId,
-            [FromServices] Agent agent
-        ) =>
-        {
-            try
-            {
-                var run = agent.GetRun(sessionId, runId);
-                return Results.Ok(new
-                {
-                    runId = run.RunId,
-                    sessionId = run.SessionId,
-                    createdAt = run.CreatedAt,
-                    startedAt = run.StartedAt,
-                    completedAt = run.CompletedAt,
-                    status = run.Status.ToString().ToLowerInvariant(),
-                    error = run.Error,
-                });
-            }
-            catch (KeyNotFoundException ex)
-            {
-                return Results.NotFound(new { error = ex.Message });
-            }
-        });
-
-        app.MapGet("/sessions/{sessionId:guid}/runs/{runId:guid}/stream", async (
-            Guid sessionId,
-            Guid runId,
+            long latestSequenceId,
             HttpContext httpContext,
             [FromServices] Agent agent
         ) =>
         {
-            AgentRunState run;
+            AgentSessionState session;
             try
             {
-                run = agent.GetRun(sessionId, runId);
+                session = await agent.GetOrLoadSession(sessionId);
             }
             catch (KeyNotFoundException ex)
             {
@@ -155,23 +103,23 @@ public static class ChatEndpoints
             httpContext.Response.Headers.CacheControl = "no-cache";
             httpContext.Response.Headers.Connection = "keep-alive";
 
-            long cursor = 0;
+            long cursor = 0; // TODO: get cursor from latestSequenceId
             while (!httpContext.RequestAborted.IsCancellationRequested)
             {
-                var events = run.GetEventsAfter(cursor);
+                var events = session.Run?.GetEventsAfter(latestSequenceId, cursor) ?? [];
                 foreach (var ev in events)
                 {
                     cursor = ev.Sequence;
                     var payload = JsonSerializer.Serialize(new
                     {
-                        runId = run.RunId,
-                        sessionId = run.SessionId,
+                        sessionId = session.SessionId,
                         sequence = ev.Sequence,
+                        messageId = ev.MessageId,
                         type = ev.Type,
                         text = ev.Text,
                         data = ev.Data,
                         timestamp = ev.Timestamp,
-                        status = run.Status.ToString().ToLowerInvariant(),
+                        status = session.Run?.Status.ToString().ToLowerInvariant(),
                     });
 
                     await httpContext.Response.WriteAsync($"event: {ev.Type}\n", httpContext.RequestAborted);
@@ -180,7 +128,7 @@ public static class ChatEndpoints
 
                 await httpContext.Response.Body.FlushAsync(httpContext.RequestAborted);
 
-                if (run.Status is AgentRunStatus.Completed or AgentRunStatus.Failed)
+                if (session.Run?.Status is AgentRunStatus.Completed or AgentRunStatus.Failed)
                     break;
 
                 await Task.Delay(100, httpContext.RequestAborted);

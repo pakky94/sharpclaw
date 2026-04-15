@@ -2,9 +2,9 @@ name: SharpClaw Local
 variables:
   - name: baseUrl
     value: http://localhost:5223
-  - name: sessionId
-    value: ca263a18-a083-4919-88f1-5674499357b8
-  - name: runId
-    value: 014cc6a4-b0ae-480f-bfbd-85fbc0b4b356
   - name: agentId
     value: "1"
+  - name: latestSequenceId
+    value: "0"
+  - name: sessionId
+    value: 5866e550-40ce-4ddc-9dc3-f24e81483784

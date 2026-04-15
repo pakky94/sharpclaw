@@ -48,8 +48,26 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                 create table if not exists sessions(
                     id uuid primary key,
                     agent_id bigint not null references agents(id),
-                    system_prompt text not null,
-                    created_at timestamptz not null default now()
+                    status varchar(32) not null default 'completed'
+                        check (status in ('waiting', 'pending', 'running', 'completed', 'failed')),
+                    parent_session_id uuid null references sessions(id),
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
+                );
+
+                create table if not exists session_tasks
+                (
+                    id bigserial primary key,
+                    session_id uuid not null references sessions(id) on delete cascade,
+                    type varchar(255) not null constraint session_task_type_check check
+                        (type in ('task')),
+                    call_id varchar(255) not null,
+                    child_session_id uuid null references sessions(id) on delete cascade,
+                    result text null,
+                    completed boolean not null default false,
+                    blocking boolean not null default true,
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
                 );
 
                 create table if not exists fragments(
@@ -93,7 +111,6 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                 create table if not exists messages(
                     id bigserial primary key,
                     session_id uuid not null references sessions(id) on delete cascade,
-                    run_id uuid null,
                     parent_summary_id bigint null references summaries(id),
                     payload jsonb not null,
                     role varchar(32) null,
@@ -243,7 +260,7 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                 await connection.ExecuteAsync(
                     """
                     insert into agents (name, llm_model, temperature)
-                    values ('Main', 'zai-org/glm-4.7-flash', 0.1);
+                    values ('Main', 'qwen/qwen3.5-35b-a3b', 0.1);
                     """);
 
             await connection.ExecuteAsync(

@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database;
 
 namespace SharpClaw.API.Agents.Workspace;

@@ -83,7 +83,6 @@ export function formatToolResult(value: unknown): { text: string; format: 'text'
 
 export function mapHistoryMessageToBubbles(
   sessionId: string,
-  messageIndex: number,
   message: SessionHistoryMessage,
 ): ChatBubble[] {
   const role = normalizeRole(message.role)
@@ -91,7 +90,7 @@ export function mapHistoryMessageToBubbles(
 
   if (contents.length > 0) {
     const bubbles = contents
-      .map((content, contentIndex) => mapHistoryContentToBubble(sessionId, messageIndex, contentIndex, role, message.runId, content))
+      .map((content, contentIndex) => mapHistoryContentToBubble(sessionId, message.messageId, contentIndex, role, content))
       .filter((bubble): bubble is ChatBubble => bubble !== null)
 
     if (bubbles.length > 0) {
@@ -105,23 +104,22 @@ export function mapHistoryMessageToBubbles(
 
   return [
     {
-      id: `${sessionId}-${messageIndex}`,
+      id: `${sessionId}-${message.messageId}`,
       role,
       text: message.text,
-      runId: message.runId,
+      messageId: message.messageId,
     },
   ]
 }
 
 function mapHistoryContentToBubble(
   sessionId: string,
-  messageIndex: number,
+  messageId: number,
   contentIndex: number,
   role: 'user' | 'assistant' | 'system',
-  runId: string | null,
   content: SessionMessageContent,
 ): ChatBubble | null {
-  const id = `${sessionId}-${messageIndex}-${contentIndex}`
+  const id = `${sessionId}-${messageId}-${contentIndex}`
 
   if (content.type === 'text') {
     if (!content.text) {
@@ -132,7 +130,7 @@ function mapHistoryContentToBubble(
       id,
       role,
       text: content.text,
-      runId,
+      messageId,
     }
   }
 
@@ -141,7 +139,7 @@ function mapHistoryContentToBubble(
       id,
       role: 'tool',
       text: '',
-      runId,
+      messageId,
       toolEventType: 'tool_call',
       toolCallId: content.callId ?? null,
       toolName: content.toolName ?? null,
@@ -153,16 +151,19 @@ function mapHistoryContentToBubble(
 
   if (content.type === 'tool_result') {
     const formattedResult = formatToolResult(content.result ?? null)
+    const childSessionId = extractChildSessionId(content.result ?? null)
     return {
       id,
       role: 'tool',
       text: '',
-      runId,
+      messageId,
       toolEventType: 'tool_result',
       toolCallId: content.callId ?? null,
       toolResult: formattedResult.text,
       toolResultFormat: formattedResult.format,
       toolExpanded: false,
+      childSessionId,
+      childSessionCompleted: extractChildSessionCompleted(content.result ?? null),
     }
   }
 
@@ -175,7 +176,7 @@ function mapHistoryContentToBubble(
     id,
     role: 'tool',
     text: '',
-    runId,
+    messageId,
     toolEventType: 'tool_result',
     toolResult: formattedPayload.text,
     toolResultFormat: formattedPayload.format,
@@ -205,22 +206,84 @@ export function mergeToolResultBubble(messages: ChatBubble[], resultBubble: Chat
     if (
       candidate.role === 'tool' &&
       candidate.toolEventType === 'tool_call' &&
-      candidate.toolCallId === callId &&
-      candidate.runId === resultBubble.runId &&
-      !candidate.toolResult
+      candidate.toolCallId === callId
     ) {
+      if (candidate.toolResult === resultBubble.toolResult) {
+        return messages
+      }
+
       const next = [...messages]
       next[index] = {
         ...candidate,
         toolResult: resultBubble.toolResult ?? '(empty)',
         toolResultFormat: resultBubble.toolResultFormat ?? 'text',
         toolResultExpanded: false,
+        childSessionId: resultBubble.childSessionId ?? candidate.childSessionId ?? null,
+        childSessionCompleted: resultBubble.childSessionCompleted ?? candidate.childSessionCompleted,
       }
       return next
     }
+
+    if (
+      candidate.role === 'tool' &&
+      candidate.toolEventType === 'tool_result' &&
+      candidate.toolCallId === callId &&
+      candidate.toolResult === resultBubble.toolResult
+    ) {
+      return messages
+    }
   }
 
-  return [...messages, resultBubble]
+  // Fallback for cases where history/stream contains only the result payload:
+  // show it as a synthetic call card so UI still exposes the tool invocation.
+  return [
+    ...messages,
+    {
+      ...resultBubble,
+      toolEventType: 'tool_call',
+      toolName: resultBubble.toolName ?? 'unknown',
+      toolArguments: '(not available)',
+      toolExpanded: false,
+      toolResultExpanded: false,
+    },
+  ]
+}
+
+export function attachChildSessionsToBubbles(
+  bubbles: ChatBubble[],
+  childSessions: { callId: string; childSessionId: string; completed: boolean }[],
+): ChatBubble[] {
+  if (childSessions.length === 0) {
+    return bubbles
+  }
+
+  const byCallId = new Map(childSessions.map((x) => [x.callId, x] as const))
+  return bubbles.map((bubble) => {
+    if (bubble.role !== 'tool' || !bubble.toolCallId) {
+      return bubble
+    }
+
+    const link = byCallId.get(bubble.toolCallId)
+    if (!link) {
+      return bubble
+    }
+
+    return {
+      ...bubble,
+      childSessionId: link.childSessionId,
+      childSessionCompleted: link.completed,
+    }
+  })
+}
+
+export function extractTaskChildSessionMeta(result: unknown): {
+  childSessionId: string | null
+  completed: boolean | undefined
+} {
+  return {
+    childSessionId: extractChildSessionId(result),
+    completed: extractChildSessionCompleted(result),
+  }
 }
 
 export function shortenCallId(callId: string): string {
@@ -251,5 +314,44 @@ export function summarizeJsonInline(value: string | null | undefined): string {
   } catch {
     const compact = value.replace(/\s+/g, ' ').trim()
     return `args: ${compact || '(empty)'}`
+  }
+}
+
+function extractChildSessionId(result: unknown): string | null {
+  const value = parseJsonLike(result)
+  if (value && typeof value === 'object') {
+    const id = (value as Record<string, unknown>).child_session_id
+    return typeof id === 'string' && id.trim() ? id : null
+  }
+
+  return null
+}
+
+function extractChildSessionCompleted(result: unknown): boolean | undefined {
+  const value = parseJsonLike(result)
+  if (value && typeof value === 'object') {
+    const status = (value as Record<string, unknown>).status
+    if (typeof status === 'string') {
+      return status === 'completed'
+    }
+  }
+
+  return undefined
+}
+
+function parseJsonLike(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value
+  }
+
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return null
+  }
+
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    return value
   }
 }

@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using SharpClaw.Backend.Tests.Infrastructure;
 
 namespace SharpClaw.Backend.Tests.Helpers;
 
@@ -27,11 +28,11 @@ public static class ResponseHelpers
         }
     }
 
-    public static int IndexOf(IReadOnlyList<string> items, string value)
+    public static int IndexOf(IReadOnlyList<StreamEvent> items, string type)
     {
         for (var i = 0; i < items.Count; i++)
         {
-            if (string.Equals(items[i], value, StringComparison.Ordinal))
+            if (string.Equals(items[i].Type, type, StringComparison.Ordinal))
                 return i;
         }
 
