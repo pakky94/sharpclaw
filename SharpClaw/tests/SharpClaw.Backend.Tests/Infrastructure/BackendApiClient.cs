@@ -80,6 +80,12 @@ public sealed class BackendApiClient(HttpClient client)
         return await ReadDocumentAsync(response, cancellationToken);
     }
 
+    public async Task<JsonDocument> GetSessionsAsync(long agentId = 1, CancellationToken cancellationToken = default)
+    {
+        var response = await client.GetAsync($"/agents/{agentId}/sessions", cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
     public async Task<JsonDocument> GetPendingApprovalsAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
         var response = await client.GetAsync($"/sessions/{sessionId}/approvals/pending", cancellationToken);

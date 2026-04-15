@@ -5,11 +5,19 @@ import { shortenCallId, summarizeInline, summarizeJsonInline } from '../utils/ch
 
 type MessagesViewProps = {
   messages: ChatBubble[]
+  showToolEvents: boolean
   onToggleToolExpanded: (messageId: string) => void
   onToggleToolResultExpanded: (messageId: string) => void
+  onOpenSession: (sessionId: string) => void
 }
 
-export function MessagesView({ messages, onToggleToolExpanded, onToggleToolResultExpanded }: MessagesViewProps) {
+export function MessagesView({
+  messages,
+  showToolEvents,
+  onToggleToolExpanded,
+  onToggleToolResultExpanded,
+  onOpenSession,
+}: MessagesViewProps) {
   const containerRef = useRef<HTMLElement | null>(null)
   const shouldAutoScrollRef = useRef(true)
   const prevMessageCountRef = useRef(0)
@@ -50,6 +58,15 @@ export function MessagesView({ messages, onToggleToolExpanded, onToggleToolResul
         <article key={message.id} className={`bubble ${message.role}`}>
           {message.role === 'tool' ? (
             <>
+              {!showToolEvents && message.childSessionId ? (
+                <div className="tool-card">
+                  <button type="button" className="tool-link-button" onClick={() => onOpenSession(message.childSessionId!)}>
+                    Open child session {message.childSessionId.slice(0, 8)}
+                    {message.childSessionCompleted === false ? ' (running)' : ''}
+                  </button>
+                </div>
+              ) : (
+                <>
               {message.toolEventType === 'tool_call' ? (
                 <div className="tool-card">
                   <button type="button" className="tool-summary-button" onClick={() => onToggleToolExpanded(message.id)}>
@@ -65,6 +82,12 @@ export function MessagesView({ messages, onToggleToolExpanded, onToggleToolResul
                   {message.toolExpanded && (
                     <div className="tool-details">
                       <div className="bubble-meta">call id: {message.toolCallId ?? 'n/a'}</div>
+                      {message.childSessionId && (
+                        <button type="button" className="tool-link-button" onClick={() => onOpenSession(message.childSessionId!)}>
+                          Open child session {message.childSessionId.slice(0, 8)}
+                          {message.childSessionCompleted === false ? ' (running)' : ''}
+                        </button>
+                      )}
                       <pre className="tool-block">{message.toolArguments ?? '(empty)'}</pre>
                     </div>
                   )}
@@ -96,6 +119,12 @@ export function MessagesView({ messages, onToggleToolExpanded, onToggleToolResul
                   {message.toolExpanded && (
                     <div className="tool-details">
                       {message.toolCallId && <div className="bubble-meta">call id: {message.toolCallId}</div>}
+                      {message.childSessionId && (
+                        <button type="button" className="tool-link-button" onClick={() => onOpenSession(message.childSessionId!)}>
+                          Open child session {message.childSessionId.slice(0, 8)}
+                          {message.childSessionCompleted === false ? ' (running)' : ''}
+                        </button>
+                      )}
                       {message.toolResultFormat === 'structured' ? (
                         <pre className="tool-block">{message.toolResult ?? '(empty)'}</pre>
                       ) : (
@@ -104,6 +133,8 @@ export function MessagesView({ messages, onToggleToolExpanded, onToggleToolResul
                     </div>
                   )}
                 </div>
+              )}
+                </>
               )}
             </>
           ) : (

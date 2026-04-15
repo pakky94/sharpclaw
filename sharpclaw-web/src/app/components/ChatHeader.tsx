@@ -5,10 +5,12 @@ import { asErrorMessage } from '../utils/chatUtils'
 
 type ChatHeaderProps = {
   selectedSession: SessionSummary | null
+  parentSessionId: string | null
   hasUnsavedDraft: boolean
   showToolEvents: boolean
   apiBaseUrl: string
   onShowToolEventsChange: (nextValue: boolean) => void
+  onGoToSession: (sessionId: string) => void
   onError?: (message: string) => void
 }
 
@@ -17,7 +19,16 @@ type ActiveWorkspace = {
   policyMode: string
 }
 
-export function ChatHeader({ selectedSession, hasUnsavedDraft, showToolEvents, apiBaseUrl, onShowToolEventsChange, onError }: ChatHeaderProps) {
+export function ChatHeader({
+  selectedSession,
+  parentSessionId,
+  hasUnsavedDraft,
+  showToolEvents,
+  apiBaseUrl,
+  onShowToolEventsChange,
+  onGoToSession,
+  onError,
+}: ChatHeaderProps) {
   const [activeWorkspaces, setActiveWorkspaces] = useState<ActiveWorkspace[]>([])
   const [availableWorkspaces, setAvailableWorkspaces] = useState<WorkspaceConfig[]>([])
   const [showWsDropdown, setShowWsDropdown] = useState(false)
@@ -67,6 +78,15 @@ export function ChatHeader({ selectedSession, hasUnsavedDraft, showToolEvents, a
       <div>
         <h2>{selectedSession ? `Session ${selectedSession.sessionId.slice(0, 8)}` : 'No Session Selected'}{hasUnsavedDraft ? ' *' : ''}</h2>
         <p>{selectedSession ? `Agent ${selectedSession.agentId}` : 'Create a session to start chatting.'}</p>
+        {parentSessionId && (
+          <button
+            type="button"
+            className="button ghost session-nav-button"
+            onClick={() => onGoToSession(parentSessionId)}
+          >
+            Parent session {parentSessionId.slice(0, 8)}
+          </button>
+        )}
         {activeWorkspaces.length > 0 && (
           <div className="active-workspaces-bar">
             {activeWorkspaces.map((ws) => (

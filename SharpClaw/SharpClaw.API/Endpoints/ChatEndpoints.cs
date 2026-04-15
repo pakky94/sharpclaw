@@ -67,9 +67,11 @@ public static class ChatEndpoints
                 return Results.Ok(new
                 {
                     sessionId = history.SessionId,
+                    parentSessionId = history.ParentSessionId,
                     latestSequenceId = history.LatestSequenceId,
                     runStatus = history.RunStatus,
                     messages = history.Messages,
+                    childSessions = history.ChildSessions,
                 });
             }
             catch (KeyNotFoundException ex)

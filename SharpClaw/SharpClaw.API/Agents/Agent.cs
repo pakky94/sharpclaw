@@ -155,6 +155,16 @@ public class Agent(
                             parentSessionId: sessionId);
                         await repository.AddSessionTask(sessionId, queuedTask.CallId, childSessionId);
                         session.Run.SessionDependencies.Add(new SessionDependency(childSessionId, queuedTask.CallId));
+                        session.Run.AppendChildSessionSpawned(queuedTask.CallId, childSessionId, queuedTask.ChildDescription);
+                        var taskResultMessage = AttachChildSessionMetadataToToolResult(
+                            session.Context.Messages,
+                            queuedTask.CallId,
+                            childSessionId,
+                            status: "running",
+                            output: null,
+                            description: queuedTask.ChildDescription);
+                        if (taskResultMessage is not null)
+                            await repository.UpdateMessage(taskResultMessage);
                         await EnqueueMessage(childSessionId, queuedTask.ChildPrompt);
                     }
                 }
@@ -203,8 +213,13 @@ public class Agent(
                             if (content is null)
                                 throw new Exception("Parent content from task not found");
 
-                            content.Result = taskResult;
+                            var toolResult = BuildTaskToolResult(
+                                sessionId,
+                                status: "completed",
+                                output: taskResult);
+                            content.Result = toolResult;
                             await repository.UpdateMessage(message);
+                            parentSession.Run?.AppendToolResultForCall(callId, Serialization.SerializeToolPayload(toolResult));
 
                             parentSession.Run!.SessionDependencies.Remove(dep);
 
@@ -278,6 +293,7 @@ public class Agent(
     public async Task<SessionHistoryDto> GetHistory(Guid sessionId)
     {
         var session = await GetOrLoadSession(sessionId);
+        var childSessions = await repository.GetSessionTaskLinks(sessionId);
 
         var rawMessages = await repository.LoadRawMessages(sessionId);
         var messages = new List<SessionMessageDto>(rawMessages.Count);
@@ -301,9 +317,13 @@ public class Agent(
 
         return new SessionHistoryDto(
             SessionId: sessionId,
+            ParentSessionId: session.ParentSessionId,
             LatestSequenceId: session.Context.Messages.LastOrDefault()?.AdditionalProperties?[Constants.SequenceIdKey] as long? ?? 0, // TODO: check this
             RunStatus: session.Run?.Status.ToString().ToLowerInvariant(),
-            Messages: messages
+            Messages: messages,
+            ChildSessions: childSessions
+                .Select(link => new SessionChildLinkDto(link.CallId, link.ChildSessionId, link.Completed))
+                .ToArray()
         );
     }
 
@@ -314,6 +334,7 @@ public class Agent(
             .Select(s => new AgentSessionDto(
                 SessionId: s.SessionId,
                 AgentId: s.AgentId,
+                ParentSessionId: s.ParentSessionId,
                 CreatedAt: new DateTimeOffset(DateTime.SpecifyKind(s.CreatedAt, DateTimeKind.Utc)),
                 MessagesCount: checked((int)s.MessagesCount)))
             .ToArray();
@@ -379,6 +400,7 @@ public class Agent(
             var loadedSession = new AgentSessionState(
                 sessionId,
                 context,
+                parentSessionId: persistedSession.ParentSessionId,
                 createdAt: new DateTimeOffset(DateTime.SpecifyKind(persistedSession.CreatedAt, DateTimeKind.Utc)));
             _sessions[sessionId] = loadedSession;
             return loadedSession;
@@ -447,6 +469,53 @@ public class Agent(
 
         return contents;
     }
+
+    private static ChatResponse? AttachChildSessionMetadataToToolResult(
+        IEnumerable<ChatResponse> responses,
+        string callId,
+        Guid childSessionId,
+        string status,
+        string? output,
+        string? description = null)
+    {
+        var target = FindFunctionResult(responses, callId);
+        if (target is null)
+            return null;
+
+        target.Value.Content.Result = BuildTaskToolResult(
+            childSessionId,
+            status,
+            output,
+            description);
+        return target.Value.Message;
+    }
+
+    private static (ChatResponse Message, FunctionResultContent Content)? FindFunctionResult(
+        IEnumerable<ChatResponse> responses,
+        string callId)
+    {
+        foreach (var response in responses.Reverse())
+        {
+            var content = response.Messages
+                .SelectMany(m => m.Contents)
+                .OfType<FunctionResultContent>()
+                .FirstOrDefault(m => string.Equals(m.CallId, callId, StringComparison.Ordinal));
+
+            if (content is not null)
+                return (response, content);
+        }
+
+        return null;
+    }
+
+    private static object BuildTaskToolResult(Guid childSessionId, string status, string? output, string? description = null) => new
+    {
+        type = "child_session",
+        child_session_id = childSessionId,
+        status,
+        description,
+        output,
+    };
 
 }
 
@@ -556,6 +625,17 @@ public class AgentRunState(Guid sessionId)
             result,
         });
 
+    public void AppendToolResultForCall(string callId, string? result) =>
+        AppendToolResult(callId, result);
+
+    public void AppendChildSessionSpawned(string callId, Guid childSessionId, string? description) =>
+        AddEvent(_currentMessageId, "child_session_spawned", null, new
+        {
+            callId,
+            childSessionId,
+            description,
+        });
+
     public void MarkCompleted()
     {
         Console.WriteLine($"completing session {sessionId}");
@@ -628,12 +708,14 @@ public class AgentRunState(Guid sessionId)
     }
 }
 
-public record AgentSessionDto(Guid SessionId, long AgentId, DateTimeOffset CreatedAt, int MessagesCount);
+public record AgentSessionDto(Guid SessionId, long AgentId, Guid? ParentSessionId, DateTimeOffset CreatedAt, int MessagesCount);
 public record SessionHistoryDto(
     Guid SessionId,
+    Guid? ParentSessionId,
     long LatestSequenceId,
     string? RunStatus,
-    IReadOnlyList<SessionMessageDto> Messages
+    IReadOnlyList<SessionMessageDto> Messages,
+    IReadOnlyList<SessionChildLinkDto> ChildSessions
 );
 
 public record SessionMessageDto(
@@ -652,4 +734,10 @@ public record SessionMessageContentDto(
     string? Arguments = null,
     string? Result = null,
     string? Payload = null
+);
+
+public record SessionChildLinkDto(
+    string CallId,
+    Guid ChildSessionId,
+    bool Completed
 );

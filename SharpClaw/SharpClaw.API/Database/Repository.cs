@@ -213,6 +213,7 @@ public class Repository(IConfiguration configuration)
             """
             select id as SessionId,
                    agent_id as AgentId,
+                   parent_session_id as ParentSessionId,
                    created_at as CreatedAt
             from sessions
             where id = @sessionId;
@@ -303,6 +304,7 @@ public class Repository(IConfiguration configuration)
             """
             select s.id as SessionId,
                    s.agent_id as AgentId,
+                   s.parent_session_id as ParentSessionId,
                    s.created_at as CreatedAt,
                    coalesce((
                        select count(*)
@@ -314,6 +316,24 @@ public class Repository(IConfiguration configuration)
             order by s.created_at desc;
             """,
             new { agentId });
+
+        return rows.ToArray();
+    }
+
+    public async Task<IReadOnlyList<SessionTaskLink>> GetSessionTaskLinks(Guid sessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<SessionTaskLink>(
+            """
+            select call_id as CallId,
+                   child_session_id as ChildSessionId,
+                   completed as Completed
+            from session_tasks
+            where session_id = @sessionId
+              and child_session_id is not null
+            order by created_at, id;
+            """,
+            new { sessionId });
 
         return rows.ToArray();
     }
@@ -990,8 +1010,9 @@ public class Repository(IConfiguration configuration)
     }
 }
 
-public record PersistedSession(Guid SessionId, long AgentId, DateTime CreatedAt);
-public record PersistedSessionSummary(Guid SessionId, long AgentId, DateTime CreatedAt, long MessagesCount);
+public record PersistedSession(Guid SessionId, long AgentId, Guid? ParentSessionId, DateTime CreatedAt);
+public record PersistedSessionSummary(Guid SessionId, long AgentId, Guid? ParentSessionId, DateTime CreatedAt, long MessagesCount);
+public record SessionTaskLink(string CallId, Guid ChildSessionId, bool Completed);
 public record PersistedRawMessage(long MessageId, DateTime CreatedAt, ChatResponse Response);
 public record LcmSummaryRecord(
     long DbId,
