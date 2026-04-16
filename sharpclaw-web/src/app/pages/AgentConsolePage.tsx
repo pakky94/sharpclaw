@@ -39,7 +39,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatBubble[]>([])
   const [draftsBySessionKey, setDraftsBySessionKey] = useState<Record<string, string>>({})
-  const [isSending, setIsSending] = useState(false)
+  const [sendingSessionIds, setSendingSessionIds] = useState<Set<string>>(new Set())
   const [showToolEvents, setShowToolEvents] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeRun, setActiveRun] = useState<{ sessionId: string; status: RunStatus } | null>(null)
@@ -82,6 +82,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
     selectedSessionId !== null &&
     activeRun.sessionId === selectedSessionId &&
     (activeRun.status === 'pending' || activeRun.status === 'waiting' || activeRun.status === 'running')
+  const isSessionSending = selectedSessionId !== null && sendingSessionIds.has(selectedSessionId)
   const visibleMessages = messages.filter(
     (message) => message.role !== 'system' && (showToolEvents || message.role !== 'tool' || Boolean(message.childSessionId)),
   )
@@ -248,16 +249,16 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
     }
 
     const text = prompt.trim()
-    if (!text || isSending || isSessionProcessing) {
+    if (!text || isSessionSending || isSessionProcessing) {
       return
     }
 
+    let sessionId: string | null = null
     try {
       setError(null)
-      setIsSending(true)
       const sourceDraftSessionKey = draftSessionKey
 
-      let sessionId = selectedSessionId
+      sessionId = selectedSessionId
       if (!sessionId) {
         const created = await fetchJson<{ sessionId: string }>(`${API_BASE_URL}/sessions`, {
           method: 'POST',
@@ -267,6 +268,16 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         setSelectedSessionId(sessionId)
         await refreshSessions(selectedAgentId, sessionId)
       }
+      if (!sessionId) {
+        throw new Error('Session could not be created.')
+      }
+      const currentSessionId = sessionId
+
+      setSendingSessionIds((prev) => {
+        const next = new Set(prev)
+        next.add(currentSessionId)
+        return next
+      })
 
       const localUserId = crypto.randomUUID()
       const localAssistantId = crypto.randomUUID()
@@ -283,7 +294,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
       ])
 
       // TODO: errors?
-      await fetchJson<{ runId: string }>(`${API_BASE_URL}/sessions/${sessionId}/messages`, {
+      await fetchJson<{ runId: string }>(`${API_BASE_URL}/sessions/${currentSessionId}/messages`, {
         method: 'POST',
         body: JSON.stringify({ message: text }),
       })
@@ -291,15 +302,28 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         prev[sourceDraftSessionKey] === undefined ? prev : { ...prev, [sourceDraftSessionKey]: '' },
       )
 
-      setActiveRun({ sessionId, status: 'pending' })
-      await streamRun(sessionId, latestMessageId + 1, localAssistantId)
-      await loadHistory(sessionId)
-      await refreshSessions(selectedAgentId, sessionId)
+      setActiveRun({ sessionId: currentSessionId, status: 'pending' })
+      void streamRun(currentSessionId, latestMessageId + 1, localAssistantId)
+        .then(async () => {
+          await loadHistory(currentSessionId)
+          await refreshSessions(selectedAgentId, currentSessionId)
+        })
+        .catch((streamError) => {
+          setError(asErrorMessage(streamError))
+          setMessages((prev) => prev.map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m)))
+        })
     } catch (e) {
       setError(asErrorMessage(e))
       setMessages((prev) => prev.map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m)))
     } finally {
-      setIsSending(false)
+      if (sessionId) {
+        const sessionToClear = sessionId
+        setSendingSessionIds((prev) => {
+          const next = new Set(prev)
+          next.delete(sessionToClear)
+          return next
+        })
+      }
     }
   }
 
@@ -577,7 +601,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         />
         <Composer
           prompt={prompt}
-          isSending={isSending}
+          isSending={isSessionSending}
           isSessionProcessing={isSessionProcessing}
           error={error}
           onPromptChange={(value) => {
