@@ -17,6 +17,8 @@ public class AgentExecutionContext
     public List<AgentClientTask> QueuedTasks { get; set; } = [];
 
     public long SoftCompactThreshold = 35 * 1024;
+    public long HardCompactThreshold = 50 * 1024;
+
     public int FreshMessagesCount = 8;
 
     public long MaxSequenceId() => Messages.Count > 0

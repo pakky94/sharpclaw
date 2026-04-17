@@ -237,10 +237,20 @@ public class Agent(
                 // TODO: transaction ends here
 
                 var inputTokens = response.Responses.LastOrDefault(m => m.Usage is not null)?.Usage?.InputTokenCount;
+                if (inputTokens is null)
+                    continue;
 
-                if (inputTokens is not null && inputTokens > session.Context.SoftCompactThreshold)
+                if (inputTokens > session.Context.HardCompactThreshold)
                 {
-                    _ = Task.Run(SoftCompactHistory(sessionId, session));
+                    session.Run.CompactionTask ??= Task.Run(SoftCompactHistory(sessionId, session));
+                    session.Mutex.Release();
+                    await session.Run.CompactionTask;
+                    await session.Mutex.WaitAsync();
+                }
+                else if (inputTokens > session.Context.SoftCompactThreshold
+                         && session.Run.CompactionTask is null)
+                {
+                    session.Run.CompactionTask = Task.Run(SoftCompactHistory(sessionId, session));
                 }
             }
 
@@ -562,6 +572,7 @@ public class AgentRunState(Guid sessionId)
     public AgentRunStatus Status { get; private set; } = AgentRunStatus.Completed;
     public string? Error { get; private set; }
     public List<SessionDependency> SessionDependencies = [];
+    public Task? CompactionTask { get; set; } = null;
 
     public AgentRunEvent[] GetEventsAfter(long messageId, long sequence)
     {
