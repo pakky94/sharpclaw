@@ -1,5 +1,4 @@
 ﻿using System.Numerics;
-using Contract = System.Diagnostics.Contracts.Contract;
 
 namespace SharpClaw.API.Helpers;
 
@@ -59,8 +58,7 @@ public class RadixEncoding
     public RadixEncoding(string digits,
         EndianFormat bytesEndian = EndianFormat.Little, bool includeProceedingZeros = false)
     {
-        Contract.Requires<ArgumentNullException>(digits != null);
-        int radix = digits.Length;
+        var radix = digits.Length;
 
         kDigits = digits;
         kBitsPerDigit = System.Math.Log(radix, 2);
@@ -86,9 +84,6 @@ public class RadixEncoding
     /// <remarks>If <paramref name="bytes"/> is zero length, returns an empty string</remarks>
     public string Encode(byte[] bytes)
     {
-        Contract.Requires<ArgumentNullException>(bytes != null);
-        Contract.Ensures(Contract.Result<string>() != null);
-
         // Don't really have to do this, our code will build this result (empty string),
         // but why not catch the condition before doing work?
         if (bytes.Length == 0) return string.Empty;
@@ -199,8 +194,6 @@ public class RadixEncoding
     /// </remarks>
     public byte[] Decode(string radixChars)
     {
-        Contract.Requires<ArgumentNullException>(radixChars != null);
-
         if (kEndian == EndianFormat.Big)
             return kIncludeProceedingZeros ? DecodeImplReversedWithPadding(radixChars) : DecodeImplReversed(radixChars);
         else

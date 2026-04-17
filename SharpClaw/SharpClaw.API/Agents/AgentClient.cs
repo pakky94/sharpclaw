@@ -9,6 +9,11 @@ namespace SharpClaw.API.Agents;
 
 public class AgentClient(ChatClient chatClient, AgentExecutionContext context, IServiceProvider serviceProvider)
 {
+    public delegate Task<AgentClientResponse> GetResponseDelegate(List<ChatMessage> messages, List<AIFunction> tools,
+        AgentRunState? runState = null,
+        Func<ChatResponseUpdate, ValueTask>? onUpdate = null,
+        Func<ValueTask>? onMessageFlushed = null);
+
     private bool _shouldContinue;
 
     public async Task<AgentClientResponse> GetResponse(List<ChatMessage> messages, List<AIFunction> tools,

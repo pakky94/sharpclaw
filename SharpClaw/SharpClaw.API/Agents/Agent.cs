@@ -276,8 +276,8 @@ public class Agent(
 
             if (split.Depth < 0) return; // TODO: handle failure case for split message
 
-            var summarizer = new Summarizer(chatProvider);
-            var summary = await summarizer.Summarize(session.Context, [], split.ToSummarize, split.Depth);
+            var agentClient = chatProvider.GetClient(session.Context);
+            var summary = await Summarizer.Summarize(agentClient.GetResponse, [], split.ToSummarize, split.Depth);
             await session.Mutex.WaitAsync();
             try
             {

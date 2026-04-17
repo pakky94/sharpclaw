@@ -6,13 +6,13 @@ using SharpClaw.API.Helpers;
 
 namespace SharpClaw.API.Agents.Memory.Lcm;
 
-public partial class Summarizer(ChatProvider chatProvider)
+public static partial class Summarizer
 {
     private const string Alphabet = "0123456789abcdefghijklmnopqrstuvwxyz";
     private const string LcmSummaryLevelKey = "lcm_summary_level";
     private const string LcmSummaryIdKey = "lcm_summary_id";
 
-    public async Task<ChatResponse> Summarize(AgentExecutionContext context,
+    public static async Task<ChatResponse> Summarize(AgentClient.GetResponseDelegate getResponse,
         List<ChatResponse> previousHistory, List<ChatResponse> messages, int depth, bool aggressive = false)
     {
         var priorContent = FormatSummaries(previousHistory);
@@ -34,14 +34,12 @@ public partial class Summarizer(ChatProvider chatProvider)
             prompt = $"{prompt.Trim()}\n\n{PromptAggressiveDirective}";
 
         // TODO: set up client without tools / other useless stuff
-        var result = await chatProvider
-            .GetClient(context)
-            .GetResponse(
-                [
-                    new ChatMessage(ChatRole.System, prompt),
-                    new ChatMessage(ChatRole.User, summaryMessage),
-                ], []
-            );
+        var result = await getResponse(
+            [
+                new ChatMessage(ChatRole.System, prompt),
+                new ChatMessage(ChatRole.User, summaryMessage),
+            ], []
+        );
 
         var msgTxt = result.Responses.FirstOrDefault(m => !string.IsNullOrEmpty(m.Text));
 
@@ -69,8 +67,6 @@ public partial class Summarizer(ChatProvider chatProvider)
                     ? level as int? ?? 0
                     : 0))
             .ToArray();
-
-        var messagesWithId = messages.Select((m, i) => (Message: m, Id: i)).ToArray();
 
         foreach (var level in messagesWithLevel.Select(m => m.Depth).Distinct().OrderBy(l => l))
         {
@@ -118,11 +114,10 @@ public partial class Summarizer(ChatProvider chatProvider)
 
     private static string GenerateSummaryId(string content, DateTime timestamp)
     {
-        var sha = SHA256.Create();
         var contentBytes = Encoding.UTF8.GetBytes(content);
         var timestampBytes = BitConverter.GetBytes(timestamp.Ticks);
         var combinedBytes = contentBytes.Concat(timestampBytes).ToArray();
-        var hashBytes = sha.ComputeHash(combinedBytes);
+        var hashBytes = SHA256.HashData(combinedBytes);
         var encoder = new RadixEncoding(Alphabet);
         return $"sum_{encoder.Encode(hashBytes)[..16]}";
     }
