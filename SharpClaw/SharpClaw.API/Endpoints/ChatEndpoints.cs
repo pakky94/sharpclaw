@@ -43,6 +43,26 @@ public static class ChatEndpoints
             }
         });
 
+        app.MapPost("/sessions/{sessionId:guid}/resume", async (
+            Guid sessionId,
+            [FromServices] Agent agent
+        ) =>
+        {
+            try
+            {
+                await agent.Resume(sessionId);
+                return Results.Accepted();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+        });
+
         app.MapGet("/agents/{agentId:long}/sessions", async (
             long agentId,
             [FromServices] Agent agent

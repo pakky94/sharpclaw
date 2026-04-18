@@ -535,6 +535,11 @@ public class Agent(
         output,
     };
 
+    public async Task Resume(Guid sessionId)
+    {
+        var session = await GetOrLoadSession(sessionId);
+        _ = Task.Run(() => GetMessageResponse(sessionId, session, session.Run));
+    }
 }
 
 public class AgentSessionState(Guid sessionId, AgentExecutionContext context,
