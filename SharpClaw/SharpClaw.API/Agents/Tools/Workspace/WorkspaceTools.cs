@@ -304,9 +304,9 @@ public static class WorkspaceTools
         {
             // TODO: optimize reads for buffer
             var content = await File.ReadAllTextAsync(resolvedPath);
-            if (offset.HasValue)
+            if (offset.HasValue || length.HasValue)
             {
-                var lines = content.Split('\n').Skip(offset.Value);
+                var lines = content.Split('\n').Skip(offset ?? 0);
                 if (length.HasValue)
                     lines = lines.Take(length.Value);
                 content = string.Join('\n', lines);
