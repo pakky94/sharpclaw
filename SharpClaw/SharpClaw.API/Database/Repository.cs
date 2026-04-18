@@ -1210,6 +1210,11 @@ internal sealed class PersistedContent
                 CallId = functionResult.CallId,
                 Result = Serialize(functionResult.Result),
             },
+            TextReasoningContent reasoningContent => new PersistedContent
+            {
+                Type = "reasoning",
+                Text = reasoningContent.Text,
+            },
             _ => new PersistedContent
             {
                 Type = "unknown",
@@ -1224,6 +1229,7 @@ internal sealed class PersistedContent
         {
             "tool_call" => $"[tool_call] {ToolName}({Arguments})",
             "tool_result" => $"[tool_result] {CallId}: {Result}",
+            "reasoning" => string.Empty,
             "unknown" => $"[content] {Payload}",
             _ => Text ?? string.Empty,
         };
@@ -1238,6 +1244,8 @@ internal sealed class PersistedContent
                 => new FunctionCallContent(CallId, ToolName, DeserializeArguments(Arguments)),
             "tool_result" when !string.IsNullOrWhiteSpace(CallId)
                 => new FunctionResultContent(CallId, DeserializeJsonLikeValue(Result)),
+            "reasoning" when !string.IsNullOrWhiteSpace(Text)
+                => new TextReasoningContent(Text),
             _ => null,
         };
     }

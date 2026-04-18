@@ -15,7 +15,8 @@ public class Agent(
     ChatProvider chatProvider,
     Repository repository,
     FragmentsRepository fragmentsRepository,
-    WorkspaceRepository workspaceRepository)
+    WorkspaceRepository workspaceRepository,
+    ILogger<Agent> logger)
 {
     private readonly ConcurrentDictionary<Guid, AgentSessionState> _sessions = new();
     private readonly SemaphoreSlim _sessionsMutex = new(1, 1);
@@ -110,6 +111,8 @@ public class Agent(
 
             while (response is null or { ShouldContinue: true, QueuedTasks.Count: 0 })
             {
+                await TryCompactHistory(session);
+
                 var agentsMd = (await fragmentsRepository.ReadFragmentByPath(session.Context.AgentId, "AGENTS.md"))?.Content ?? string.Empty;
                 var rootFragment = await fragmentsRepository.EnsureRootFragment(session.Context.AgentId);
                 var fragments = await fragmentsRepository.ReadFragment(
@@ -235,23 +238,7 @@ public class Agent(
                 }
 
                 // TODO: transaction ends here
-
-                var inputTokens = response.Responses.LastOrDefault(m => m.Usage is not null)?.Usage?.InputTokenCount;
-                if (inputTokens is null)
-                    continue;
-
-                if (inputTokens > session.Context.HardCompactThreshold)
-                {
-                    session.Run.CompactionTask ??= Task.Run(SoftCompactHistory(sessionId, session));
-                    session.Mutex.Release();
-                    await session.Run.CompactionTask;
-                    await session.Mutex.WaitAsync();
-                }
-                else if (inputTokens > session.Context.SoftCompactThreshold
-                         && session.Run.CompactionTask is null)
-                {
-                    session.Run.CompactionTask = Task.Run(SoftCompactHistory(sessionId, session));
-                }
+                await TryCompactHistory(session, true);
             }
 
             return response.Responses.LastOrDefault(m => !string.IsNullOrWhiteSpace(m.Text))?.Text;
@@ -259,6 +246,7 @@ public class Agent(
         catch (Exception ex)
         {
             run.MarkFailed(ex.Message);
+            logger.LogWarning(ex, "Exception processing session {SessionId}", sessionId);
         }
         finally
         {
@@ -268,7 +256,26 @@ public class Agent(
         return null; // TODO: return error from here? possibly yes
     }
 
-    private Func<Task?> SoftCompactHistory(Guid sessionId, AgentSessionState session)
+    private async Task TryCompactHistory(AgentSessionState session, bool softThreshold = false)
+    {
+        var inputTokens = session.Context.Messages.EstimatedTokenCount();
+
+        if (inputTokens > session.Context.HardCompactThreshold)
+        {
+            session.Run.CompactionTask ??= Task.Run(SoftCompactHistory(session));
+            session.Mutex.Release();
+            await session.Run.CompactionTask;
+            await session.Mutex.WaitAsync();
+        }
+        else if (softThreshold
+                 && inputTokens > session.Context.SoftCompactThreshold
+                 && session.Run.CompactionTask is null)
+        {
+            session.Run.CompactionTask = Task.Run(SoftCompactHistory(session));
+        }
+    }
+
+    private Func<Task?> SoftCompactHistory(AgentSessionState session)
     {
         return async () =>
         {
@@ -286,7 +293,7 @@ public class Agent(
                     && split.PostSummary.All(m => session.Context.Messages.Contains(m)))
                 {
                     await repository.PersistSummaryAndCompactHistory(
-                        sessionId,
+                        session.SessionId,
                         summary,
                         split.ToSummarize);
 
