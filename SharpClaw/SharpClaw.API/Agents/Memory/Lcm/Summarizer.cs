@@ -64,7 +64,7 @@ public static partial class Summarizer
             .Select((m, i) => (
                 Message: m,
                 Depth: m.AdditionalProperties?.TryGetValue(LcmSummaryLevelKey, out var level) ?? false
-                    ? level as int? ?? 0
+                    ? Convert.ToInt32(level)
                     : 0))
             .ToArray();
 

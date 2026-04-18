@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.AI;
@@ -16,6 +17,18 @@ public static class WorkspaceTools
         AIFunctionFactory.Create(ListFiles, "ws_list_files", "List files and directories in the workspace. Optional workspace parameter selects a named workspace from the active session workspaces."),
         AIFunctionFactory.Create(ReadFile, "ws_read_file", "Read a file from the workspace. Optional workspace parameter selects a named workspace from the active session workspaces."),
         AIFunctionFactory.Create(WriteFile, "ws_write_file", "Write content to a file in the workspace. Optional workspace parameter selects a named workspace from the active session workspaces."),
+        AIFunctionFactory.Create(EditFile, "ws_edit_file",
+            """
+            Performs exact string replacements in files. 
+            
+            Usage:
+            - You must use your `Read` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file. 
+            - When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the oldString or newString.
+            - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
+            - The edit will FAIL if `oldString` is not found in the file with an error "oldString not found in content".
+            - The edit will FAIL if `oldString` is found multiple times in the file with an error "oldString found multiple times and requires more code context to uniquely identify the intended match". Either provide a larger string with more surrounding context to make it unique or use `replaceAll` to change every instance of `oldString`. 
+            - Use `replaceAll` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.
+            """ ),
         AIFunctionFactory.Create(DeleteFile, "ws_delete_file", "Delete a file or directory from the workspace. Optional workspace parameter selects a named workspace from the active session workspaces."),
         AIFunctionFactory.Create(MoveFile, "ws_move_file", "Move or rename a file or directory in the workspace. Optional workspace parameter selects a named workspace from the active session workspaces."),
         AIFunctionFactory.Create(MakeDirectory, "ws_make_directory", "Create a directory in the workspace. Optional workspace parameter selects a named workspace from the active session workspaces."),
@@ -272,8 +285,10 @@ public static class WorkspaceTools
         };
     }
 
-    // TODO: handle offset and length params (lines?)
-    public static async Task<object> ReadFile(IServiceProvider sp, string path, int? offset = null, int? length = null, string? workspace = null)
+    public static async Task<object> ReadFile(IServiceProvider sp, string path,
+        [Description("Number of lines to skip from the start of the file")] int? offset = null,
+        [Description("Number of lines to read")] int? length = null,
+        string? workspace = null)
     {
         var ws = ResolveWorkspace(sp, workspace);
 
@@ -285,11 +300,18 @@ public static class WorkspaceTools
         if (!File.Exists(resolvedPath))
             return new { error = $"File does not exist: {path}" };
 
-        var fileInfo = new FileInfo(resolvedPath);
-
         try
         {
+            // TODO: optimize reads for buffer
             var content = await File.ReadAllTextAsync(resolvedPath);
+            if (offset.HasValue)
+            {
+                var lines = content.Split('\n').Skip(offset.Value);
+                if (length.HasValue)
+                    lines = lines.Take(length.Value);
+                content = string.Join('\n', lines);
+            }
+
             var byteCount = Encoding.UTF8.GetByteCount(content);
 
             if (byteCount > MaxReadSize)
@@ -386,6 +408,64 @@ public static class WorkspaceTools
                 path,
                 mode,
                 bytes_written = Encoding.UTF8.GetByteCount(content),
+            };
+        }
+        catch (Exception ex)
+        {
+            return new { error = $"Failed to write file: {ex.Message}" };
+        }
+    }
+
+    public static async Task<object> EditFile(IServiceProvider sp, string path,
+        [Description("The text to replace")] string oldString,
+        [Description("The text to replace it with (must be different from oldString)")] string newString,
+        [Description("Replace all occurrences of oldString (default false)")] bool replaceAll = false,
+        string? approval_token = null, string? workspace = null)
+    {
+        var approvalCheck = await CheckApprovalIfNeeded(
+            sp,
+            ApprovalActionType.Write,
+            path,
+            null,
+            ApprovalRiskLevel.Medium,
+            $"Edit file '{path}'",
+            approval_token,
+            workspace);
+
+        if (approvalCheck is not null)
+            return approvalCheck;
+
+        var ws = ResolveWorkspace(sp, workspace);
+        var resolvedPath = ResolvePath(sp, path, workspace);
+
+        if (!PathContainment.IsPathAllowed(ws.RootPath, resolvedPath, ws.AllowlistPatterns, ws.DenylistPatterns))
+            return new { error = $"Path is denied by workspace policy: {path}" };
+
+        if (!File.Exists(resolvedPath))
+            return new { error = $"File does not exist: {path}" };
+
+        try
+        {
+            var oldFile = await File.ReadAllTextAsync(resolvedPath);
+
+            var firstIdx = oldFile.IndexOf(oldString, StringComparison.Ordinal);
+
+            if (firstIdx < 0)
+                return new { error = $"oldString not found in file {path}" };
+
+            if (!replaceAll)
+            {
+                var lastIdx = oldFile.LastIndexOf(oldString, StringComparison.Ordinal);
+                if (lastIdx != firstIdx)
+                    return new { error = $"multiple matches of oldString found in file {path}, to replace all occurrences call this tool with replaceAll=true" };
+            }
+
+            await File.WriteAllTextAsync(resolvedPath, oldFile.Replace(oldString, newString));
+
+            return new
+            {
+                title = $"File edited: {path}",
+                path,
             };
         }
         catch (Exception ex)

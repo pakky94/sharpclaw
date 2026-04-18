@@ -14,7 +14,7 @@ public class ChatProvider(IServiceProvider serviceProvider, IOptions<LmStudioCon
             new OpenAIClientOptions
             {
                 Endpoint = new Uri(config.Endpoint),
-                NetworkTimeout = TimeSpan.FromMinutes(10),
+                NetworkTimeout = TimeSpan.FromHours(10),
             });
 
         var chatClient = client.GetChatClient(context.LlmModel);

@@ -26,11 +26,11 @@ public static class ChatResponseExtensions
         => content switch
         {
             TextContent t => Convert.ToInt64(t.Text.Length * 0.25),
-            FunctionResultContent fr => Convert.ToInt64(.4 * (
+            FunctionResultContent fr => Convert.ToInt64(.3 * (
                 50 +
                 JsonSerializer.Serialize(fr.Result).Length
             )),
-            FunctionCallContent fc => Convert.ToInt64(0.4 * (
+            FunctionCallContent fc => Convert.ToInt64(0.3 * (
                 50 +
                 fc.Name.Length +
                 JsonSerializer.Serialize(fc.Arguments).Length

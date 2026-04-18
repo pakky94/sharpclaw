@@ -1,0 +1,23 @@
+info:
+  name: Resume session
+  type: http
+  seq: 8
+
+http:
+  method: POST
+  url: "{{baseUrl}}/sessions/{{sessionId}}/resume"
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        //let data = res.getBody();
+        //bru.setEnvVar("sessionId", data.sessionId);
+        //bru.setEnvVar("runId", data.runId);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
