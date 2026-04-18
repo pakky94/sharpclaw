@@ -260,6 +260,7 @@ public class Agent(
     {
         var inputTokens = session.Context.Messages.EstimatedTokenCount();
 
+        // TODO: await CompactionTask if it is already completed
         if (inputTokens > session.Context.HardCompactThreshold)
         {
             session.Run.CompactionTask ??= Task.Run(SoftCompactHistory(session));

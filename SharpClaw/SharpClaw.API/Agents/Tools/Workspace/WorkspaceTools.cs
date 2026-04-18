@@ -272,6 +272,7 @@ public static class WorkspaceTools
         };
     }
 
+    // TODO: handle offset and length params (lines?)
     public static async Task<object> ReadFile(IServiceProvider sp, string path, int? offset = null, int? length = null, string? workspace = null)
     {
         var ws = ResolveWorkspace(sp, workspace);
