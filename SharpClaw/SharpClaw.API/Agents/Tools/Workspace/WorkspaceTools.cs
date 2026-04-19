@@ -4,6 +4,7 @@ using System.Text;
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database;
+using SharpClaw.API.Helpers;
 
 namespace SharpClaw.API.Agents.Tools.Workspace;
 
@@ -448,19 +449,20 @@ public static class WorkspaceTools
         {
             var oldFile = await File.ReadAllTextAsync(resolvedPath);
 
-            var firstIdx = oldFile.IndexOf(oldString, StringComparison.Ordinal);
+            var (newContent, error) = StringReplacer.Replace(oldFile, oldString, newString, replaceAll);
 
-            if (firstIdx < 0)
-                return new { error = $"oldString not found in file {path}" };
+            if (error is not null)
+                return new
+                {
+                    error = error switch
+                    {
+                        StringReplacer.Error.OldStringNotFound => $"oldString not found in file {path}",
+                        StringReplacer.Error.MultipleMatchesFound => $"multiple matches of oldString found in file {path}, to replace all occurrences call this tool with replaceAll=true",
+                        _ => $"Error replacing string in '{path}'",
+                    }
+                };
 
-            if (!replaceAll)
-            {
-                var lastIdx = oldFile.LastIndexOf(oldString, StringComparison.Ordinal);
-                if (lastIdx != firstIdx)
-                    return new { error = $"multiple matches of oldString found in file {path}, to replace all occurrences call this tool with replaceAll=true" };
-            }
-
-            await File.WriteAllTextAsync(resolvedPath, oldFile.Replace(oldString, newString));
+            await File.WriteAllTextAsync(resolvedPath, newContent);
 
             return new
             {

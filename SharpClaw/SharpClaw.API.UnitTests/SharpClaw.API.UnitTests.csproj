@@ -18,4 +18,8 @@
         <Using Include="Xunit"/>
     </ItemGroup>
 
+    <ItemGroup>
+      <ProjectReference Include="..\SharpClaw.API\SharpClaw.API.csproj" />
+    </ItemGroup>
+
 </Project>
