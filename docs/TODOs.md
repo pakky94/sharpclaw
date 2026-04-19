@@ -38,8 +38,8 @@
 
 ### LCM
 - [ ] validate that tokens(summary) < tokens(history) and use aggressive directive if necessary
-- [ ] track currently running summaries to avoid multiple summary cascade
-- [ ] implement blocking compaction when tokens > HardThreshold
+- [X] track currently running summaries to avoid multiple summary cascade
+- [X] implement blocking compaction when tokens > HardThreshold
   - wait for currently running of soft compaction if one is running
   - otherwise start new compaction
 

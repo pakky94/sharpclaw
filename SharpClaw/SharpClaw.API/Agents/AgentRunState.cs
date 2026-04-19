@@ -13,7 +13,7 @@ public enum AgentRunStatus
     Failed,
 }
 
-public class AgentRunState(Guid sessionId)
+public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDependencies)
 {
     private readonly object _eventsLock = new();
     private readonly List<AgentRunEvent> _events = [];
@@ -28,7 +28,7 @@ public class AgentRunState(Guid sessionId)
     public DateTimeOffset? CompletedAt { get; private set; }
     public AgentRunStatus Status { get; private set; } = AgentRunStatus.Completed;
     public string? Error { get; private set; }
-    public List<SessionDependency> SessionDependencies = [];
+    public List<SessionDependency> SessionDependencies { get; private set; } = sessionDependencies;
     public Task? CompactionTask { get; set; } = null;
 
     public AgentRunEvent[] GetEventsAfter(long messageId, long sequence)

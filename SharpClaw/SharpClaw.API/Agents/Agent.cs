@@ -22,7 +22,8 @@ public class Agent(
     private readonly ConcurrentDictionary<Guid, AgentSessionState> _sessions = new();
     private readonly SemaphoreSlim _sessionsMutex = new(1, 1);
 
-    public async Task<Guid> CreateSession(long agentId = 1, Guid? parentSessionId = null)
+    public async Task<Guid> CreateSession(long agentId = 1, Guid? parentSessionId = null,
+        string[]? workspaces = null)
     {
         var agentConfig = await repository.GetAgent(agentId)
                           ?? throw new KeyNotFoundException($"Agent {agentId} was not found.");
@@ -45,6 +46,8 @@ public class Agent(
         };
 
         await repository.CreateSession(sessionId, agentId, parentSessionId);
+        if (workspaces is not null)
+            await workspaceRepository.SetActiveWorkspacesForSession(sessionId, agentId, workspaces);
         _sessions[sessionId] = new AgentSessionState(sessionId, context, parentSessionId: parentSessionId);
         return sessionId;
     }
@@ -156,7 +159,8 @@ public class Agent(
 
                         var childSessionId = await CreateSession(
                             queuedTask.AgentId ?? session.Context.AgentId,
-                            parentSessionId: sessionId);
+                            parentSessionId: sessionId,
+                            workspaces: session.Context.ActiveWorkspaceNames.ToArray());
                         await repository.AddSessionTask(sessionId, queuedTask.CallId, childSessionId);
                         session.Run.SessionDependencies.Add(new SessionDependency(childSessionId, queuedTask.CallId));
                         session.Run.AppendChildSessionSpawned(queuedTask.CallId, childSessionId, queuedTask.ChildDescription);
@@ -189,8 +193,6 @@ public class Agent(
                             session.ParentSessionId.Value,
                             taskResult);
 
-                        // _ = Task.Run(async () =>
-                        // {
                         var parentSession = await GetOrLoadSession(session.ParentSessionId.Value);
                         await parentSession.Mutex.WaitAsync();
                         try
@@ -217,10 +219,16 @@ public class Agent(
                             if (content is null)
                                 throw new Exception("Parent content from task not found");
 
+                            var description = content.Result is IDictionary<string, object?> d
+                                              && d.TryGetValue("description", out var desc)
+                                              && desc is string value
+                                ? value : null;
+
                             var toolResult = BuildTaskToolResult(
                                 sessionId,
                                 status: "completed",
-                                output: taskResult);
+                                output: taskResult,
+                                description: description);
                             content.Result = toolResult;
                             await repository.UpdateMessage(message);
                             parentSession.Run?.AppendToolResultForCall(callId, Serialization.SerializeToolPayload(toolResult));
@@ -234,7 +242,6 @@ public class Agent(
                         {
                             parentSession.Mutex.Release();
                         }
-                        // });
                     }
                 }
 
@@ -403,8 +410,7 @@ public class Agent(
             var defaultWs = await workspaceRepository.ResolveDefaultWorkspace(persistedSession.AgentId);
             var activeWsRows = await workspaceRepository.GetActiveWorkspacesForSession(sessionId);
             var activeWsNames = new HashSet<string>(activeWsRows.Select(r => r.WorkspaceName));
-
-            // TODO: load pending dependencies
+            var sessionDependencies = await repository.GetSessionTaskLinks(sessionId);
 
             if (activeWsNames.Count == 0 && defaultWs is not null)
             {
@@ -426,7 +432,12 @@ public class Agent(
                 sessionId,
                 context,
                 parentSessionId: persistedSession.ParentSessionId,
-                createdAt: new DateTimeOffset(DateTime.SpecifyKind(persistedSession.CreatedAt, DateTimeKind.Utc)));
+                createdAt: new DateTimeOffset(DateTime.SpecifyKind(persistedSession.CreatedAt, DateTimeKind.Utc)),
+                sessionDependencies: sessionDependencies
+                    .Where(sd => !sd.Completed)
+                    .Select(sd => new SessionDependency(sd.ChildSessionId, sd.CallId))
+                    .ToList()
+            );
             _sessions[sessionId] = loadedSession;
             return loadedSession;
         }
@@ -534,13 +545,13 @@ public class Agent(
         return null;
     }
 
-    private static object BuildTaskToolResult(Guid childSessionId, string status, string? output, string? description = null) => new
+    private static Dictionary<string, object?> BuildTaskToolResult(Guid childSessionId, string status, string? output, string? description) => new()
     {
-        type = "child_session",
-        child_session_id = childSessionId,
-        status,
-        description,
-        output,
+        ["type"] = "child_session",
+        ["child_session_id"] = childSessionId,
+        ["status"] = status,
+        ["description"] = description,
+        ["output"] = output,
     };
 
     public async Task Resume(Guid sessionId)
@@ -552,7 +563,8 @@ public class Agent(
 
 public class AgentSessionState(Guid sessionId, AgentExecutionContext context,
     Guid? parentSessionId = null,
-    DateTimeOffset? createdAt = null)
+    DateTimeOffset? createdAt = null,
+    List<SessionDependency>? sessionDependencies = null)
 {
     public Guid SessionId { get; } = sessionId;
     public Guid? ParentSessionId { get; } = parentSessionId;
@@ -560,5 +572,5 @@ public class AgentSessionState(Guid sessionId, AgentExecutionContext context,
     public AgentExecutionContext Context { get; } = context;
     public SemaphoreSlim Mutex { get; } = new(1, 1);
     public object RunsLock { get; } = new();
-    public AgentRunState Run { get; } = new(sessionId);
+    public AgentRunState Run { get; } = new(sessionId, sessionDependencies ?? []);
 }

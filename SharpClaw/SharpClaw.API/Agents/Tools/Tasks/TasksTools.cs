@@ -40,22 +40,6 @@ public static class TasksTools
             TaskDescription(agents)
         );
 
-    /*
-  description: z.string().describe("A short (3-5 words) description of the task"),
-  prompt: z.string().describe("The task for the agent to perform"),
-  subagent_type: z.string().describe("The type of specialized agent to use for this task"),
-  delegated_scope: z
-    .string()
-    .describe("Required for sub-agents: the specific slice of work being delegated")
-    .optional(),
-  kept_work: z.string().describe("Required for sub-agents: the work you will still do yourself").optional(),
-  session_id: z.string().describe("Existing Task session to continue").optional(),
-  command: z.string().describe("The command that triggered this task").optional(),
-  run_in_background: z
-    .boolean()
-    .describe("Run this task in the background and return immediately with a task_id")
-    .optional(),
-     */
     private static async Task<object?> RunTask(
         IServiceProvider serviceProvider,
         AIFunctionArguments args,
