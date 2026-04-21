@@ -8,7 +8,6 @@ namespace SharpClaw.API.Agents.Memory.Lcm;
 
 public static partial class Summarizer
 {
-    private const string Alphabet = "0123456789abcdefghijklmnopqrstuvwxyz";
     private const string LcmSummaryLevelKey = "lcm_summary_level";
     private const string LcmSummaryIdKey = "lcm_summary_id";
 
@@ -118,7 +117,7 @@ public static partial class Summarizer
         var timestampBytes = BitConverter.GetBytes(timestamp.Ticks);
         var combinedBytes = contentBytes.Concat(timestampBytes).ToArray();
         var hashBytes = SHA256.HashData(combinedBytes);
-        var encoder = new RadixEncoding(Alphabet);
+        var encoder = new RadixEncoding(Constants.Alphabet);
         return $"sum_{encoder.Encode(hashBytes)[..16]}";
     }
 

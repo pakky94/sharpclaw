@@ -319,7 +319,7 @@ public static class WorkspaceTools
             {
                 var ctx = sp.GetRequiredService<AgentExecutionContext>();
                 var repo = sp.GetRequiredService<WorkspaceRepository>();
-                var fileId = GenerateFileId(resolvedPath);
+                var fileId = GenerateFileId(ws.Name, resolvedPath, DateTime.UtcNow);
 
                 var artifact = await repo.CreateLcmFileArtifact(
                     ctx.SessionId,
@@ -633,10 +633,14 @@ public static class WorkspaceTools
         return normalizedPath;
     }
 
-    private static string GenerateFileId(string filePath)
+    private static string GenerateFileId(string workspaceName, string filePath, DateTime timestamp)
     {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(filePath));
-        var hex = Convert.ToHexStringLower(hash);
-        return $"file_{hex[..16]}";
+        var workspaceBytes = Encoding.UTF8.GetBytes(workspaceName);
+        var pathBytes = Encoding.UTF8.GetBytes(filePath);
+        var timestampBytes = BitConverter.GetBytes(timestamp.Ticks);
+        var combinedBytes = pathBytes.Concat(timestampBytes).ToArray();
+        var hashBytes = SHA256.HashData(combinedBytes);
+        var encoder = new RadixEncoding(Constants.Alphabet);
+        return $"sum_{encoder.Encode(hashBytes)[..16]}";
     }
 }
