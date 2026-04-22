@@ -17,8 +17,8 @@ docker compose up --build
 
 Services:
 
-- App: `http://localhost:5223`
-- Postgres (pgvector): `localhost:5532`
+- App: `http://localhost:5846`
+- Postgres (pgvector): `localhost:5532` if enabled, internal only on Compose network (`db:5432`) by default
 
 Database defaults (from `docker-compose.yml`):
 
