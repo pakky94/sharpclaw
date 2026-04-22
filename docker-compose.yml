@@ -1,0 +1,38 @@
+services:
+  db:
+    image: pgvector/pgvector:pg18-trixie
+    container_name: sharpclaw-db
+    environment:
+      POSTGRES_DB: sharpclaw
+      POSTGRES_USER: sharpclaw
+      POSTGRES_PASSWORD: sharpclaw
+    ports:
+      - "5532:5432"
+    volumes:
+      - sharpclaw-pg-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sharpclaw -d sharpclaw"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ""
+    container_name: sharpclaw-app
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__sharpclaw: Host=db;Port=5432;Database=sharpclaw;Username=sharpclaw;Password=sharpclaw
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "5846:8080"
+    restart: unless-stopped
+
+volumes:
+  sharpclaw-pg-data:

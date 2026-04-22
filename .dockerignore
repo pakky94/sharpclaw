@@ -1,0 +1,19 @@
+# Build context exclusions
+.git
+.idea
+.vscode
+
+# Node
+**/node_modules
+
+# .NET
+**/bin
+**/obj
+
+# Logs and local env
+**/*.log
+.env
+.env.*
+
+# Docker artifacts
+**/docker-compose.override.yml

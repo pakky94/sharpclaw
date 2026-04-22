@@ -77,9 +77,12 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseCors("WebClient");
+app.UseDefaultFiles();
+app.UseStaticFiles();
 
 ChatEndpoints.Register(app);
 AgentEndpoints.Register(app);
 WorkspaceEndpoints.Register(app);
+app.MapFallbackToFile("{*path:nonfile}", "index.html");
 
 app.Run();
