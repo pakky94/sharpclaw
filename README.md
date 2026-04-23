@@ -19,6 +19,7 @@ Services:
 
 - App: `http://localhost:5846`
 - Postgres (pgvector): `localhost:5532` if enabled, internal only on Compose network (`db:5432`) by default
+- Ollama: CPU only, mainly for embeddings model
 
 Database defaults (from `docker-compose.yml`):
 

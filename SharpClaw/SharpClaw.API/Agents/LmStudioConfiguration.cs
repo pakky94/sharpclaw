@@ -11,4 +11,11 @@ public class LmStudioConfiguration
     public string EmbeddingEndpoint { get; set; } = string.Empty;
     public string EmbeddingApiKey { get; set; } = string.Empty;
     public string EmbeddingModel { get; set; } = "text-embedding-qwen3-embedding-0.6b";
+    public int EmbeddingTimeout { get; set; } = 60;
+    public EmbeddingProvider? EmbeddingProvider { get; set; } = null;
+}
+
+public enum EmbeddingProvider
+{
+    LocalOllama,
 }

@@ -17,6 +17,15 @@ services:
       timeout: 5s
       retries: 20
 
+  ollama:
+    image: alpine/ollama
+    container_name: sharpclaw-ollama
+    restart: unless-stopped
+#    ports:
+#      - "21434:11434"
+    volumes:
+      - sharpclaw-ollama-data:/root/.ollama
+
   app:
     build:
       context: .
@@ -28,12 +37,21 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__sharpclaw: Host=db;Port=5432;Database=sharpclaw;Username=sharpclaw;Password=sharpclaw
+      LmStudio__EmbeddingEndpoint: 'http://ollama:11434'
+      LmStudio__EmbeddingApiKey: 'ollama'
+      LmStudio__EmbeddingModel: 'qwen3-embedding:0.6b'
+#      LmStudio__EmbeddingModel: 'embeddinggemma:300m'
+      LmStudio__EmbeddingProvider: 'LocalOllama'
+      LmStudio__EmbeddingTimeout: 60
     depends_on:
       db:
         condition: service_healthy
+      ollama:
+        condition: service_started
     ports:
       - "5846:8080"
     restart: unless-stopped
 
 volumes:
   sharpclaw-pg-data:
+  sharpclaw-ollama-data:

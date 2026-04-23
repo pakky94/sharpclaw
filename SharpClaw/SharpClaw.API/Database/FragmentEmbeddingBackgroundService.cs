@@ -7,6 +7,7 @@ public sealed class FragmentEmbeddingBackgroundService(
     private const int BatchSize = 24;
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan IdleInterval = TimeSpan.FromSeconds(15);
+    private bool _modeLoaded;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -15,8 +16,15 @@ public sealed class FragmentEmbeddingBackgroundService(
             try
             {
                 using var scope = scopeFactory.CreateScope();
-                var fragmentsRepository = scope.ServiceProvider.GetRequiredService<FragmentsRepository>();
                 var embeddingService = scope.ServiceProvider.GetRequiredService<FragmentEmbeddingService>();
+
+                if (!_modeLoaded)
+                {
+                    await embeddingService.LoadEmbeddingsModel(stoppingToken);
+                    _modeLoaded = true;
+                }
+
+                var fragmentsRepository = scope.ServiceProvider.GetRequiredService<FragmentsRepository>();
 
                 var pending = await fragmentsRepository.GetPendingEmbeddings(BatchSize, stoppingToken);
                 if (pending.Count == 0)
