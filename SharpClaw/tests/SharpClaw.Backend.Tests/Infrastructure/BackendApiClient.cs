@@ -54,11 +54,21 @@ public sealed class BackendApiClient(HttpClient client)
         return await ReadDocumentAsync(response, cancellationToken);
     }
 
-    public async Task<Guid> CreateSessionAsync(long? agentId = null, CancellationToken cancellationToken = default)
+    public async Task<Guid> CreateSessionAsync(long? agentId = null, string? name = null, CancellationToken cancellationToken = default)
     {
-        var response = await client.PostAsJsonAsync("/sessions", new { agentId }, cancellationToken);
+        var response = await client.PostAsJsonAsync("/sessions", new { agentId, name }, cancellationToken);
         using var payload = await ReadDocumentAsync(response, cancellationToken);
         return payload.RootElement.GetProperty("sessionId").GetGuid();
+    }
+
+    public async Task RenameSessionAsync(Guid sessionId, string name, CancellationToken cancellationToken = default)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Patch, $"/sessions/{sessionId}")
+        {
+            Content = JsonContent.Create(new { name }),
+        };
+        var response = await client.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
     }
 
     public async Task<long> EnqueueMessageAsync(Guid sessionId, string message, CancellationToken cancellationToken = default)

@@ -180,7 +180,15 @@ public record AgentRunEvent(long MessageId, long Sequence, string Type, string? 
 
 public record SessionDependency(Guid ChildSessionId, string CallId);
 
-public record AgentSessionDto(Guid SessionId, long AgentId, Guid? ParentSessionId, DateTimeOffset CreatedAt, int MessagesCount);
+public record AgentSessionDto(
+    Guid SessionId,
+    long AgentId,
+    string? Name,
+    bool VisibleInSidebar,
+    Guid? ParentSessionId,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    int MessagesCount);
 public record SessionHistoryDto(
     Guid SessionId,
     Guid? ParentSessionId,

@@ -76,7 +76,12 @@ export function ChatHeader({
   return (
     <header className="chat-header">
       <div>
-        <h2>{selectedSession ? `Session ${selectedSession.sessionId.slice(0, 8)}` : 'No Session Selected'}{hasUnsavedDraft ? ' *' : ''}</h2>
+        <h2>
+          {selectedSession
+            ? selectedSession.name?.trim() || `Session ${selectedSession.sessionId.slice(0, 8)}`
+            : 'No Session Selected'}
+          {hasUnsavedDraft ? ' *' : ''}
+        </h2>
         <p>{selectedSession ? `Agent ${selectedSession.agentId}` : 'Create a session to start chatting.'}</p>
         {parentSessionId && (
           <button

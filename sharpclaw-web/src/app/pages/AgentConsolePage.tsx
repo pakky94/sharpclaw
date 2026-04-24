@@ -37,6 +37,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   const [selectedAgentId, setSelectedAgentId] = useState<number | null>(null)
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const [showToolSessions, setShowToolSessions] = useState(false)
   const [messages, setMessages] = useState<ChatBubble[]>([])
   const [draftsBySessionKey, setDraftsBySessionKey] = useState<Record<string, string>>({})
   const [sendingSessionIds, setSendingSessionIds] = useState<Set<string>>(new Set())
@@ -168,9 +169,13 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
 
     try {
       setError(null)
+      const providedName = window.prompt('Session name (optional):')?.trim() ?? ''
       const data = await fetchJson<{ sessionId: string }>(`${API_BASE_URL}/sessions`, {
         method: 'POST',
-        body: JSON.stringify({ agentId: selectedAgentId }),
+        body: JSON.stringify({
+          agentId: selectedAgentId,
+          name: providedName.length > 0 ? providedName : undefined,
+        }),
       })
 
       await refreshSessions(selectedAgentId, data.sessionId)
@@ -324,6 +329,27 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
           return next
         })
       }
+    }
+  }
+
+  async function renameSession(sessionId: string) {
+    const current = sessions.find((s) => s.sessionId === sessionId)
+    const nextName = window.prompt('Rename session:', current?.name ?? '')?.trim()
+    if (!nextName) {
+      return
+    }
+
+    try {
+      setError(null)
+      await fetchJson<{ sessionId: string; name: string }>(`${API_BASE_URL}/sessions/${sessionId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: nextName }),
+      })
+      if (selectedAgentId !== null) {
+        await refreshSessions(selectedAgentId, sessionId)
+      }
+    } catch (e) {
+      setError(asErrorMessage(e))
     }
   }
 
@@ -555,6 +581,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         selectedAgentId={selectedAgentId}
         sessions={sessions}
         selectedSessionId={selectedSessionId}
+        showToolSessions={showToolSessions}
         unsavedSessionIds={unsavedSessionIds}
         onSelectAgent={(agentId) => {
           closeStream()
@@ -573,6 +600,8 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
           setSelectedSessionId(sessionId)
           void loadHistory(sessionId)
         }}
+        onRenameSession={(sessionId) => void renameSession(sessionId)}
+        onShowToolSessionsChange={setShowToolSessions}
       />
 
       <main className="chat-panel">

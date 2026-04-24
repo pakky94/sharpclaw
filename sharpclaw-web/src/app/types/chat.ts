@@ -1,8 +1,11 @@
 export type SessionSummary = {
   sessionId: string
   agentId: number
+  name: string | null
+  visibleInSidebar: boolean
   parentSessionId: string | null
   createdAt: string
+  updatedAt: string
   messagesCount: number
 }
 

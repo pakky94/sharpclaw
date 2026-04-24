@@ -56,12 +56,14 @@ type model struct {
 	sessions        []api.SessionSummary
 	selectedSession int
 
-	messages      []chatMessage
-	messageOutput viewport.Model
-	chatInput     textinput.Model
-	chatFocus     int
+	messages         []chatMessage
+	messageOutput    viewport.Model
+	chatInput        textinput.Model
+	sessionNameInput textinput.Model
+	chatFocus        int
 
-	polling bool
+	polling          bool
+	showToolSessions bool
 
 	approvals         []api.ApprovalEvent
 	selectedApproval  int
@@ -98,6 +100,10 @@ type historyLoadedMsg struct {
 }
 type sendDoneMsg struct {
 	sessionID string
+}
+type sessionUpdatedMsg struct {
+	sessionID string
+	status    string
 }
 type workspacesLoadedMsg struct{ workspaces []api.WorkspaceConfig }
 type agentWorkspacesLoadedMsg struct{ entries []api.AgentWorkspaceEntry }
@@ -168,8 +174,10 @@ func (m *model) handleChatMouseClick(y int) {
 	inputRow := bodyY - 1
 	if inputRow <= 1 {
 		m.chatFocus = 0
-	} else {
+	} else if inputRow <= 2 {
 		m.chatFocus = 1
+	} else {
+		m.chatFocus = 2
 	}
 	m.applyFocus()
 }
@@ -253,6 +261,10 @@ func New(cfg config.Config, runner compose.Runner) tea.Model {
 	chatInput.CharLimit = 0
 	chatInput.Width = 80
 
+	sessionName := textinput.New()
+	sessionName.Placeholder = "optional session name"
+	sessionName.Width = 40
+
 	approvalSession := textinput.New()
 	approvalSession.Placeholder = "session-id"
 	approvalSession.Width = 40
@@ -290,6 +302,7 @@ func New(cfg config.Config, runner compose.Runner) tea.Model {
 		selectedWorkspace: 0,
 		messageOutput:     msgVp,
 		chatInput:         chatInput,
+		sessionNameInput:  sessionName,
 		approvalsSession:  approvalSession,
 		workspaceName:     workspaceName,
 		workspaceRootPath: workspaceRoot,
@@ -372,7 +385,7 @@ func (m model) sendChatCmd(agentID int64, sessionID, text string) tea.Cmd {
 		ctx := context.Background()
 		resolvedSession := sessionID
 		if strings.TrimSpace(resolvedSession) == "" {
-			created, err := m.client.CreateSession(ctx, agentID)
+			created, err := m.client.CreateSession(ctx, agentID, "")
 			if err != nil {
 				return errMsg{err: err}
 			}
@@ -471,6 +484,49 @@ func (m model) selectedSessionID() string {
 	return m.sessions[idx].SessionID
 }
 
+func (m model) selectedSessionSummary() *api.SessionSummary {
+	if len(m.sessions) == 0 {
+		return nil
+	}
+	idx := m.selectedSession
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(m.sessions) {
+		idx = len(m.sessions) - 1
+	}
+	return &m.sessions[idx]
+}
+
+func (m model) selectableSessionIndexes() []int {
+	if len(m.sessions) == 0 {
+		return nil
+	}
+
+	indexes := make([]int, 0, len(m.sessions))
+	for i, session := range m.sessions {
+		if m.showToolSessions || session.VisibleInSidebar {
+			indexes = append(indexes, i)
+		}
+	}
+	return indexes
+}
+
+func (m *model) ensureSessionSelectionVisible() {
+	indexes := m.selectableSessionIndexes()
+	if len(indexes) == 0 {
+		m.selectedSession = 0
+		return
+	}
+
+	for _, idx := range indexes {
+		if idx == m.selectedSession {
+			return
+		}
+	}
+	m.selectedSession = indexes[0]
+}
+
 func (m *model) syncAgentInputsFromSelection() {
 	if len(m.agents) == 0 {
 		return
@@ -507,6 +563,7 @@ func (m *model) syncWorkspaceInputsFromSelection() {
 
 func (m *model) applyFocus() {
 	m.chatInput.Blur()
+	m.sessionNameInput.Blur()
 	m.approvalsSession.Blur()
 	m.agentNameInput.Blur()
 	m.agentModelInput.Blur()
@@ -518,6 +575,8 @@ func (m *model) applyFocus() {
 	case tabChat:
 		if m.chatFocus == 1 {
 			m.approvalsSession.Focus()
+		} else if m.chatFocus == 2 {
+			m.sessionNameInput.Focus()
 		} else {
 			m.chatFocus = 0
 			m.chatInput.Focus()
@@ -580,6 +639,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.chatInput.Width = max(20, m.width-10)
+		m.sessionNameInput.Width = max(20, m.width-10)
 		m.messageOutput.Width = max(30, m.width-6)
 		m.messageOutput.Height = max(8, m.height-16)
 		m.composeOutput.Width = max(30, m.width-6)
@@ -619,10 +679,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "No sessions for selected agent"
 			break
 		}
-		if m.selectedSession >= len(m.sessions) {
-			m.selectedSession = 0
+		m.ensureSessionSelectionVisible()
+		sid := m.selectedSessionID()
+		if sid == "" {
+			m.messages = nil
+			m.messageOutput.SetContent("")
+			m.status = "No visible sessions for selected agent (press ctrl+t to show tool sessions)"
+			break
 		}
-		cmds = append(cmds, m.loadHistoryCmd(m.selectedSessionID(), false))
+		cmds = append(cmds, m.loadHistoryCmd(sid, false))
 		m.status = fmt.Sprintf("Loaded %d sessions", len(m.sessions))
 	case historyLoadedMsg:
 		if msg.session != m.selectedSessionID() {
@@ -646,6 +711,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Message sent"
 		cmds = append(cmds, m.loadSessionsCmd(m.selectedAgentID()), m.loadHistoryCmd(msg.sessionID, true))
 		m.polling = true
+	case sessionUpdatedMsg:
+		m.status = msg.status
+		cmds = append(cmds, m.loadSessionsCmd(m.selectedAgentID()), m.loadHistoryCmd(msg.sessionID, false))
 	case pollTickMsg:
 		if m.polling {
 			sid := m.selectedSessionID()
@@ -736,7 +804,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tabChat:
 			switch msg.String() {
 			case "ctrl+o":
-				m.chatFocus = (m.chatFocus + 1) % 2
+				m.chatFocus = (m.chatFocus + 1) % 3
 				m.applyFocus()
 			case "ctrl+a":
 				if len(m.agents) > 0 {
@@ -746,22 +814,60 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, m.loadSessionsCmd(selected.ID), m.loadAgentWorkspacesCmd(selected.ID))
 				}
 			case "ctrl+s":
-				if len(m.sessions) > 0 {
-					m.selectedSession = (m.selectedSession + 1) % len(m.sessions)
+				indexes := m.selectableSessionIndexes()
+				if len(indexes) > 0 {
+					currentPos := 0
+					for i, idx := range indexes {
+						if idx == m.selectedSession {
+							currentPos = i
+							break
+						}
+					}
+					nextPos := (currentPos + 1) % len(indexes)
+					m.selectedSession = indexes[nextPos]
 					cmds = append(cmds, m.loadHistoryCmd(m.selectedSessionID(), false))
 				}
 			case "ctrl+n":
 				if id := m.selectedAgentID(); id != 0 {
 					text := strings.TrimSpace(m.chatInput.Value())
 					if text == "" {
+						sessionName := strings.TrimSpace(m.sessionNameInput.Value())
 						cmds = append(cmds, func() tea.Msg {
-							created, err := m.client.CreateSession(context.Background(), id)
+							created, err := m.client.CreateSession(context.Background(), id, sessionName)
 							if err != nil {
 								return errMsg{err: err}
 							}
-							return sendDoneMsg{sessionID: created.SessionID}
+							return sessionUpdatedMsg{
+								sessionID: created.SessionID,
+								status:    "Session created",
+							}
 						})
 					}
+				}
+			case "ctrl+e":
+				sid := m.selectedSessionID()
+				name := strings.TrimSpace(m.sessionNameInput.Value())
+				if sid != "" && name != "" {
+					cmds = append(cmds, func() tea.Msg {
+						if err := m.client.RenameSession(context.Background(), sid, name); err != nil {
+							return errMsg{err: err}
+						}
+						return sessionUpdatedMsg{
+							sessionID: sid,
+							status:    "Session renamed",
+						}
+					})
+				}
+			case "ctrl+t":
+				m.showToolSessions = !m.showToolSessions
+				m.ensureSessionSelectionVisible()
+				if sid := m.selectedSessionID(); sid != "" {
+					cmds = append(cmds, m.loadHistoryCmd(sid, false))
+				}
+				if m.showToolSessions {
+					m.status = "Showing tool sessions"
+				} else {
+					m.status = "Hiding tool sessions"
 				}
 			case "ctrl+r":
 				if id := m.selectedAgentID(); id != 0 {
@@ -824,6 +930,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messageOutput, cmd = m.messageOutput.Update(msg)
 			cmds = append(cmds, cmd)
 			m.approvalsSession, cmd = m.approvalsSession.Update(msg)
+			cmds = append(cmds, cmd)
+			m.sessionNameInput, cmd = m.sessionNameInput.Update(msg)
 			cmds = append(cmds, cmd)
 		case tabAgents:
 			switch msg.String() {
@@ -1024,10 +1132,20 @@ func (m model) renderChat() string {
 		}
 		agentName = fmt.Sprintf("%d:%s", m.agents[idx].ID, m.agents[idx].Name)
 	}
-	sessionID := m.selectedSessionID()
-	if sessionID == "" {
-		sessionID = "none"
+	sessionSummary := m.selectedSessionSummary()
+	sessionLabel := "none"
+	sessionUpdated := "-"
+	if sessionSummary != nil {
+		if sessionSummary.Name != nil && strings.TrimSpace(*sessionSummary.Name) != "" {
+			sessionLabel = *sessionSummary.Name
+		} else {
+			sessionLabel = sessionSummary.SessionID
+		}
+		if strings.TrimSpace(sessionSummary.UpdatedAt) != "" {
+			sessionUpdated = sessionSummary.UpdatedAt
+		}
 	}
+	visibleCount := len(m.selectableSessionIndexes())
 
 	metaTotalHeight, messagesTotalHeight, approvalsTotalHeight, inputTotalHeight := m.chatSectionHeights()
 	messagesInnerHeight := max(1, messagesTotalHeight-2)
@@ -1037,12 +1155,24 @@ func (m model) renderChat() string {
 	msgViewport.Width = max(30, m.width-6)
 
 	meta := panelStyle.Width(max(20, m.width-2)).MaxHeight(metaTotalHeight).Render(
-		fmt.Sprintf("Agent: %s | Session: %s | Sessions: %d", agentName, sessionID, len(m.sessions)) + "\n" +
-			"ctrl+a:next-agent ctrl+s:next-session ctrl+n:new-session ctrl+r:refresh enter:send",
+		fmt.Sprintf(
+			"Agent: %s | Session: %s | Visible: %d/%d | Updated: %s",
+			agentName,
+			sessionLabel,
+			visibleCount,
+			len(m.sessions),
+			sessionUpdated,
+		) + "\n" +
+			"ctrl+a:next-agent ctrl+s:next-session ctrl+n:new ctrl+e:rename ctrl+t:toggle tool sessions ctrl+r:refresh enter:send",
 	)
 	messages := panelStyle.Width(max(20, m.width-2)).MaxHeight(messagesTotalHeight).Render(msgViewport.View())
 	approvals := panelStyle.Width(max(20, m.width-2)).MaxHeight(approvalsTotalHeight).Render(m.renderApprovals())
-	input := panelStyle.Width(max(20, m.width-2)).MaxHeight(inputTotalHeight).Render("Message\n" + m.chatInput.View() + "\nApprovals session (ctrl+o focus): " + m.approvalsSession.View() + "\nctrl+p:load approvals ctrl+y:approve ctrl+d:reject")
+	input := panelStyle.Width(max(20, m.width-2)).MaxHeight(inputTotalHeight).Render(
+		"Message\n" + m.chatInput.View() +
+			"\nApprovals session (ctrl+o focus): " + m.approvalsSession.View() +
+			"\nSession name (ctrl+o focus): " + m.sessionNameInput.View() +
+			"\nctrl+p:load approvals ctrl+y:approve ctrl+d:reject",
+	)
 	return lipgloss.JoinVertical(lipgloss.Left, meta, messages, approvals, input)
 }
 

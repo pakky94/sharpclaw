@@ -142,13 +142,13 @@
 }
 
 .session-card {
-  width: 100%;
-  text-align: left;
   border: 1px solid #d5c8b5;
   background: #fcf7ec;
   border-radius: 12px;
   padding: 10px;
-  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .session-card.selected {
@@ -157,8 +157,12 @@
 }
 
 .session-card-selected {
-  border-color: #1f4db8;
-  background: #edf3ff;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
 }
 
 .session-id {

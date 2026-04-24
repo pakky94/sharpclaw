@@ -22,8 +22,12 @@ public class Agent(
     private readonly ConcurrentDictionary<Guid, AgentSessionState> _sessions = new();
     private readonly SemaphoreSlim _sessionsMutex = new(1, 1);
 
-    public async Task<Guid> CreateSession(long agentId = 1, Guid? parentSessionId = null,
-        string[]? workspaces = null)
+    public async Task<Guid> CreateSession(
+        long agentId = 1,
+        Guid? parentSessionId = null,
+        string[]? workspaces = null,
+        string? name = null,
+        bool visibleInSidebar = true)
     {
         var agentConfig = await repository.GetAgent(agentId)
                           ?? throw new KeyNotFoundException($"Agent {agentId} was not found.");
@@ -45,7 +49,7 @@ public class Agent(
             ActiveWorkspaceNames = activeWorkspaces,
         };
 
-        await repository.CreateSession(sessionId, agentId, parentSessionId);
+        await repository.CreateSession(sessionId, agentId, parentSessionId, name, visibleInSidebar);
         if (workspaces is not null)
             await workspaceRepository.SetActiveWorkspacesForSession(sessionId, agentId, workspaces);
         _sessions[sessionId] = new AgentSessionState(sessionId, context, parentSessionId: parentSessionId);
@@ -160,7 +164,8 @@ public class Agent(
                         var childSessionId = await CreateSession(
                             queuedTask.AgentId ?? session.Context.AgentId,
                             parentSessionId: sessionId,
-                            workspaces: session.Context.ActiveWorkspaceNames.ToArray());
+                            workspaces: session.Context.ActiveWorkspaceNames.ToArray(),
+                            visibleInSidebar: false);
                         await repository.AddSessionTask(sessionId, queuedTask.CallId, childSessionId);
                         session.Run.SessionDependencies.Add(new SessionDependency(childSessionId, queuedTask.CallId));
                         session.Run.AppendChildSessionSpawned(queuedTask.CallId, childSessionId, queuedTask.ChildDescription);
@@ -366,10 +371,20 @@ public class Agent(
             .Select(s => new AgentSessionDto(
                 SessionId: s.SessionId,
                 AgentId: s.AgentId,
+                Name: s.Name,
+                VisibleInSidebar: s.VisibleInSidebar,
                 ParentSessionId: s.ParentSessionId,
                 CreatedAt: new DateTimeOffset(DateTime.SpecifyKind(s.CreatedAt, DateTimeKind.Utc)),
+                UpdatedAt: new DateTimeOffset(DateTime.SpecifyKind(s.UpdatedAt, DateTimeKind.Utc)),
                 MessagesCount: checked((int)s.MessagesCount)))
             .ToArray();
+    }
+
+    public async Task<string?> RenameSession(Guid sessionId, string name)
+    {
+        var session = await repository.RenameSession(sessionId, name)
+                      ?? throw new KeyNotFoundException($"Session {sessionId} was not found.");
+        return session.Name;
     }
 
     public AgentRunState? GetActiveRunForSession(Guid sessionId)

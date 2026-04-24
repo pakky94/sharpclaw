@@ -37,6 +37,8 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__sharpclaw: Host=db;Port=5432;Database=sharpclaw;Username=sharpclaw;Password=sharpclaw
+      LmStudio__Endpoint: 'http://172.17.240.1:11434/v1/'
+      LmStudio__ApiKey: 'ollama'
       LmStudio__EmbeddingEndpoint: 'http://ollama:11434'
       LmStudio__EmbeddingApiKey: 'ollama'
       LmStudio__EmbeddingModel: 'qwen3-embedding:0.6b'

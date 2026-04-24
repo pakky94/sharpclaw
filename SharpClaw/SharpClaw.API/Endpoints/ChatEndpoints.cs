@@ -13,8 +13,35 @@ public static class ChatEndpoints
             [FromServices] Agent agent
         ) =>
         {
-            var sessionId = await agent.CreateSession(request?.AgentId ?? 1);
+            var name = request?.Name?.Trim();
+            if (name is { Length: 0 })
+                name = null;
+
+            var sessionId = await agent.CreateSession(
+                request?.AgentId ?? 1,
+                name: name);
             return Results.Ok(new { sessionId });
+        });
+
+        app.MapPatch("/sessions/{sessionId:guid}", async (
+            Guid sessionId,
+            [FromBody] RenameSessionRequest? request,
+            [FromServices] Agent agent
+        ) =>
+        {
+            var name = request?.Name?.Trim();
+            if (string.IsNullOrWhiteSpace(name))
+                return Results.BadRequest(new { error = "Session name is required." });
+
+            try
+            {
+                var updatedName = await agent.RenameSession(sessionId, name);
+                return Results.Ok(new { sessionId, name = updatedName });
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
         });
 
         app.MapPost("/sessions/{sessionId:guid}/messages", async (
@@ -160,6 +187,12 @@ public static class ChatEndpoints
 public class CreateSessionRequest
 {
     public long? AgentId { get; set; }
+    public string? Name { get; set; }
+}
+
+public class RenameSessionRequest
+{
+    public string Name { get; set; } = string.Empty;
 }
 
 public class MessageRequest

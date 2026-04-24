@@ -48,6 +48,8 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                 create table if not exists sessions(
                     id uuid primary key,
                     agent_id bigint not null references agents(id),
+                    name varchar(255) null,
+                    visible_in_sidebar boolean not null default true,
                     status varchar(32) not null default 'completed'
                         check (status in ('waiting', 'pending', 'running', 'completed', 'failed')),
                     parent_session_id uuid null references sessions(id),
@@ -135,6 +137,18 @@ public partial class DatabaseSeeder(IConfiguration configuration)
 
                 create index if not exists idx_sessions_agent_created_at
                     on sessions(agent_id, created_at desc);
+                create index if not exists idx_sessions_agent_updated_at
+                    on sessions(agent_id, updated_at desc);
+
+                alter table sessions
+                    add column if not exists name varchar(255) null;
+                alter table sessions
+                    add column if not exists visible_in_sidebar boolean not null default true;
+
+                update sessions
+                set visible_in_sidebar = false
+                where parent_session_id is not null
+                  and visible_in_sidebar = true;
 
                 create index if not exists idx_messages_session_created_at
                     on messages(session_id, created_at, id);

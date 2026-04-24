@@ -37,11 +37,14 @@ type AgentConfig struct {
 }
 
 type SessionSummary struct {
-	SessionID       string `json:"sessionId"`
-	AgentID         int64  `json:"agentId"`
-	ParentSessionID *string `json:"parentSessionId"`
-	CreatedAt       string `json:"createdAt"`
-	MessagesCount   int64  `json:"messagesCount"`
+	SessionID        string  `json:"sessionId"`
+	AgentID          int64   `json:"agentId"`
+	Name             *string `json:"name"`
+	VisibleInSidebar bool    `json:"visibleInSidebar"`
+	ParentSessionID  *string `json:"parentSessionId"`
+	CreatedAt        string  `json:"createdAt"`
+	UpdatedAt        string  `json:"updatedAt"`
+	MessagesCount    int64   `json:"messagesCount"`
 }
 
 type SessionHistoryResponse struct {
@@ -103,11 +106,11 @@ type AgentFile struct {
 }
 
 type ApprovalEvent struct {
-	ApprovalToken string `json:"approvalToken"`
-	ActionType    string `json:"actionType"`
+	ApprovalToken string  `json:"approvalToken"`
+	ActionType    string  `json:"actionType"`
 	TargetPath    *string `json:"targetPath"`
 	Command       *string `json:"commandPreview"`
-	RiskLevel     string `json:"riskLevel"`
+	RiskLevel     string  `json:"riskLevel"`
 }
 
 type CreateSessionResponse struct {
@@ -208,10 +211,20 @@ func (c *Client) ListAgentSessions(ctx context.Context, agentID int64) ([]Sessio
 	return res.Sessions, nil
 }
 
-func (c *Client) CreateSession(ctx context.Context, agentID int64) (CreateSessionResponse, error) {
+func (c *Client) CreateSession(ctx context.Context, agentID int64, name string) (CreateSessionResponse, error) {
 	var out CreateSessionResponse
-	err := c.doJSON(ctx, http.MethodPost, "/sessions", map[string]any{"agentId": agentID}, &out)
+	payload := map[string]any{"agentId": agentID}
+	if strings.TrimSpace(name) != "" {
+		payload["name"] = name
+	}
+	err := c.doJSON(ctx, http.MethodPost, "/sessions", payload, &out)
 	return out, err
+}
+
+func (c *Client) RenameSession(ctx context.Context, sessionID, name string) error {
+	return c.doJSON(ctx, http.MethodPatch, fmt.Sprintf("/sessions/%s", sessionID), map[string]any{
+		"name": name,
+	}, nil)
 }
 
 func (c *Client) SendMessage(ctx context.Context, sessionID, message string) (SendMessageResponse, error) {

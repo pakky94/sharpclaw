@@ -194,16 +194,16 @@ public class Repository(IConfiguration configuration)
         return true;
     }
 
-    public async Task CreateSession(Guid sessionId, long agentId, Guid? parentSessionId)
+    public async Task CreateSession(Guid sessionId, long agentId, Guid? parentSessionId, string? name, bool visibleInSidebar)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.ExecuteAsync(
             """
-            insert into sessions (id, agent_id, parent_session_id)
-            values (@sessionId, @agentId, @parentSessionId)
+            insert into sessions (id, agent_id, parent_session_id, name, visible_in_sidebar)
+            values (@sessionId, @agentId, @parentSessionId, @name, @visibleInSidebar)
             on conflict (id) do nothing;
             """,
-            new { sessionId, agentId, parentSessionId });
+            new { sessionId, agentId, parentSessionId, name, visibleInSidebar });
     }
 
     public async Task<PersistedSession?> GetSession(Guid sessionId)
@@ -213,29 +213,52 @@ public class Repository(IConfiguration configuration)
             """
             select id as SessionId,
                    agent_id as AgentId,
+                   name as Name,
+                   visible_in_sidebar as VisibleInSidebar,
                    parent_session_id as ParentSessionId,
-                   created_at as CreatedAt
+                   created_at as CreatedAt,
+                   updated_at as UpdatedAt
             from sessions
             where id = @sessionId;
             """,
             new { sessionId });
     }
 
-    public async Task<PersistedSession?> UpdateSession(Guid sessionId, AgentRunStatus status)
+    public async Task UpdateSession(Guid sessionId, AgentRunStatus status)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
-        return await connection.QueryFirstOrDefaultAsync<PersistedSession>(
+        await connection.ExecuteAsync(
             """
             update sessions
             set status = @status,
                 updated_at = now()
-            where id = @sessionId;
+            where id = @sessionId
             """,
             new
             {
                 sessionId,
                 status = status.ToString().ToLowerInvariant(),
             });
+    }
+
+    public async Task<PersistedSession?> RenameSession(Guid sessionId, string name)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        return await connection.QueryFirstOrDefaultAsync<PersistedSession>(
+            """
+            update sessions
+            set name = @name,
+                updated_at = now()
+            where id = @sessionId
+            returning id as SessionId,
+                      agent_id as AgentId,
+                      name as Name,
+                      visible_in_sidebar as VisibleInSidebar,
+                      parent_session_id as ParentSessionId,
+                      created_at as CreatedAt,
+                      updated_at as UpdatedAt;
+            """,
+            new { sessionId, name });
     }
 
     public async Task AddSessionTask(Guid sessionId,
@@ -304,8 +327,11 @@ public class Repository(IConfiguration configuration)
             """
             select s.id as SessionId,
                    s.agent_id as AgentId,
+                   s.name as Name,
+                   s.visible_in_sidebar as VisibleInSidebar,
                    s.parent_session_id as ParentSessionId,
                    s.created_at as CreatedAt,
+                   s.updated_at as UpdatedAt,
                    coalesce((
                        select count(*)
                        from conversation_history ch
@@ -313,7 +339,7 @@ public class Repository(IConfiguration configuration)
                    ), 0) as MessagesCount
             from sessions s
             where s.agent_id = @agentId
-            order by s.created_at desc;
+            order by s.updated_at desc, s.created_at desc;
             """,
             new { agentId });
 
@@ -1010,8 +1036,8 @@ public class Repository(IConfiguration configuration)
     }
 }
 
-public record PersistedSession(Guid SessionId, long AgentId, Guid? ParentSessionId, DateTime CreatedAt);
-public record PersistedSessionSummary(Guid SessionId, long AgentId, Guid? ParentSessionId, DateTime CreatedAt, long MessagesCount);
+public record PersistedSession(Guid SessionId, long AgentId, string? Name, bool VisibleInSidebar, Guid? ParentSessionId, DateTime CreatedAt, DateTime UpdatedAt);
+public record PersistedSessionSummary(Guid SessionId, long AgentId, string? Name, bool VisibleInSidebar, Guid? ParentSessionId, DateTime CreatedAt, DateTime UpdatedAt, long MessagesCount);
 public record SessionTaskLink(string CallId, Guid ChildSessionId, bool Completed);
 public record PersistedRawMessage(long MessageId, DateTime CreatedAt, ChatResponse Response);
 public record LcmSummaryRecord(
