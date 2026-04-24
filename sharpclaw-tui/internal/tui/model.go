@@ -120,6 +120,132 @@ func tabAtX(x int) tab {
 	return tabChat
 }
 
+func (m model) chatSectionHeights() (metaTotalHeight, messagesTotalHeight, approvalsTotalHeight, inputTotalHeight int) {
+	totalAvailable := max(10, m.height-3)
+	metaTotalHeight = 4
+	inputTotalHeight = 6
+	approvalsRows := len(strings.Split(m.renderApprovals(), "\n"))
+	approvalsTotalHeight = min(7, max(4, approvalsRows+2))
+	messagesTotalHeight = totalAvailable - metaTotalHeight - approvalsTotalHeight - inputTotalHeight
+	if messagesTotalHeight < 5 {
+		shortage := 5 - messagesTotalHeight
+		for shortage > 0 && approvalsTotalHeight > 4 {
+			approvalsTotalHeight--
+			shortage--
+		}
+		for shortage > 0 && inputTotalHeight > 4 {
+			inputTotalHeight--
+			shortage--
+		}
+		messagesTotalHeight = 5
+	}
+	return
+}
+
+func (m *model) handleChatMouseClick(y int) {
+	bodyY := y - 1
+	if bodyY < 0 {
+		return
+	}
+	metaH, messagesH, approvalsH, _ := m.chatSectionHeights()
+
+	if bodyY < metaH {
+		return
+	}
+	bodyY -= metaH
+	if bodyY < messagesH {
+		return
+	}
+	bodyY -= messagesH
+	if bodyY < approvalsH {
+		row := bodyY - 1
+		if row >= 0 && row < len(m.approvals) {
+			m.selectedApproval = row
+		}
+		return
+	}
+	bodyY -= approvalsH
+	inputRow := bodyY - 1
+	if inputRow <= 1 {
+		m.chatFocus = 0
+	} else {
+		m.chatFocus = 1
+	}
+	m.applyFocus()
+}
+
+func (m *model) handleAgentsMouseClick(x, y int) []tea.Cmd {
+	var cmds []tea.Cmd
+	bodyY := y - 1
+	panelH := max(8, m.height-10)
+	if bodyY < 0 || bodyY >= panelH {
+		return nil
+	}
+
+	innerY := bodyY - 1
+	leftW := max(30, m.width/2-2)
+	if x < leftW {
+		if innerY >= 0 && innerY < len(m.agents) {
+			m.selectedAgent = innerY
+			m.syncAgentInputsFromSelection()
+			selectedID := m.selectedAgentID()
+			if selectedID != 0 {
+				cmds = append(cmds, m.loadSessionsCmd(selectedID), m.loadAgentWorkspacesCmd(selectedID))
+			}
+		}
+		return cmds
+	}
+
+	switch innerY {
+	case 1:
+		m.agentFieldFocus = 0
+		m.applyFocus()
+	case 2:
+		m.agentFieldFocus = 1
+		m.applyFocus()
+	case 3:
+		m.agentFieldFocus = 2
+		m.applyFocus()
+	}
+	return cmds
+}
+
+func (m *model) handleWorkspacesMouseClick(x, y int) []tea.Cmd {
+	bodyY := y - 1
+	panelH := max(8, m.height-10)
+	if bodyY < 0 || bodyY >= panelH {
+		return nil
+	}
+	innerY := bodyY - 1
+
+	leftW := max(30, m.width/2-2)
+	if x < leftW {
+		if innerY >= 0 && innerY < len(m.workspaces) {
+			m.selectedWorkspace = innerY
+			m.syncWorkspaceInputsFromSelection()
+		}
+		return nil
+	}
+
+	switch innerY {
+	case 1:
+		m.workspaceFieldFocus = 0
+		m.applyFocus()
+		return nil
+	case 2:
+		m.workspaceFieldFocus = 1
+		m.applyFocus()
+		return nil
+	}
+
+	assignedStart := 5
+	row := innerY - assignedStart
+	if row >= 0 && row < len(m.agentWorkspaces) {
+		m.selectedAssignment = row
+	}
+	return nil
+}
+
 func New(cfg config.Config, runner compose.Runner) tea.Model {
 	chatInput := textinput.New()
 	chatInput.Placeholder = "Type message and press Enter"
@@ -566,6 +692,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.applyFocus()
 			return m, nil
 		}
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			switch m.activeTab {
+			case tabChat:
+				m.handleChatMouseClick(msg.Y)
+			case tabAgents:
+				cmds = append(cmds, m.handleAgentsMouseClick(msg.X, msg.Y)...)
+			case tabWorkspaces:
+				cmds = append(cmds, m.handleWorkspacesMouseClick(msg.X, msg.Y)...)
+			}
+		}
 
 		switch msg.Button {
 		case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
@@ -893,24 +1029,7 @@ func (m model) renderChat() string {
 		sessionID = "none"
 	}
 
-	totalAvailable := max(10, m.height-3)
-	metaTotalHeight := 4
-	inputTotalHeight := 6
-	approvalsRows := len(strings.Split(m.renderApprovals(), "\n"))
-	approvalsTotalHeight := min(7, max(4, approvalsRows+2))
-	messagesTotalHeight := totalAvailable - metaTotalHeight - approvalsTotalHeight - inputTotalHeight
-	if messagesTotalHeight < 5 {
-		shortage := 5 - messagesTotalHeight
-		for shortage > 0 && approvalsTotalHeight > 4 {
-			approvalsTotalHeight--
-			shortage--
-		}
-		for shortage > 0 && inputTotalHeight > 4 {
-			inputTotalHeight--
-			shortage--
-		}
-		messagesTotalHeight = 5
-	}
+	metaTotalHeight, messagesTotalHeight, approvalsTotalHeight, inputTotalHeight := m.chatSectionHeights()
 	messagesInnerHeight := max(1, messagesTotalHeight-2)
 
 	msgViewport := m.messageOutput
