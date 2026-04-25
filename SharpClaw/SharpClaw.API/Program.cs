@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using SharpClaw.API.Agents;
 using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database;
+using SharpClaw.API.Database.Repositories;
 using SharpClaw.API.Endpoints;
 using SharpClaw.API.Web;
 
@@ -10,7 +11,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 
 builder.Services.AddTransient<DatabaseSeeder>();
-builder.Services.AddSingleton<Repository>();
+builder.Services.AddSingleton<ChatRepository>();
+builder.Services.AddSingleton<AgentsRepository>();
 builder.Services.AddSingleton<FragmentsRepository>();
 builder.Services.AddSingleton<WorkspaceRepository>();
 builder.Services.AddSingleton<ApprovalService>();

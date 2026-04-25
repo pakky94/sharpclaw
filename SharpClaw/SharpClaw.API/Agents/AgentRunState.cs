@@ -21,8 +21,7 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
     private long _currentMessageId = 0;
     private long _sequence = 0;
 
-    public Guid SessionId { get; } = sessionId;
-    public DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
+    public Guid SessionId => sessionId;
     public DateTimeOffset? StartedAt { get; private set; }
     public long StartMessageId { get; set; }
     public DateTimeOffset? CompletedAt { get; private set; }

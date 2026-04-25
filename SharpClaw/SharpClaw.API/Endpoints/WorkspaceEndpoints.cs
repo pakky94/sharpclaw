@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using SharpClaw.API.Agents;
 using SharpClaw.API.Agents.Workspace;
-using SharpClaw.API.Database;
+using SharpClaw.API.Database.Repositories;
 
 namespace SharpClaw.API.Endpoints;
 
@@ -58,7 +58,7 @@ public static class WorkspaceEndpoints
         app.MapGet("/agents/{agentId:long}/workspaces", async (
             long agentId,
             [FromServices] WorkspaceRepository repository,
-            [FromServices] Repository repo) =>
+            [FromServices] AgentsRepository repo) =>
         {
             var agent = await repo.GetAgent(agentId);
             if (agent is null)
@@ -93,7 +93,7 @@ public static class WorkspaceEndpoints
             long workspaceId,
             [FromBody] AssignWorkspaceRequest request,
             [FromServices] WorkspaceRepository repository,
-            [FromServices] Repository repo) =>
+            [FromServices] AgentsRepository repo) =>
         {
             var agent = await repo.GetAgent(agentId);
             if (agent is null)
@@ -185,7 +185,7 @@ public static class WorkspaceEndpoints
         app.MapGet("/sessions/{sessionId:guid}/active-workspaces", async (
             Guid sessionId,
             [FromServices] WorkspaceRepository repository,
-            [FromServices] Repository repo) =>
+            [FromServices] ChatRepository repo) =>
         {
             var session = await repo.GetSession(sessionId);
             if (session is null)
@@ -205,7 +205,7 @@ public static class WorkspaceEndpoints
             Guid sessionId,
             [FromBody] SetActiveWorkspacesRequest request,
             [FromServices] WorkspaceRepository repository,
-            [FromServices] Repository repo,
+            [FromServices] ChatRepository repo,
             [FromServices] Agent agent) =>
         {
             var session = await repo.GetSession(sessionId);
@@ -230,7 +230,7 @@ public static class WorkspaceEndpoints
         app.MapGet("/agents/{agentId:long}/available-workspaces", async (
             long agentId,
             [FromServices] WorkspaceRepository repository,
-            [FromServices] Repository repo) =>
+            [FromServices] AgentsRepository repo) =>
         {
             var agent = await repo.GetAgent(agentId);
             if (agent is null)

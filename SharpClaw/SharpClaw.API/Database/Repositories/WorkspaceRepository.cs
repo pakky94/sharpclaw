@@ -2,20 +2,11 @@ using Dapper;
 using Npgsql;
 using SharpClaw.API.Agents.Workspace;
 
-namespace SharpClaw.API.Database;
+namespace SharpClaw.API.Database.Repositories;
 
 public class WorkspaceRepository(IConfiguration configuration)
 {
     private string ConnectionString => configuration.GetConnectionString("sharpclaw")!;
-
-    public async Task<Workspace?> GetWorkspaceByName(string name)
-    {
-        await using var connection = new NpgsqlConnection(ConnectionString);
-        var result = await connection.QuerySingleOrDefaultAsync<WorkspaceRow>(
-            "select * from workspaces where name = @name",
-            new { name });
-        return result?.ToModel();
-    }
 
     public async Task<Workspace?> GetWorkspaceById(long id)
     {

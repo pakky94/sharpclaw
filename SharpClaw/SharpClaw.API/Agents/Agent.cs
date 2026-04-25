@@ -7,16 +7,17 @@ using SharpClaw.API.Agents.Tools.Lcm;
 using SharpClaw.API.Agents.Tools.Tasks;
 using SharpClaw.API.Agents.Tools.Web;
 using SharpClaw.API.Agents.Tools.Workspace;
-using SharpClaw.API.Database;
+using SharpClaw.API.Database.Repositories;
 using SharpClaw.API.Helpers;
 
 namespace SharpClaw.API.Agents;
 
 public class Agent(
     ChatProvider chatProvider,
-    Repository repository,
+    ChatRepository chatRepository,
     FragmentsRepository fragmentsRepository,
     WorkspaceRepository workspaceRepository,
+    AgentsRepository agentsRepository,
     ILogger<Agent> logger)
 {
     private readonly ConcurrentDictionary<Guid, AgentSessionState> _sessions = new();
@@ -29,7 +30,7 @@ public class Agent(
         string? name = null,
         bool visibleInSidebar = true)
     {
-        var agentConfig = await repository.GetAgent(agentId)
+        var agentConfig = await agentsRepository.GetAgent(agentId)
                           ?? throw new KeyNotFoundException($"Agent {agentId} was not found.");
         var sessionId = Guid.NewGuid();
 
@@ -49,7 +50,7 @@ public class Agent(
             ActiveWorkspaceNames = activeWorkspaces,
         };
 
-        await repository.CreateSession(sessionId, agentId, parentSessionId, name, visibleInSidebar);
+        await chatRepository.CreateSession(sessionId, agentId, parentSessionId, name, visibleInSidebar);
         if (workspaces is not null)
             await workspaceRepository.SetActiveWorkspacesForSession(sessionId, agentId, workspaces);
         _sessions[sessionId] = new AgentSessionState(sessionId, context, parentSessionId: parentSessionId);
@@ -85,8 +86,8 @@ public class Agent(
                     },
                 });
 
-            await repository.PersistMessage(sessionId, userMessage);
-            await repository.UpdateSession(sessionId, AgentRunStatus.Pending);
+            await chatRepository.PersistMessage(sessionId, userMessage);
+            await chatRepository.UpdateSession(sessionId, AgentRunStatus.Pending);
             session.Context.Messages.Add(userMessage);
         }
         catch (Exception ex)
@@ -149,7 +150,7 @@ public class Agent(
                 // TODO: add transaction here
                 foreach (var message in response.Responses)
                 {
-                    await repository.PersistMessage(sessionId, message);
+                    await chatRepository.PersistMessage(sessionId, message);
                 }
                 session.Context.Messages = [..session.Context.Messages, ..response.Responses];
 
@@ -166,7 +167,7 @@ public class Agent(
                             parentSessionId: sessionId,
                             workspaces: session.Context.ActiveWorkspaceNames.ToArray(),
                             visibleInSidebar: false);
-                        await repository.AddSessionTask(sessionId, queuedTask.CallId, childSessionId);
+                        await chatRepository.AddSessionTask(sessionId, queuedTask.CallId, childSessionId);
                         session.Run.SessionDependencies.Add(new SessionDependency(childSessionId, queuedTask.CallId));
                         session.Run.AppendChildSessionSpawned(queuedTask.CallId, childSessionId, queuedTask.ChildDescription);
                         var taskResultMessage = AttachChildSessionMetadataToToolResult(
@@ -177,23 +178,23 @@ public class Agent(
                             output: null,
                             description: queuedTask.ChildDescription);
                         if (taskResultMessage is not null)
-                            await repository.UpdateMessage(taskResultMessage);
+                            await chatRepository.UpdateMessage(taskResultMessage);
                         await EnqueueMessage(childSessionId, queuedTask.ChildPrompt);
                     }
                 }
 
                 if (response.QueuedTasks.Count > 0)
                 {
-                    await repository.UpdateSession(sessionId, AgentRunStatus.Waiting);
+                    await chatRepository.UpdateSession(sessionId, AgentRunStatus.Waiting);
                 } else if (response is not { ShouldContinue: true, QueuedTasks.Count: 0 })
                 {
                     run.MarkCompleted(); // TODO: rework this
-                    await repository.UpdateSession(sessionId, AgentRunStatus.Completed);
+                    await chatRepository.UpdateSession(sessionId, AgentRunStatus.Completed);
 
                     if (session.ParentSessionId is not null)
                     {
                         var taskResult = response.Responses.LastOrDefault(m => !string.IsNullOrWhiteSpace(m.Text))?.Text;
-                        var callId = await repository.CompleteSessionTask(
+                        var callId = await chatRepository.CompleteSessionTask(
                             sessionId,
                             session.ParentSessionId.Value,
                             taskResult);
@@ -235,7 +236,7 @@ public class Agent(
                                 output: taskResult,
                                 description: description);
                             content.Result = toolResult;
-                            await repository.UpdateMessage(message);
+                            await chatRepository.UpdateMessage(message);
                             parentSession.Run?.AppendToolResultForCall(callId, Serialization.SerializeToolPayload(toolResult));
 
                             parentSession.Run!.SessionDependencies.Remove(dep);
@@ -312,7 +313,7 @@ public class Agent(
                     && split.ToSummarize.All(m => session.Context.Messages.Contains(m))
                     && split.PostSummary.All(m => session.Context.Messages.Contains(m)))
                 {
-                    await repository.PersistSummaryAndCompactHistory(
+                    await chatRepository.PersistSummaryAndCompactHistory(
                         session.SessionId,
                         summary,
                         split.ToSummarize);
@@ -330,9 +331,9 @@ public class Agent(
     public async Task<SessionHistoryDto> GetHistory(Guid sessionId)
     {
         var session = await GetOrLoadSession(sessionId);
-        var childSessions = await repository.GetSessionTaskLinks(sessionId);
+        var childSessions = await chatRepository.GetSessionTaskLinks(sessionId);
 
-        var rawMessages = await repository.LoadRawMessages(sessionId);
+        var rawMessages = await chatRepository.LoadRawMessages(sessionId);
         var messages = new List<SessionMessageDto>(rawMessages.Count);
 
         foreach (var raw in rawMessages)
@@ -366,7 +367,7 @@ public class Agent(
 
     public async Task<IReadOnlyList<AgentSessionDto>> GetSessions(long agentId)
     {
-        var sessions = await repository.GetSessions(agentId);
+        var sessions = await chatRepository.GetSessions(agentId);
         return sessions
             .Select(s => new AgentSessionDto(
                 SessionId: s.SessionId,
@@ -382,7 +383,7 @@ public class Agent(
 
     public async Task<string?> RenameSession(Guid sessionId, string name)
     {
-        var session = await repository.RenameSession(sessionId, name)
+        var session = await chatRepository.RenameSession(sessionId, name)
                       ?? throw new KeyNotFoundException($"Session {sessionId} was not found.");
         return session.Name;
     }
@@ -417,15 +418,15 @@ public class Agent(
             if (_sessions.TryGetValue(sessionId, out existing))
                 return existing;
 
-            var persistedSession = await repository.GetSession(sessionId)
+            var persistedSession = await chatRepository.GetSession(sessionId)
                                    ?? throw new KeyNotFoundException($"Session {sessionId} was not found.");
-            var agentConfig = await repository.GetAgent(persistedSession.AgentId)
+            var agentConfig = await agentsRepository.GetAgent(persistedSession.AgentId)
                               ?? throw new KeyNotFoundException($"Agent {persistedSession.AgentId} was not found.");
 
             var defaultWs = await workspaceRepository.ResolveDefaultWorkspace(persistedSession.AgentId);
             var activeWsRows = await workspaceRepository.GetActiveWorkspacesForSession(sessionId);
             var activeWsNames = new HashSet<string>(activeWsRows.Select(r => r.WorkspaceName));
-            var sessionDependencies = await repository.GetSessionTaskLinks(sessionId);
+            var sessionDependencies = await chatRepository.GetSessionTaskLinks(sessionId);
 
             if (activeWsNames.Count == 0 && defaultWs is not null)
             {
@@ -438,7 +439,7 @@ public class Agent(
                 AgentId = persistedSession.AgentId,
                 LlmModel = agentConfig.LlmModel,
                 Temperature = agentConfig.Temperature,
-                Messages = [..await repository.LoadActiveConversation(sessionId)],
+                Messages = [..await chatRepository.LoadActiveConversation(sessionId)],
                 Workspace = defaultWs,
                 ActiveWorkspaceNames = activeWsNames,
             };

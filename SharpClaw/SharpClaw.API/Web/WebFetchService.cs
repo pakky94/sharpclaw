@@ -1,5 +1,3 @@
-using System.Net.Http;
-using System.Text;
 using AngleSharp.Html.Parser;
 
 namespace SharpClaw.API.Web;

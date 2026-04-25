@@ -1,5 +1,5 @@
 using Microsoft.Extensions.AI;
-using SharpClaw.API.Database;
+using SharpClaw.API.Database.Repositories;
 
 namespace SharpClaw.API.Agents.Tools.Lcm;
 
@@ -88,7 +88,7 @@ public static class LcmTools
     {
         var context = serviceProvider.GetRequiredService<AgentExecutionContext>();
         var configuration = serviceProvider.GetRequiredService<IConfiguration>();
-        var repository = new Repository(configuration);
+        var repository = new ChatRepository(configuration);
 
         var summary = await repository.GetLcmSummary(context.SessionId, summaryId);
         if (summary is null)
@@ -174,7 +174,7 @@ public static class LcmTools
 
         var context = serviceProvider.GetRequiredService<AgentExecutionContext>();
         var configuration = serviceProvider.GetRequiredService<IConfiguration>();
-        var repository = new Repository(configuration);
+        var repository = new ChatRepository(configuration);
 
         var summary = await repository.GetLcmSummary(context.SessionId, summaryId);
         if (summary is null)
@@ -258,7 +258,7 @@ public static class LcmTools
 
         var context = serviceProvider.GetRequiredService<AgentExecutionContext>();
         var configuration = serviceProvider.GetRequiredService<IConfiguration>();
-        var repository = new Repository(configuration);
+        var repository = new ChatRepository(configuration);
 
         var offset = (page - 1) * GrepPageSize;
         var fetched = await repository.SearchLcmMessagesRegex(

@@ -3,6 +3,7 @@ using Microsoft.Extensions.AI;
 using OpenAI.Chat;
 using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database;
+using SharpClaw.API.Database.Repositories;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace SharpClaw.API.Agents;
@@ -27,7 +28,8 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
             .Configure<LmStudioConfiguration>(configuration)
             .AddSingleton(context)
             .AddSingleton(configuration)
-            .AddSingleton<Repository>()
+            .AddSingleton<ChatRepository>()
+            .AddSingleton<AgentsRepository>()
             .AddSingleton<FragmentsRepository>()
             .AddSingleton<FragmentEmbeddingService>()
             .AddSingleton<WorkspaceRepository>()

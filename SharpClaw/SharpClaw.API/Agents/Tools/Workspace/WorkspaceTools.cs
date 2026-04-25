@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Workspace;
-using SharpClaw.API.Database;
+using SharpClaw.API.Database.Repositories;
 using SharpClaw.API.Helpers;
 
 namespace SharpClaw.API.Agents.Tools.Workspace;

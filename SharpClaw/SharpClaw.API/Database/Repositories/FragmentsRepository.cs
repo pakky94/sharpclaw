@@ -2,7 +2,7 @@ using System.Text.Json;
 using Dapper;
 using Npgsql;
 
-namespace SharpClaw.API.Database;
+namespace SharpClaw.API.Database.Repositories;
 
 public class FragmentsRepository(IConfiguration configuration, FragmentEmbeddingService embeddingService)
 {
@@ -970,3 +970,7 @@ public sealed record PendingFragmentEmbedding(
     string? Type,
     string Content,
     DateTime UpdatedAt);
+
+public record AgentDocumentSummary(string Name);
+public record AgentFragmentSummary(string Name, string Path, bool HasChildren);
+public record AgentDocument(string Path, string Content);

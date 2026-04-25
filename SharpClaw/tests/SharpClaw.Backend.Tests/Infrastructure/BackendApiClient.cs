@@ -173,7 +173,7 @@ public sealed class BackendApiClient(HttpClient client)
             seen.Add(new StreamEvent
             {
                 Type = eventType,
-                Payload = payload,
+                Payload = payload ?? string.Empty,
             });
 
             if (eventType == "completed" || requiredTypes.All(r => seen.Any(s => s.Type == r)))

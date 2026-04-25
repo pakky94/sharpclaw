@@ -1,3 +1,5 @@
+using SharpClaw.API.Database.Repositories;
+
 namespace SharpClaw.API.Database;
 
 public sealed class FragmentEmbeddingBackgroundService(

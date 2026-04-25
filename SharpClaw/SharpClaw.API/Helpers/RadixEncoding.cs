@@ -137,7 +137,7 @@ public class RadixEncoding
         for (int x = startIndex; x < chars.Length; x++)
         {
             int i = kDigits.IndexOf(chars[x]);
-            if (i < 0) return null; // invalid character
+            if (i < 0) return []; // invalid character
             bi *= kRadixBig;
             bi += i;
         }
@@ -160,10 +160,10 @@ public class RadixEncoding
     byte[] DecodeImplReversed(string chars, int startIndex = 0)
     {
         var bi = new BigInteger();
-        for (int x = (chars.Length-1)-startIndex; x >= 0; x--)
+        for (var x = (chars.Length-1)-startIndex; x >= 0; x--)
         {
-            int i = kDigits.IndexOf(chars[x]);
-            if (i < 0) return null; // invalid character
+            var i = kDigits.IndexOf(chars[x]);
+            if (i < 0) return []; // invalid character
             bi *= kRadixBig;
             bi += i;
         }
@@ -172,12 +172,12 @@ public class RadixEncoding
     }
     byte[] DecodeImplReversedWithPadding(string chars)
     {
-        int pad_count = 0;
-        for (int x = chars.Length - 1; x >= 0; x--, pad_count++)
+        var padCount = 0;
+        for (var x = chars.Length - 1; x >= 0; x--, padCount++)
             if (chars[x] != kDigits[0]) break;
 
-        var result = DecodeImplReversed(chars, pad_count);
-        DecodeImplPadResult(ref result, pad_count);
+        var result = DecodeImplReversed(chars, padCount);
+        DecodeImplPadResult(ref result, padCount);
 
         return result;
     }

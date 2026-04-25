@@ -121,11 +121,11 @@ public sealed class FragmentEmbeddingService(IOptions<LmStudioConfiguration> opt
 internal class OllamaTagsResponse
 {
     [JsonPropertyName("models")]
-    public List<ModelResponse> Models { get; init; }
+    public List<ModelResponse> Models { get; init; } = [];
 
     internal class ModelResponse
     {
         [JsonPropertyName("model")]
-        public string Model { get; init; }
+        public string? Model { get; init; }
     }
 }

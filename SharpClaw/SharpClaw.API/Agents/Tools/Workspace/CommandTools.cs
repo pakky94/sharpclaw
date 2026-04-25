@@ -4,7 +4,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Workspace;
-using SharpClaw.API.Database;
+using SharpClaw.API.Database.Repositories;
 
 namespace SharpClaw.API.Agents.Tools.Workspace;
 

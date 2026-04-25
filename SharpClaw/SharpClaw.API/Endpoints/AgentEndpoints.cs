@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using SharpClaw.API.Database;
+using SharpClaw.API.Database.Repositories;
 
 namespace SharpClaw.API.Endpoints;
 
@@ -7,7 +8,7 @@ public static class AgentEndpoints
 {
     public static void Register(WebApplication app)
     {
-        app.MapGet("/agents", async ([FromServices] Repository repository) =>
+        app.MapGet("/agents", async ([FromServices] AgentsRepository repository) =>
         {
             var agents = await repository.GetAgents();
             return Results.Ok(new { agents });
@@ -15,7 +16,7 @@ public static class AgentEndpoints
 
         app.MapGet("/agents/{agentId:long}", async (
             long agentId,
-            [FromServices] Repository repository
+            [FromServices] AgentsRepository repository
         ) =>
         {
             var agent = await repository.GetAgent(agentId);
@@ -26,7 +27,7 @@ public static class AgentEndpoints
 
         app.MapPost("/agents", async (
             [FromBody] CreateAgentRequest request,
-            [FromServices] Repository repository,
+            [FromServices] AgentsRepository repository,
             [FromServices] FragmentsRepository fragmentsRepository
         ) =>
         {
@@ -46,7 +47,7 @@ public static class AgentEndpoints
         app.MapPut("/agents/{agentId:long}", async (
             long agentId,
             [FromBody] UpdateAgentRequest request,
-            [FromServices] Repository repository
+            [FromServices] AgentsRepository repository
         ) =>
         {
             var name = request.Name.Trim();
@@ -65,7 +66,7 @@ public static class AgentEndpoints
         app.MapGet("/agents/{agentId:long}/fragments", async (
             long agentId,
             [FromQuery] string? parentPath,
-            [FromServices] Repository repository,
+            [FromServices] AgentsRepository repository,
             [FromServices] FragmentsRepository fragmentsRepository
         ) =>
         {
@@ -95,7 +96,7 @@ public static class AgentEndpoints
         app.MapPut("/agents/{agentId:long}/fragments/file", async (
             long agentId,
             [FromBody] UpsertAgentFileRequest request,
-            [FromServices] Repository repository,
+            [FromServices] AgentsRepository repository,
             [FromServices] FragmentsRepository fragmentsRepository
         ) =>
         {
