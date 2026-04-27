@@ -21,6 +21,7 @@ builder.Services.AddHostedService<FragmentEmbeddingBackgroundService>();
 builder.Services.Configure<LmStudioConfiguration>(builder.Configuration.GetSection("LmStudio"));
 builder.Services.Configure<BraveSearchConfiguration>(builder.Configuration.GetSection("WebSearch:Brave"));
 builder.Services.AddSingleton<ChatProvider>();
+builder.Services.AddSingleton<SessionStore>();
 builder.Services.AddSingleton<Agent>();
 
 // Web search services

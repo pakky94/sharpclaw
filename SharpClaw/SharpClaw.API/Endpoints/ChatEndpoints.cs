@@ -131,13 +131,13 @@ public static class ChatEndpoints
             Guid sessionId,
             long latestSequenceId,
             HttpContext httpContext,
-            [FromServices] Agent agent
+            [FromServices] SessionStore sessionStore
         ) =>
         {
             AgentSessionState session;
             try
             {
-                session = await agent.GetOrLoadSession(sessionId);
+                session = await sessionStore.GetOrLoadSession(sessionId);
             }
             catch (KeyNotFoundException ex)
             {

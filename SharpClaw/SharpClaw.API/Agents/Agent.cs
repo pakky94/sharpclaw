@@ -13,6 +13,7 @@ using SharpClaw.API.Helpers;
 namespace SharpClaw.API.Agents;
 
 public class Agent(
+    SessionStore sessionStore,
     ChatProvider chatProvider,
     ChatRepository chatRepository,
     FragmentsRepository fragmentsRepository,
@@ -20,9 +21,6 @@ public class Agent(
     AgentsRepository agentsRepository,
     ILogger<Agent> logger)
 {
-    private readonly ConcurrentDictionary<Guid, AgentSessionState> _sessions = new();
-    private readonly SemaphoreSlim _sessionsMutex = new(1, 1);
-
     public async Task<Guid> CreateSession(
         long agentId = 1,
         Guid? parentSessionId = null,
@@ -53,7 +51,7 @@ public class Agent(
         await chatRepository.CreateSession(sessionId, agentId, parentSessionId, name, visibleInSidebar);
         if (workspaces is not null)
             await workspaceRepository.SetActiveWorkspacesForSession(sessionId, agentId, workspaces);
-        _sessions[sessionId] = new AgentSessionState(sessionId, context, parentSessionId: parentSessionId);
+        await sessionStore.Add(new AgentSessionState(sessionId, context, parentSessionId: parentSessionId));
         return sessionId;
     }
 
@@ -61,7 +59,7 @@ public class Agent(
     // TODO: move task.run to a separate method
     public async Task<AgentRunState> EnqueueMessage(Guid sessionId, string prompt)
     {
-        var session = await GetOrLoadSession(sessionId);
+        var session = await sessionStore.GetOrLoadSession(sessionId);
 
         lock (session.RunsLock)
         {
@@ -199,7 +197,7 @@ public class Agent(
                             session.ParentSessionId.Value,
                             taskResult);
 
-                        var parentSession = await GetOrLoadSession(session.ParentSessionId.Value);
+                        var parentSession = await sessionStore.GetOrLoadSession(session.ParentSessionId.Value);
                         await parentSession.Mutex.WaitAsync();
                         try
                         {
@@ -330,7 +328,7 @@ public class Agent(
 
     public async Task<SessionHistoryDto> GetHistory(Guid sessionId)
     {
-        var session = await GetOrLoadSession(sessionId);
+        var session = await sessionStore.GetOrLoadSession(sessionId);
         var childSessions = await chatRepository.GetSessionTaskLinks(sessionId);
 
         var rawMessages = await chatRepository.LoadRawMessages(sessionId);
@@ -386,81 +384,6 @@ public class Agent(
         var session = await chatRepository.RenameSession(sessionId, name)
                       ?? throw new KeyNotFoundException($"Session {sessionId} was not found.");
         return session.Name;
-    }
-
-    public AgentRunState? GetActiveRunForSession(Guid sessionId)
-    {
-        if (!_sessions.TryGetValue(sessionId, out var session))
-            return null;
-
-        return session.Run is { Status: AgentRunStatus.Pending or AgentRunStatus.Running }
-            ? session.Run
-            : null;
-    }
-
-    public bool TryUpdateSessionActiveWorkspaces(Guid sessionId, string[] workspaceNames)
-    {
-        if (!_sessions.TryGetValue(sessionId, out var session))
-            return false;
-
-        session.Context.ActiveWorkspaceNames = new HashSet<string>(workspaceNames, StringComparer.OrdinalIgnoreCase);
-        return true;
-    }
-
-    public async Task<AgentSessionState> GetOrLoadSession(Guid sessionId)
-    {
-        if (_sessions.TryGetValue(sessionId, out var existing))
-            return existing;
-
-        await _sessionsMutex.WaitAsync();
-        try
-        {
-            if (_sessions.TryGetValue(sessionId, out existing))
-                return existing;
-
-            var persistedSession = await chatRepository.GetSession(sessionId)
-                                   ?? throw new KeyNotFoundException($"Session {sessionId} was not found.");
-            var agentConfig = await agentsRepository.GetAgent(persistedSession.AgentId)
-                              ?? throw new KeyNotFoundException($"Agent {persistedSession.AgentId} was not found.");
-
-            var defaultWs = await workspaceRepository.ResolveDefaultWorkspace(persistedSession.AgentId);
-            var activeWsRows = await workspaceRepository.GetActiveWorkspacesForSession(sessionId);
-            var activeWsNames = new HashSet<string>(activeWsRows.Select(r => r.WorkspaceName));
-            var sessionDependencies = await chatRepository.GetSessionTaskLinks(sessionId);
-
-            if (activeWsNames.Count == 0 && defaultWs is not null)
-            {
-                activeWsNames.Add(defaultWs.Name);
-            }
-
-            var context = new AgentExecutionContext
-            {
-                SessionId = sessionId,
-                AgentId = persistedSession.AgentId,
-                LlmModel = agentConfig.LlmModel,
-                Temperature = agentConfig.Temperature,
-                Messages = [..await chatRepository.LoadActiveConversation(sessionId)],
-                Workspace = defaultWs,
-                ActiveWorkspaceNames = activeWsNames,
-            };
-
-            var loadedSession = new AgentSessionState(
-                sessionId,
-                context,
-                parentSessionId: persistedSession.ParentSessionId,
-                createdAt: new DateTimeOffset(DateTime.SpecifyKind(persistedSession.CreatedAt, DateTimeKind.Utc)),
-                sessionDependencies: sessionDependencies
-                    .Where(sd => !sd.Completed)
-                    .Select(sd => new SessionDependency(sd.ChildSessionId, sd.CallId))
-                    .ToList()
-            );
-            _sessions[sessionId] = loadedSession;
-            return loadedSession;
-        }
-        finally
-        {
-            _sessionsMutex.Release();
-        }
     }
 
     private static List<AIFunction> BuildTools() =>
@@ -572,7 +495,7 @@ public class Agent(
 
     public async Task Resume(Guid sessionId)
     {
-        var session = await GetOrLoadSession(sessionId);
+        var session = await sessionStore.GetOrLoadSession(sessionId);
         _ = Task.Run(() => GetMessageResponse(sessionId, session, session.Run));
     }
 }

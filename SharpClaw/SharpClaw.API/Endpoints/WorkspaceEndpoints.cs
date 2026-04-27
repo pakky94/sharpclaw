@@ -123,10 +123,10 @@ public static class WorkspaceEndpoints
         app.MapPost("/sessions/{sessionId:guid}/approvals/{token}/approve", async (
             Guid sessionId,
             string token,
-            [FromServices] Agent agent,
+            [FromServices] SessionStore sessionStore,
             [FromServices] ApprovalService approvalService) =>
         {
-            var run = agent.GetActiveRunForSession(sessionId);
+            var run = sessionStore.GetActiveRunForSession(sessionId);
             if (run is not null)
             {
                 var resolved = run.ResolveApproval(token, true);
@@ -150,10 +150,10 @@ public static class WorkspaceEndpoints
         app.MapPost("/sessions/{sessionId:guid}/approvals/{token}/reject", async (
             Guid sessionId,
             string token,
-            [FromServices] Agent agent,
+            [FromServices] SessionStore sessionStore,
             [FromServices] ApprovalService approvalService) =>
         {
-            var run = agent.GetActiveRunForSession(sessionId);
+            var run = sessionStore.GetActiveRunForSession(sessionId);
             if (run is not null)
             {
                 var resolved = run.ResolveApproval(token, false);
@@ -206,7 +206,7 @@ public static class WorkspaceEndpoints
             [FromBody] SetActiveWorkspacesRequest request,
             [FromServices] WorkspaceRepository repository,
             [FromServices] ChatRepository repo,
-            [FromServices] Agent agent) =>
+            [FromServices] SessionStore sessionStore) =>
         {
             var session = await repo.GetSession(sessionId);
             if (session is null)
@@ -215,7 +215,7 @@ public static class WorkspaceEndpoints
             var names = request.WorkspaceNames ?? [];
             await repository.SetActiveWorkspacesForSession(sessionId, session.AgentId, names);
 
-            agent.TryUpdateSessionActiveWorkspaces(sessionId, names);
+            sessionStore.TryUpdateSessionActiveWorkspaces(sessionId, names);
 
             var active = await repository.GetActiveWorkspacesForSession(sessionId);
             var items = active.Select(r => new
