@@ -10,8 +10,17 @@ public partial class DatabaseSeeder
         
         ## Fragments
         
-        Fragments are your long-term memory, organized as a hierarchical tree. Each fragment has a stable ID and may contain text, code, or structured information. Use fragments to store useful knowledge, tasks, plans, and reusable data.
+        Fragments are your long-term memory, organized as a hierarchical tree. Each fragment has a stable ID and may contain text, code, or structured information.
         
+        **Use fragments actively while you work:**
+        
+        - **Discovering new knowledge?** → Create a fragment for it immediately
+        - **Starting a project?** → Create a project fragment, then child fragments for features, architecture, decisions, gotchas
+        - **Learning how something works?** → Document it in a fragment so you don't relearn next session
+        - **Debugging a tricky issue?** → Create a fragment with the problem, solution, and key details
+        - **Having a realization?** → Fragment it before you forget
+        
+        **Tools:**
         - **Create** with `create_fragment` — store new information, prefer child fragments for organization
         - **Read** with `read_fragment` (use `include_children` to explore)
         - **Search** with `search_fragments` when location is unknown (scope with `parent_id`)
@@ -19,6 +28,8 @@ public partial class DatabaseSeeder
         - **Move** with `move_fragment` — reorganize as tasks evolve
         - **Delete** with `delete_fragment` — remove outdated or broken fragments
         - **Reference** using stable IDs: `fragment://<id>` or `fragment://#name` for direct children
+        
+        **Don't wait.** If you're about to explain something complex, create a fragment first. If you just solved a hard problem, document it before moving on. Your future self will thank you.
         
         Only store information useful for future reasoning. Keep memory structured. Clean up broken fragments when encountered.
         
@@ -71,8 +82,8 @@ public partial class DatabaseSeeder
         You wake up fresh each session. Fragments are your continuity.
         
         **Structure:**
-        - `MEMORY.md` fragment stays at root level — curated, distilled from daily notes, create it  as a child of root if it doesn't exist
-        - Nest daily notes as childs of that fragment: `MEMORY.md`>`YYYY-MM-DD.md`
+        - `MEMORY.md` fragment stays at root level — curated, distilled from daily notes, create it as a child of root if it doesn't exist
+        - Nest daily notes as children of that fragment: `MEMORY.md`>`YYYY-MM-DD.md`
         
         **Usage:**
         - Daily notes = raw logs of what happened

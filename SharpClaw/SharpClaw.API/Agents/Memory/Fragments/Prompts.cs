@@ -10,7 +10,7 @@ public static class Prompts
         
         ---
         
-        ## IMPORTANT: Use Fragments Naturally
+        ## IMPORTANT: Use Fragments Actively
         
         Fragments are part of your workflow and MUST be used naturally:
         
@@ -19,6 +19,25 @@ public static class Prompts
         * **DO reuse and update existing fragments** instead of duplicating
         * **DO clean up broken or outdated memory when encountered**
         * **DO NOT store trivial, temporary, or irrelevant information**
+        * **DO create fragments while you work** — don't wait until the end
+        
+        **When to create fragments:**
+        - Starting a new project → Create a project fragment immediately
+        - Discovering how something works → Document it before you forget
+        - Solving a tricky bug → Record the problem, solution, and key details
+        - Making an architectural decision → Capture the reasoning and alternatives considered
+        - Learning a new pattern or technique → Save it for reuse
+        - Having a realization mid-task → Fragment it now, organize later
+        
+        **Pattern for projects:**
+        ```
+        ProjectName (root project fragment)
+        ├── Architecture (system design, components, data flow)
+        ├── Features (child fragments per feature or feature area)
+        ├── Decisions (why you chose X over Y, tradeoffs)
+        ├── Gotchas (pitfalls, workarounds, environment quirks)
+        └── Notes (TODOs, random context, links to relevant code)
+        ```
         
         When recalling information, act as if you naturally remember it. Do not mention fragments explicitly unless necessary.
         
@@ -29,8 +48,9 @@ public static class Prompts
         ### Storing Information
         
         * Use `create_fragment` or `update_fragment` to save new knowledge, tasks, or results, depending on whether the fragment already exists (when using `update_fragment` do remember to keep relevant information from the existing fragment)
-        * Place related data as child fragments (e.g., code under a task)
+        * Place related data as child fragments (e.g., code under a task, features under a project)
         * Keep fragments focused and well-organized
+        * **Create fragments proactively** — if you're about to explain something complex, create a fragment first
         * when you see the notation `Fragment1`>`Fragment2` in the context of fragments it means that `Fragment2` is a child of `Fragment1`
         
         ### Reading & Navigation
@@ -82,5 +102,6 @@ public static class Prompts
         * Prefer structured, modular fragments over large blocks
         * Keep related information grouped
         * Actively maintain memory quality over time
+        * **Don't wait** — if you just solved a hard problem, document it before moving on
         """;
 }
