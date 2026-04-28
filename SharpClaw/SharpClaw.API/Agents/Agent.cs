@@ -2,11 +2,6 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Memory.Lcm;
-using SharpClaw.API.Agents.Tools.Fragments;
-using SharpClaw.API.Agents.Tools.Lcm;
-using SharpClaw.API.Agents.Tools.Tasks;
-using SharpClaw.API.Agents.Tools.Web;
-using SharpClaw.API.Agents.Tools.Workspace;
 using SharpClaw.API.Database.Repositories;
 using SharpClaw.API.Helpers;
 
@@ -386,16 +381,7 @@ public class Agent(
         return session.Name;
     }
 
-    private static List<AIFunction> BuildTools() =>
-    [
-        ..FragmentTools.Functions,
-        ..LcmTools.Functions,
-        ..WorkspaceTools.Functions,
-        ..CommandTools.Functions,
-        ..SessionWorkspaceTools.Functions,
-        ..WebTools.Functions,
-        TasksTools.TaskTool([("Main", "the main agent")]), // TODO: get these agents from where?
-    ];
+    private static List<AIFunction> BuildTools() => ToolCatalog.BuildTools();
 
     private static IReadOnlyList<SessionMessageContentDto> GetMessageContents(ChatMessage message)
     {

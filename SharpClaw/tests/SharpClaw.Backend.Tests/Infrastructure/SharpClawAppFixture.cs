@@ -65,6 +65,7 @@ public sealed class SharpClawAppFixture : IAsyncLifetime
         SetEnvironment("LmStudio__EmbeddingEndpoint", endpoint.ToString().TrimEnd('/'));
         SetEnvironment("LmStudio__EmbeddingApiKey", "test-api-key");
         SetEnvironment("LmStudio__EmbeddingModel", "test-embedding-model");
+        SetEnvironment("SHARPCLAW_DEBUGGING_ENDPOINTS_ENABLED", "true");
     }
 
     private void SetEnvironment(string key, string value)

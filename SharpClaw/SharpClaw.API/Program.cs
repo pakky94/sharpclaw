@@ -7,6 +7,9 @@ using SharpClaw.API.Endpoints;
 using SharpClaw.API.Web;
 
 var builder = WebApplication.CreateBuilder(args);
+var debuggingEndpointsEnabled =
+    builder.Configuration.GetValue<bool>("Debugging:Enabled")
+    || builder.Configuration.GetValue<bool>("SHARPCLAW_DEBUGGING_ENDPOINTS_ENABLED");
 
 builder.AddServiceDefaults();
 
@@ -86,6 +89,8 @@ app.UseStaticFiles();
 ChatEndpoints.Register(app);
 AgentEndpoints.Register(app);
 WorkspaceEndpoints.Register(app);
+if (debuggingEndpointsEnabled)
+    DebuggingEndpoints.Register(app);
 app.MapFallbackToFile("{*path:nonfile}", "index.html");
 
 app.Run();

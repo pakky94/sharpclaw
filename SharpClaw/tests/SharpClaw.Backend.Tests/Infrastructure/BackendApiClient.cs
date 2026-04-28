@@ -102,6 +102,27 @@ public sealed class BackendApiClient(HttpClient client)
         return await ReadDocumentAsync(response, cancellationToken);
     }
 
+    public async Task<JsonDocument> DebugToolCallAsync(
+        string toolName,
+        object? arguments = null,
+        long? agentId = null,
+        string? callId = null,
+        string? workspaceName = null,
+        bool unrestrictedWorkspace = true,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsJsonAsync("/debugging/tool-call", new
+        {
+            toolName,
+            arguments = arguments ?? new { },
+            agentId,
+            callId,
+            workspaceName,
+            unrestrictedWorkspace,
+        }, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
     public async Task<string> WaitForPendingApprovalTokenAsync(
         Guid sessionId,
         TimeSpan timeout,
