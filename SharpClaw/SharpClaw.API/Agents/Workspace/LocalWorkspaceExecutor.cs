@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Helpers;
@@ -330,11 +331,84 @@ public class LocalWorkspaceExecutor : IWorkspaceExecutionRouter
         }
     }
 
-    public Task<object> RunCommand(ResolvedWorkspace workspace, string command, int? timeoutMs = null, int? maxOutputBytes = null)
+    public async Task<object> RunCommand(ResolvedWorkspace workspace, string command, int? timeoutMs = null, int? maxOutputBytes = null)
     {
-        // Command execution will be implemented in a later phase
-        // For now, return an error indicating this should be handled by the command tools directly
-        return Task.FromResult<object>(new { error = "RunCommand should be called via CommandTools directly in this phase" });
+        var resolvedCwd = workspace.RootPath;
+        var timeout = timeoutMs ?? 30000;
+        timeout = Math.Min(timeout, 120_000);
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/bash",
+                Arguments = OperatingSystem.IsWindows() ? $"/c \"{command}\"" : $"-c \"{command}\"",
+                WorkingDirectory = resolvedCwd,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+
+            using var process = new Process { StartInfo = psi };
+            var outputBuilder = new StringBuilder();
+            var errorBuilder = new StringBuilder();
+
+            process.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data != null) outputBuilder.AppendLine(e.Data);
+            };
+            process.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data != null) errorBuilder.AppendLine(e.Data);
+            };
+
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            var exited = await Task.Run(() => process.WaitForExit(timeout));
+
+            if (!exited)
+            {
+                try { process.Kill(); } catch { }
+                return new
+                {
+                    title = $"Command timed out: {command}",
+                    command,
+                    timeout_ms = timeout,
+                    error = $"Command exceeded {timeout}ms timeout and was terminated.",
+                    killed = true,
+                };
+            }
+
+            var stdout = outputBuilder.ToString();
+            var stderr = errorBuilder.ToString();
+
+            if (maxOutputBytes.HasValue)
+            {
+                var maxBytes = maxOutputBytes.Value;
+                if (Encoding.UTF8.GetByteCount(stdout) > maxBytes)
+                    stdout = stdout[..Math.Min(stdout.Length, maxOutputBytes.Value / 2)] + "\n...[truncated]";
+                if (Encoding.UTF8.GetByteCount(stderr) > maxBytes)
+                    stderr = stderr[..Math.Min(stderr.Length, maxOutputBytes.Value / 2)] + "\n...[truncated]";
+            }
+
+            return new
+            {
+                title = $"Command executed: {command}",
+                command,
+                cwd = resolvedCwd,
+                exit_code = process.ExitCode,
+                stdout = string.IsNullOrWhiteSpace(stdout) ? null : stdout,
+                stderr = string.IsNullOrWhiteSpace(stderr) ? null : stderr,
+                duration_ms = (int)(process.ExitTime - process.StartTime).TotalMilliseconds,
+            };
+        }
+        catch (Exception ex)
+        {
+            return new { error = $"Command execution failed: {ex.Message}" };
+        }
     }
 
     private static string MakeRelative(string workspaceRoot, string fullPath)

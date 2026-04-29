@@ -224,13 +224,34 @@ public class BridgeWorkspaceExecutor : IWorkspaceExecutionRouter
         return response.Result ?? new { };
     }
 
-    public Task<object> RunCommand(ResolvedWorkspace workspace, string command, int? timeoutMs = null, int? maxOutputBytes = null)
+    public async Task<object> RunCommand(ResolvedWorkspace workspace, string command, int? timeoutMs = null, int? maxOutputBytes = null)
     {
-        _logger.LogWarning("RunCommand not yet implemented for bridge. Bridge ID: {BridgeId}", _bridgeId);
-        return Task.FromResult<object>(new
+        var request = new BridgeRequest
         {
-            error = $"Command execution not yet implemented for bridge. Bridge ID: {_bridgeId}",
-            status = "bridge_not_implemented"
-        });
+            SessionId = Guid.NewGuid(),
+            WorkspaceName = workspace.Name,
+            Operation = "run_command",
+            Args = new Dictionary<string, object?>
+            {
+                { "command", command },
+                { "timeout_ms", timeoutMs },
+                { "max_output_bytes", maxOutputBytes },
+                { "cwd", "." }, // Default to workspace root
+            },
+            PolicyContext = new BridgePolicyContext
+            {
+                AllowlistPatterns = workspace.AllowlistPatterns,
+                DenylistPatterns = workspace.DenylistPatterns,
+                PolicyMode = workspace.PolicyMode.ToString().ToLowerInvariant(),
+                RootPath = workspace.RootPath,
+            }
+        };
+
+        var response = await _connectionManager.SendRequest(_bridgeId, request);
+
+        if (response.Status != "ok")
+            return new { error = response.ErrorMessage ?? "Bridge execution failed.", status = response.Status };
+
+        return response.Result ?? new { };
     }
 }

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -159,6 +160,7 @@ public class SharpClawBridgeClient
                 "delete_file" => HandleDeleteFile(args, policyContext),
                 "move_file" => HandleMoveFile(args, policyContext),
                 "make_directory" => HandleMakeDirectory(args, policyContext),
+                "run_command" => await HandleRunCommand(args, policyContext),
                 _ => new Dictionary<string, object> { { "error", $"Operation {operation} not supported" } }
             };
 
@@ -472,6 +474,83 @@ public class SharpClawBridgeClient
         // For now, just check the path is within root
 
         return true;
+    }
+
+    private async Task<object> HandleRunCommand(Dictionary<string, object?> args, BridgePolicyContext policyContext)
+    {
+        var command = args.GetValueOrDefault("command") as string ?? "";
+        var cwd = args.GetValueOrDefault("cwd") as string ?? ".";
+        var timeoutMs = args.GetValueOrDefault("timeout_ms") is int t ? t : 30000;
+
+        var rootPath = policyContext.RootPath;
+        var resolvedCwd = Path.IsPathRooted(cwd) ? cwd : Path.Combine(rootPath, cwd);
+
+        if (!Directory.Exists(resolvedCwd))
+            return new Dictionary<string, object> { { "error", $"Working directory does not exist: {cwd}" } };
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/bash",
+                Arguments = OperatingSystem.IsWindows() ? $"/c \"{command}\"" : $"-c \"{command}\"",
+                WorkingDirectory = resolvedCwd,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+
+            using var process = new Process { StartInfo = psi };
+            var outputBuilder = new StringBuilder();
+            var errorBuilder = new StringBuilder();
+
+            process.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data != null) outputBuilder.AppendLine(e.Data);
+            };
+            process.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data != null) errorBuilder.AppendLine(e.Data);
+            };
+
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            var exited = await Task.Run(() => process.WaitForExit(timeoutMs));
+
+            if (!exited)
+            {
+                try { process.Kill(); } catch { }
+                return new Dictionary<string, object>
+                {
+                    { "title", $"Command timed out: {command}" },
+                    { "command", command },
+                    { "timeout_ms", timeoutMs },
+                    { "error", $"Command exceeded {timeoutMs}ms timeout and was terminated." },
+                    { "killed", true }
+                };
+            }
+
+            var stdout = outputBuilder.ToString();
+            var stderr = errorBuilder.ToString();
+
+            return new Dictionary<string, object>
+            {
+                { "title", $"Command executed: {command}" },
+                { "command", command },
+                { "cwd", resolvedCwd },
+                { "exit_code", process.ExitCode },
+                { "stdout", string.IsNullOrWhiteSpace(stdout) ? null : stdout },
+                { "stderr", string.IsNullOrWhiteSpace(stderr) ? null : stderr },
+                { "duration_ms", (int)(process.ExitTime - process.StartTime).TotalMilliseconds }
+            };
+        }
+        catch (Exception ex)
+        {
+            return new Dictionary<string, object> { { "error", $"Command execution failed: {ex.Message}" } };
+        }
     }
 
     private async Task SendRegistration()

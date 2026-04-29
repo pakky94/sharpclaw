@@ -63,9 +63,15 @@ public static partial class CommandTools
 
         if (!string.IsNullOrWhiteSpace(workspaceName))
         {
+            if (ctx.ActiveWorkspaceNames.Count > 0 && !ctx.ActiveWorkspaceNames.Contains(workspaceName, StringComparer.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Workspace '{workspaceName}' is not active for this session. Use ws_list_active_workspaces to see available workspaces, or ws_set_active_workspaces to activate it.");
+
             var ws = repo.ResolveWorkspaceByName(ctx.AgentId, workspaceName).Result;
             if (ws is not null)
+            {
+                ctx.Workspace = ws;
                 return ws;
+            }
             throw new InvalidOperationException($"Workspace '{workspaceName}' not found for agent {ctx.AgentId}.");
         }
 
@@ -194,72 +200,14 @@ public static partial class CommandTools
             }
         }
 
-        var resolvedCwd = string.IsNullOrWhiteSpace(cwd) || cwd == "."
-            ? ws.RootPath
-            : PathContainment.NormalizePath(ws.RootPath, cwd);
-
         var timeout = timeout_ms ?? DefaultTimeoutMs;
         timeout = Math.Min(timeout, 120_000);
 
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/bash",
-                Arguments = OperatingSystem.IsWindows() ? $"/c \"{command}\"" : $"-c \"{command}\"",
-                WorkingDirectory = resolvedCwd,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
+        // Get the execution router and execute the command
+        var routerFactory = sp.GetRequiredService<IWorkspaceExecutionRouterFactory>();
+        var router = routerFactory.GetRouter(ws);
 
-            using var process = new Process { StartInfo = psi };
-            process.Start();
-
-            var outputTask = process.StandardOutput.ReadToEndAsync();
-            var errorTask = process.StandardError.ReadToEndAsync();
-
-            if (!process.WaitForExit(timeout))
-            {
-                try { process.Kill(); } catch { }
-                return new
-                {
-                    title = $"Command timed out: {command}",
-                    command,
-                    timeout_ms = timeout,
-                    error = $"Command exceeded {timeout}ms timeout and was terminated.",
-                    killed = true,
-                };
-            }
-
-            var stdout = await outputTask;
-            var stderr = await errorTask;
-
-            var stdoutBytes = Encoding.UTF8.GetByteCount(stdout);
-            var stderrBytes = Encoding.UTF8.GetByteCount(stderr);
-
-            if (stdoutBytes > MaxOutputBytes)
-                stdout = stdout[..Math.Min(stdout.Length, MaxOutputBytes)] + "\n...[truncated]";
-
-            if (stderrBytes > MaxOutputBytes)
-                stderr = stderr[..Math.Min(stderr.Length, MaxOutputBytes)] + "\n...[truncated]";
-
-            return new
-            {
-                title = $"Command executed: {command}",
-                command,
-                cwd = resolvedCwd,
-                exit_code = process.ExitCode,
-                @stdout = string.IsNullOrWhiteSpace(stdout) ? null : stdout,
-                @stderr = string.IsNullOrWhiteSpace(stderr) ? null : stderr,
-                duration_ms = (int)(process.ExitTime - process.StartTime).TotalMilliseconds,
-            };
-        }
-        catch (Exception ex)
-        {
-            return new { error = $"Command execution failed: {ex.Message}" };
-        }
+        return await router.RunCommand(ws, command, timeout, MaxOutputBytes);
     }
 
     private static string GenerateApprovalToken()
