@@ -6,6 +6,9 @@ public static partial class PathContainment
 {
     public static string NormalizePath(string workspaceRoot, string relativeOrAbsolutePath)
     {
+        if (relativeOrAbsolutePath == ".")
+            relativeOrAbsolutePath = string.Empty;
+
         var resolved = Path.IsPathRooted(relativeOrAbsolutePath)
             ? relativeOrAbsolutePath
             : Path.Combine(workspaceRoot, relativeOrAbsolutePath);

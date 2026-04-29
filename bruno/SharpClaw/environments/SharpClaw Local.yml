@@ -1,7 +1,7 @@
 name: SharpClaw Local
 variables:
   - name: baseUrl
-    value: http://localhost:5223
+    value: http://localhost:5846
   - name: agentId
     value: "1"
   - name: latestSequenceId

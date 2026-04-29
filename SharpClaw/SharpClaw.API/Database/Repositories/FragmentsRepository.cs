@@ -938,6 +938,13 @@ public class FragmentsRepository(IConfiguration configuration, FragmentEmbedding
     }
 }
 
+internal sealed record FragmentContentRow
+{
+    public required string Id { get; init; }
+    public required string Content { get; init; }
+    public required string Permission { get; init; }
+}
+
 public sealed record FragmentReadResponse(
     string Id,
     string Name,

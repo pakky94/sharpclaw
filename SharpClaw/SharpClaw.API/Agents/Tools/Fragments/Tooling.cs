@@ -1,6 +1,7 @@
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Database;
 using SharpClaw.API.Database.Repositories;
+using SharpClaw.API.Helpers;
 
 namespace SharpClaw.API.Agents.Tools.Fragments;
 
@@ -15,6 +16,7 @@ public static class FragmentTools
         AIFunctionFactory.Create(MoveFragment, "move_fragment", "Move a fragment to a new parent and optionally rename it."),
         AIFunctionFactory.Create(SearchFragments, "search_fragments", "Search fragments by semantic-like text matching and metadata filters."),
         AIFunctionFactory.Create(ResolveChild, "resolve_child", "Resolve a direct child fragment by name."),
+        AIFunctionFactory.Create(EditFragment, "edit_fragment", "Edit a fragment's content by replacing text. Works like ws_edit_file but for fragments."),
         AIFunctionFactory.Create(ShareFragment, "share_fragment", "Share a fragment with another agent."),
     ];
 
@@ -170,6 +172,43 @@ public static class FragmentTools
 
         var id = await repository.ResolveChild(ctx.AgentId, parent_id, child_name);
         return new { id };
+    }
+
+    public static async Task<object> EditFragment(
+        IServiceProvider serviceProvider,
+        string id,
+        string oldString,
+        string newString,
+        bool replaceAll = false)
+    {
+        var ctx = serviceProvider.GetRequiredService<AgentExecutionContext>();
+        var repository = serviceProvider.GetRequiredService<FragmentsRepository>();
+
+        if (!FragmentIds.IsValid(id))
+            return new { error = $"Invalid id: {id}" };
+
+        var fragment = await repository.ReadFragment(ctx.AgentId, id, includeChildren: false);
+        if (fragment == null)
+            return new { error = $"Fragment {id} not found" };
+
+        var (newContent, error) = StringReplacer.Replace(fragment.Content, oldString, newString, replaceAll);
+
+        if (error is not null)
+        {
+            return new
+            {
+                error = error switch
+                {
+                    StringReplacer.Error.OldStringNotFound => "oldString not found in fragment content",
+                    StringReplacer.Error.MultipleMatchesFound => "multiple matches of oldString found in fragment content, to replace all occurrences call this tool with replaceAll=true",
+                    _ => "Error replacing string in fragment",
+                }
+            };
+        }
+
+        var updated = await repository.UpdateFragment(ctx.AgentId, id, newContent);
+
+        return new { updated };
     }
 
     public static async Task<object> ShareFragment(
