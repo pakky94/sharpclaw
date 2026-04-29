@@ -77,54 +77,151 @@ public class BridgeWorkspaceExecutor : IWorkspaceExecutionRouter
         return response.Result ?? new { };
     }
 
-    public Task<object> WriteFile(ResolvedWorkspace workspace, string path, string content, string mode = "overwrite")
+    public async Task<object> WriteFile(ResolvedWorkspace workspace, string path, string content, string mode = "overwrite")
     {
-        _logger.LogWarning("WriteFile not yet implemented for bridge. Bridge ID: {BridgeId}", _bridgeId);
-        return Task.FromResult<object>(new
+        var request = new BridgeRequest
         {
-            error = $"Write operations not yet implemented for bridge. Bridge ID: {_bridgeId}",
-            status = "bridge_not_implemented"
-        });
+            SessionId = Guid.NewGuid(),
+            WorkspaceName = workspace.Name,
+            Operation = "write_file",
+            Args = new Dictionary<string, object?>
+            {
+                { "path", path },
+                { "content", content },
+                { "mode", mode },
+            },
+            PolicyContext = new BridgePolicyContext
+            {
+                AllowlistPatterns = workspace.AllowlistPatterns,
+                DenylistPatterns = workspace.DenylistPatterns,
+                PolicyMode = workspace.PolicyMode.ToString().ToLowerInvariant(),
+                RootPath = workspace.RootPath,
+            }
+        };
+
+        var response = await _connectionManager.SendRequest(_bridgeId, request);
+
+        if (response.Status != "ok")
+            return new { error = response.ErrorMessage ?? "Bridge execution failed.", status = response.Status };
+
+        return response.Result ?? new { };
     }
 
-    public Task<object> EditFile(ResolvedWorkspace workspace, string path, string oldString, string newString, bool replaceAll = false)
+    public async Task<object> EditFile(ResolvedWorkspace workspace, string path, string oldString, string newString, bool replaceAll = false)
     {
-        _logger.LogWarning("EditFile not yet implemented for bridge. Bridge ID: {BridgeId}", _bridgeId);
-        return Task.FromResult<object>(new
+        var request = new BridgeRequest
         {
-            error = $"Edit operations not yet implemented for bridge. Bridge ID: {_bridgeId}",
-            status = "bridge_not_implemented"
-        });
+            SessionId = Guid.NewGuid(),
+            WorkspaceName = workspace.Name,
+            Operation = "edit_file",
+            Args = new Dictionary<string, object?>
+            {
+                { "path", path },
+                { "oldString", oldString },
+                { "newString", newString },
+                { "replaceAll", replaceAll },
+            },
+            PolicyContext = new BridgePolicyContext
+            {
+                AllowlistPatterns = workspace.AllowlistPatterns,
+                DenylistPatterns = workspace.DenylistPatterns,
+                PolicyMode = workspace.PolicyMode.ToString().ToLowerInvariant(),
+                RootPath = workspace.RootPath,
+            }
+        };
+
+        var response = await _connectionManager.SendRequest(_bridgeId, request);
+
+        if (response.Status != "ok")
+            return new { error = response.ErrorMessage ?? "Bridge execution failed.", status = response.Status };
+
+        return response.Result ?? new { };
     }
 
-    public Task<object> DeleteFile(ResolvedWorkspace workspace, string path, bool recursive = false)
+    public async Task<object> DeleteFile(ResolvedWorkspace workspace, string path, bool recursive = false)
     {
-        _logger.LogWarning("DeleteFile not yet implemented for bridge. Bridge ID: {BridgeId}", _bridgeId);
-        return Task.FromResult<object>(new
+        var request = new BridgeRequest
         {
-            error = $"Delete operations not yet implemented for bridge. Bridge ID: {_bridgeId}",
-            status = "bridge_not_implemented"
-        });
+            SessionId = Guid.NewGuid(),
+            WorkspaceName = workspace.Name,
+            Operation = "delete_file",
+            Args = new Dictionary<string, object?>
+            {
+                { "path", path },
+                { "recursive", recursive },
+            },
+            PolicyContext = new BridgePolicyContext
+            {
+                AllowlistPatterns = workspace.AllowlistPatterns,
+                DenylistPatterns = workspace.DenylistPatterns,
+                PolicyMode = workspace.PolicyMode.ToString().ToLowerInvariant(),
+                RootPath = workspace.RootPath,
+            }
+        };
+
+        var response = await _connectionManager.SendRequest(_bridgeId, request);
+
+        if (response.Status != "ok")
+            return new { error = response.ErrorMessage ?? "Bridge execution failed.", status = response.Status };
+
+        return response.Result ?? new { };
     }
 
-    public Task<object> MoveFile(ResolvedWorkspace workspace, string source, string destination)
+    public async Task<object> MoveFile(ResolvedWorkspace workspace, string source, string destination)
     {
-        _logger.LogWarning("MoveFile not yet implemented for bridge. Bridge ID: {BridgeId}", _bridgeId);
-        return Task.FromResult<object>(new
+        var request = new BridgeRequest
         {
-            error = $"Move operations not yet implemented for bridge. Bridge ID: {_bridgeId}",
-            status = "bridge_not_implemented"
-        });
+            SessionId = Guid.NewGuid(),
+            WorkspaceName = workspace.Name,
+            Operation = "move_file",
+            Args = new Dictionary<string, object?>
+            {
+                { "source", source },
+                { "destination", destination },
+            },
+            PolicyContext = new BridgePolicyContext
+            {
+                AllowlistPatterns = workspace.AllowlistPatterns,
+                DenylistPatterns = workspace.DenylistPatterns,
+                PolicyMode = workspace.PolicyMode.ToString().ToLowerInvariant(),
+                RootPath = workspace.RootPath,
+            }
+        };
+
+        var response = await _connectionManager.SendRequest(_bridgeId, request);
+
+        if (response.Status != "ok")
+            return new { error = response.ErrorMessage ?? "Bridge execution failed.", status = response.Status };
+
+        return response.Result ?? new { };
     }
 
-    public Task<object> MakeDirectory(ResolvedWorkspace workspace, string path)
+    public async Task<object> MakeDirectory(ResolvedWorkspace workspace, string path)
     {
-        _logger.LogWarning("MakeDirectory not yet implemented for bridge. Bridge ID: {BridgeId}", _bridgeId);
-        return Task.FromResult<object>(new
+        var request = new BridgeRequest
         {
-            error = $"Make directory operations not yet implemented for bridge. Bridge ID: {_bridgeId}",
-            status = "bridge_not_implemented"
-        });
+            SessionId = Guid.NewGuid(),
+            WorkspaceName = workspace.Name,
+            Operation = "make_directory",
+            Args = new Dictionary<string, object?>
+            {
+                { "path", path },
+            },
+            PolicyContext = new BridgePolicyContext
+            {
+                AllowlistPatterns = workspace.AllowlistPatterns,
+                DenylistPatterns = workspace.DenylistPatterns,
+                PolicyMode = workspace.PolicyMode.ToString().ToLowerInvariant(),
+                RootPath = workspace.RootPath,
+            }
+        };
+
+        var response = await _connectionManager.SendRequest(_bridgeId, request);
+
+        if (response.Status != "ok")
+            return new { error = response.ErrorMessage ?? "Bridge execution failed.", status = response.Status };
+
+        return response.Result ?? new { };
     }
 
     public Task<object> RunCommand(ResolvedWorkspace workspace, string command, int? timeoutMs = null, int? maxOutputBytes = null)

@@ -154,7 +154,12 @@ public class SharpClawBridgeClient
             {
                 "list_files" => HandleListFiles(args, policyContext),
                 "read_file" => HandleReadFile(args, policyContext),
-                _ => new Dictionary<string, object> { { "error", $"Operation {operation} not supported in Phase 2" } }
+                "write_file" => HandleWriteFile(args, policyContext),
+                "edit_file" => HandleEditFile(args, policyContext),
+                "delete_file" => HandleDeleteFile(args, policyContext),
+                "move_file" => HandleMoveFile(args, policyContext),
+                "make_directory" => HandleMakeDirectory(args, policyContext),
+                _ => new Dictionary<string, object> { { "error", $"Operation {operation} not supported" } }
             };
 
             await SendResponse(requestId, "ok", result);
@@ -242,6 +247,233 @@ public class SharpClawBridgeClient
         };
     }
 
+    private object HandleWriteFile(Dictionary<string, object?> args, BridgePolicyContext policyContext)
+    {
+        var path = args.GetValueOrDefault("path") as string ?? "";
+        var content = args.GetValueOrDefault("content") as string ?? "";
+        var mode = args.GetValueOrDefault("mode") as string ?? "overwrite";
+
+        var rootPath = policyContext.RootPath;
+        var resolvedPath = Path.IsPathRooted(path) ? path : Path.Combine(rootPath, path);
+
+        // Check path is allowed (basic policy check)
+        if (!IsPathAllowed(resolvedPath, rootPath, policyContext))
+            return new Dictionary<string, object> { { "error", $"Path is denied by policy: {path}" } };
+
+        try
+        {
+            var parentDir = Path.GetDirectoryName(resolvedPath);
+            if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
+                Directory.CreateDirectory(parentDir);
+
+            FileMode fileMode = mode switch
+            {
+                "append" => FileMode.Append,
+                "create_only" => FileMode.CreateNew,
+                _ => FileMode.Create
+            };
+
+            if (mode == "create_only" && File.Exists(resolvedPath))
+                return new Dictionary<string, object> { { "error", $"File already exists: {path}" } };
+
+            using var stream = new FileStream(resolvedPath, fileMode, FileAccess.Write, FileShare.None);
+            var bytes = Encoding.UTF8.GetBytes(content);
+            stream.Write(bytes, 0, bytes.Length);
+
+            return new Dictionary<string, object>
+            {
+                { "title", $"File written: {path}" },
+                { "path", path },
+                { "mode", mode },
+                { "bytes_written", bytes.Length }
+            };
+        }
+        catch (Exception ex)
+        {
+            return new Dictionary<string, object> { { "error", $"Failed to write file: {ex.Message}" } };
+        }
+    }
+
+    private object HandleEditFile(Dictionary<string, object?> args, BridgePolicyContext policyContext)
+    {
+        var path = args.GetValueOrDefault("path") as string ?? "";
+        var oldString = args.GetValueOrDefault("oldString") as string ?? "";
+        var newString = args.GetValueOrDefault("newString") as string ?? "";
+        var replaceAll = args.GetValueOrDefault("replaceAll") is true;
+
+        var rootPath = policyContext.RootPath;
+        var resolvedPath = Path.IsPathRooted(path) ? path : Path.Combine(rootPath, path);
+
+        if (!IsPathAllowed(resolvedPath, rootPath, policyContext))
+            return new Dictionary<string, object> { { "error", $"Path is denied by policy: {path}" } };
+
+        if (!File.Exists(resolvedPath))
+            return new Dictionary<string, object> { { "error", $"File does not exist: {path}" } };
+
+        try
+        {
+            var oldFile = File.ReadAllText(resolvedPath);
+
+            if (string.IsNullOrEmpty(oldString))
+                return new Dictionary<string, object> { { "error", "oldString cannot be empty" } };
+
+            string newContent;
+            if (replaceAll)
+            {
+                newContent = oldFile.Replace(oldString, newString);
+            }
+            else
+            {
+                var index = oldFile.IndexOf(oldString);
+                if (index == -1)
+                    return new Dictionary<string, object> { { "error", $"oldString not found in file {path}" } };
+
+                // Check for multiple matches
+                if (oldFile.IndexOf(oldString, index + 1) != -1)
+                    return new Dictionary<string, object> { { "error", $"Multiple matches found in file {path}, use replaceAll=true" } };
+
+                newContent = oldFile.Substring(0, index) + newString + oldFile.Substring(index + oldString.Length);
+            }
+
+            File.WriteAllText(resolvedPath, newContent);
+
+            return new Dictionary<string, object>
+            {
+                { "title", $"File edited: {path}" },
+                { "path", path }
+            };
+        }
+        catch (Exception ex)
+        {
+            return new Dictionary<string, object> { { "error", $"Failed to edit file: {ex.Message}" } };
+        }
+    }
+
+    private object HandleDeleteFile(Dictionary<string, object?> args, BridgePolicyContext policyContext)
+    {
+        var path = args.GetValueOrDefault("path") as string ?? "";
+        var recursive = args.GetValueOrDefault("recursive") is true;
+
+        var rootPath = policyContext.RootPath;
+        var resolvedPath = Path.IsPathRooted(path) ? path : Path.Combine(rootPath, path);
+
+        if (!IsPathAllowed(resolvedPath, rootPath, policyContext))
+            return new Dictionary<string, object> { { "error", $"Path is denied by policy: {path}" } };
+
+        try
+        {
+            if (Directory.Exists(resolvedPath))
+            {
+                if (!recursive)
+                    return new Dictionary<string, object> { { "error", $"Path is a directory, use recursive=true: {path}" } };
+
+                Directory.Delete(resolvedPath, true);
+            }
+            else if (File.Exists(resolvedPath))
+            {
+                File.Delete(resolvedPath);
+            }
+            else
+            {
+                return new Dictionary<string, object> { { "error", $"Path does not exist: {path}" } };
+            }
+
+            return new Dictionary<string, object>
+            {
+                { "title", $"Deleted: {path}" },
+                { "path", path },
+                { "recursive", recursive }
+            };
+        }
+        catch (Exception ex)
+        {
+            return new Dictionary<string, object> { { "error", $"Failed to delete: {ex.Message}" } };
+        }
+    }
+
+    private object HandleMoveFile(Dictionary<string, object?> args, BridgePolicyContext policyContext)
+    {
+        var source = args.GetValueOrDefault("source") as string ?? "";
+        var destination = args.GetValueOrDefault("destination") as string ?? "";
+
+        var rootPath = policyContext.RootPath;
+        var resolvedSource = Path.IsPathRooted(source) ? source : Path.Combine(rootPath, source);
+        var resolvedDest = Path.IsPathRooted(destination) ? destination : Path.Combine(rootPath, destination);
+
+        if (!IsPathAllowed(resolvedSource, rootPath, policyContext))
+            return new Dictionary<string, object> { { "error", $"Source path denied by policy: {source}" } };
+
+        if (!IsPathAllowed(resolvedDest, rootPath, policyContext))
+            return new Dictionary<string, object> { { "error", $"Destination path denied by policy: {destination}" } };
+
+        if (!File.Exists(resolvedSource) && !Directory.Exists(resolvedSource))
+            return new Dictionary<string, object> { { "error", $"Source does not exist: {source}" } };
+
+        try
+        {
+            var parentDir = Path.GetDirectoryName(resolvedDest);
+            if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
+                Directory.CreateDirectory(parentDir);
+
+            if (Directory.Exists(resolvedSource))
+                Directory.Move(resolvedSource, resolvedDest);
+            else
+                File.Move(resolvedSource, resolvedDest);
+
+            return new Dictionary<string, object>
+            {
+                { "title", $"Moved: {source} -> {destination}" },
+                { "source", source },
+                { "destination", destination }
+            };
+        }
+        catch (Exception ex)
+        {
+            return new Dictionary<string, object> { { "error", $"Failed to move: {ex.Message}" } };
+        }
+    }
+
+    private object HandleMakeDirectory(Dictionary<string, object?> args, BridgePolicyContext policyContext)
+    {
+        var path = args.GetValueOrDefault("path") as string ?? "";
+
+        var rootPath = policyContext.RootPath;
+        var resolvedPath = Path.IsPathRooted(path) ? path : Path.Combine(rootPath, path);
+
+        if (!IsPathAllowed(resolvedPath, rootPath, policyContext))
+            return new Dictionary<string, object> { { "error", $"Path is denied by policy: {path}" } };
+
+        if (Directory.Exists(resolvedPath))
+            return new Dictionary<string, object> { { "error", $"Directory already exists: {path}" } };
+
+        try
+        {
+            Directory.CreateDirectory(resolvedPath);
+
+            return new Dictionary<string, object>
+            {
+                { "title", $"Directory created: {path}" },
+                { "path", path }
+            };
+        }
+        catch (Exception ex)
+        {
+            return new Dictionary<string, object> { { "error", $"Failed to create directory: {ex.Message}" } };
+        }
+    }
+
+    private static bool IsPathAllowed(string fullPath, string rootPath, BridgePolicyContext policyContext)
+    {
+        // Basic check: path must be within root path
+        if (!fullPath.StartsWith(rootPath, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // TODO: implement proper allowlist/denylist checking here
+        // For now, just check the path is within root
+
+        return true;
+    }
+
     private async Task SendRegistration()
     {
         var registration = new Dictionary<string, object>
@@ -249,7 +481,7 @@ public class SharpClawBridgeClient
             { "type", "register" },
             { "bridge_id", _bridgeId },
             { "display_name", "SharpClaw Bridge Client" },
-            { "capabilities", new[] { "list_files", "read_file" } },
+            { "capabilities", new[] { "list_files", "read_file", "write_file", "edit_file", "delete_file", "move_file", "make_directory" } },
             { "os", Environment.OSVersion.ToString() },
             { "shell", Environment.OSVersion.Platform == PlatformID.Win32NT ? "cmd.exe" : "/bin/bash" }
         };
