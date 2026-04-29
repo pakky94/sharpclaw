@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.WebSockets;
 using Microsoft.Extensions.Options;
 using SharpClaw.API.Agents;
 using SharpClaw.API.Agents.Workspace;
@@ -70,6 +71,7 @@ builder.Services.AddCors(options =>
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
+builder.Services.AddWebSockets(c => {});
 
 var app = builder.Build();
 
@@ -88,10 +90,12 @@ app.UseHttpsRedirection();
 app.UseCors("WebClient");
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.UseWebSockets();
 
 ChatEndpoints.Register(app);
 AgentEndpoints.Register(app);
 WorkspaceEndpoints.Register(app);
+BridgeEndpoints.Register(app);
 if (debuggingEndpointsEnabled)
     DebuggingEndpoints.Register(app);
 app.MapFallbackToFile("{*path:nonfile}", "index.html");

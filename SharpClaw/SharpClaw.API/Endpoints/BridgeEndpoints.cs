@@ -23,8 +23,7 @@ public static class BridgeEndpoints
 
             logger.LogInformation("Bridge connecting: {BridgeId}", bridgeId);
 
-            // HandleBridgeConnection does not return until the connection is closed
-            _ = Task.Run(async () => await connectionManager.HandleBridgeConnection(bridgeId, socket));
+            await connectionManager.HandleBridgeConnection(bridgeId, socket);
 
             return Results.Empty;
         });

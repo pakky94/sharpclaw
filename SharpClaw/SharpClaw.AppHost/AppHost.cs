@@ -17,7 +17,8 @@ if (!volatileDb)
 
 var db = dbBuilder.AddDatabase("sharpclaw");
 
-var sharpclaw = builder.AddProject<Projects.SharpClaw_API>("sharpclaw-api");
+var sharpclaw = builder.AddProject<Projects.SharpClaw_API>("sharpclaw-api")
+    .WithEndpoint(scheme: "ws", port: 5223);
 
 sharpclaw.WithReference(db).WaitFor(db);
 
