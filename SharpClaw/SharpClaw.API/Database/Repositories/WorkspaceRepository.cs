@@ -58,6 +58,24 @@ public class WorkspaceRepository(IConfiguration configuration)
         return deleted > 0;
     }
 
+    public async Task<bool> UpdateWorkspaceRuntime(long id, WorkspaceRuntimeKind runtimeKind, string? runtimeTarget)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var updated = await connection.ExecuteAsync(
+            """
+            update workspaces
+            set runtime_kind = @runtimeKind, runtime_target = @runtimeTarget, updated_at = now()
+            where id = @id
+            """,
+            new
+            {
+                id,
+                runtimeKind = runtimeKind.ToString().ToLowerInvariant(),
+                runtimeTarget,
+            });
+        return updated > 0;
+    }
+
     public async Task<AgentWorkspaceAssignment?> GetAssignment(long agentId, long workspaceId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
@@ -337,6 +355,8 @@ public class WorkspaceRepository(IConfiguration configuration)
         public string root_path { get; set; } = string.Empty;
         public string allowlist_patterns { get; set; } = "[]";
         public string denylist_patterns { get; set; } = "[]";
+        public string runtime_kind { get; set; } = "local";
+        public string? runtime_target { get; set; }
         public DateTime created_at { get; set; }
         public DateTime updated_at { get; set; }
 
@@ -347,6 +367,12 @@ public class WorkspaceRepository(IConfiguration configuration)
             RootPath = root_path,
             AllowlistPatterns = System.Text.Json.JsonSerializer.Deserialize<string[]>(allowlist_patterns) ?? [],
             DenylistPatterns = System.Text.Json.JsonSerializer.Deserialize<string[]>(denylist_patterns) ?? [],
+            RuntimeKind = runtime_kind.ToLowerInvariant() switch
+            {
+                "bridge" => WorkspaceRuntimeKind.Bridge,
+                _ => WorkspaceRuntimeKind.Local,
+            },
+            RuntimeTarget = runtime_target,
             CreatedAt = created_at,
             UpdatedAt = updated_at,
         };
@@ -389,6 +415,8 @@ public class WorkspaceRepository(IConfiguration configuration)
         public string root_path { get; set; } = string.Empty;
         public string allowlist_patterns { get; set; } = "[]";
         public string denylist_patterns { get; set; } = "[]";
+        public string runtime_kind { get; set; } = "local";
+        public string? runtime_target { get; set; }
         public DateTime created_at { get; set; }
         public DateTime updated_at { get; set; }
         public string policy_mode { get; set; } = string.Empty;
@@ -403,6 +431,12 @@ public class WorkspaceRepository(IConfiguration configuration)
                 RootPath = root_path,
                 AllowlistPatterns = System.Text.Json.JsonSerializer.Deserialize<string[]>(allowlist_patterns) ?? [],
                 DenylistPatterns = System.Text.Json.JsonSerializer.Deserialize<string[]>(denylist_patterns) ?? [],
+                RuntimeKind = runtime_kind.ToLowerInvariant() switch
+                {
+                    "bridge" => WorkspaceRuntimeKind.Bridge,
+                    _ => WorkspaceRuntimeKind.Local,
+                },
+                RuntimeTarget = runtime_target,
                 CreatedAt = created_at,
                 UpdatedAt = updated_at,
             },

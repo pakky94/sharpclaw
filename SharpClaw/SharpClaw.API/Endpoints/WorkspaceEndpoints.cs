@@ -42,6 +42,16 @@ public static class WorkspaceEndpoints
             var denylist = request.DenylistPatterns ?? [];
 
             var workspace = await repository.UpsertWorkspace(name, rootPath, allowlist, denylist);
+            
+            // Apply runtime settings if provided
+            if (request.RuntimeKind.HasValue || request.RuntimeTarget is not null)
+            {
+                var runtimeKind = request.RuntimeKind ?? WorkspaceRuntimeKind.Local;
+                await repository.UpdateWorkspaceRuntime(workspace.Id, runtimeKind, request.RuntimeTarget);
+                // Refresh workspace data
+                workspace = await repository.GetWorkspaceById(workspace.Id);
+            }
+            
             return Results.Ok(workspace);
         });
 
@@ -53,6 +63,26 @@ public static class WorkspaceEndpoints
             return deleted
                 ? Results.Ok(new { message = $"Workspace {workspaceId} deleted." })
                 : Results.NotFound(new { error = $"Workspace {workspaceId} not found." });
+        });
+
+        app.MapPatch("/workspaces/{workspaceId:long}/runtime", async (
+            long workspaceId,
+            [FromBody] UpdateWorkspaceRuntimeRequest request,
+            [FromServices] WorkspaceRepository repository) =>
+        {
+            var workspace = await repository.GetWorkspaceById(workspaceId);
+            if (workspace is null)
+                return Results.NotFound(new { error = $"Workspace {workspaceId} not found." });
+
+            var runtimeKind = request.RuntimeKind ?? workspace.RuntimeKind;
+            var runtimeTarget = request.RuntimeTarget ?? workspace.RuntimeTarget;
+
+            var updated = await repository.UpdateWorkspaceRuntime(workspaceId, runtimeKind, runtimeTarget);
+            if (!updated)
+                return Results.Problem("Failed to update workspace runtime settings.");
+
+            var updatedWorkspace = await repository.GetWorkspaceById(workspaceId);
+            return Results.Ok(updatedWorkspace);
         });
 
         app.MapGet("/agents/{agentId:long}/workspaces", async (
@@ -255,6 +285,14 @@ public class CreateWorkspaceRequest
     public string? RootPath { get; set; }
     public string[]? AllowlistPatterns { get; set; }
     public string[]? DenylistPatterns { get; set; }
+    public WorkspaceRuntimeKind? RuntimeKind { get; set; }
+    public string? RuntimeTarget { get; set; }
+}
+
+public class UpdateWorkspaceRuntimeRequest
+{
+    public WorkspaceRuntimeKind? RuntimeKind { get; set; }
+    public string? RuntimeTarget { get; set; }
 }
 
 public class AssignWorkspaceRequest

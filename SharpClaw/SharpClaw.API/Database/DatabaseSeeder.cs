@@ -184,10 +184,20 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     root_path text not null,
                     allowlist_patterns jsonb not null default '[]'::jsonb,
                     denylist_patterns jsonb not null default '[]'::jsonb,
+                    runtime_kind varchar(32) not null default 'local'
+                        check (runtime_kind in ('local', 'bridge')),
+                    runtime_target varchar(255) null,
                     created_at timestamptz not null default now(),
                     updated_at timestamptz not null default now(),
                     unique(name)
                 );
+
+                alter table workspaces
+                    add column if not exists runtime_kind varchar(32) not null default 'local'
+                        check (runtime_kind in ('local', 'bridge'));
+
+                alter table workspaces
+                    add column if not exists runtime_target varchar(255) null;
 
                 create table if not exists agent_workspace_assignments(
                     id bigserial primary key,
@@ -268,6 +278,41 @@ public partial class DatabaseSeeder(IConfiguration configuration)
 
                 create index if not exists idx_lcm_files_file_id
                     on lcm_files(file_id);
+
+                create table if not exists bridge_clients(
+                    bridge_id varchar(128) primary key,
+                    display_name varchar(255) not null,
+                    status varchar(32) not null default 'offline'
+                        check (status in ('online', 'offline')),
+                    last_seen_at timestamptz null,
+                    capabilities jsonb not null default '{}'::jsonb,
+                    auth_fingerprint varchar(255) null,
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
+                );
+
+                create table if not exists bridge_execution_events(
+                    id bigserial primary key,
+                    request_id varchar(128) not null unique,
+                    bridge_id varchar(128) not null references bridge_clients(bridge_id),
+                    session_id uuid not null references sessions(id) on delete cascade,
+                    agent_id bigint not null references agents(id),
+                    workspace_id bigint not null references workspaces(id),
+                    operation varchar(64) not null,
+                    status varchar(32) not null default 'pending',
+                    error_message text null,
+                    started_at timestamptz not null default now(),
+                    completed_at timestamptz null
+                );
+
+                create index if not exists idx_bridge_clients_status
+                    on bridge_clients(status);
+
+                create index if not exists idx_bridge_execution_events_bridge
+                    on bridge_execution_events(bridge_id, started_at desc);
+
+                create index if not exists idx_bridge_execution_events_session
+                    on bridge_execution_events(session_id, started_at desc);
                 """);
 
             if (await connection.ExecuteScalarAsync<int>("select count(*) from agents where name = 'Main'") == 0)

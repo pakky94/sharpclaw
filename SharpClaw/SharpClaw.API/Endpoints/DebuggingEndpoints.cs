@@ -122,7 +122,9 @@ public static class DebuggingEndpoints
             .AddSingleton(rootServices.GetRequiredService<WorkspaceRepository>())
             .AddSingleton(rootServices.GetRequiredService<ApprovalService>())
             .AddSingleton(rootServices.GetRequiredService<ISearchService>())
-            .AddSingleton(rootServices.GetRequiredService<IWebFetchService>());
+            .AddSingleton(rootServices.GetRequiredService<IWebFetchService>())
+            .AddSingleton(rootServices.GetRequiredService<LocalWorkspaceExecutor>())
+            .AddSingleton(rootServices.GetRequiredService<IWorkspaceExecutionRouterFactory>());
 
         return services.BuildServiceProvider();
     }

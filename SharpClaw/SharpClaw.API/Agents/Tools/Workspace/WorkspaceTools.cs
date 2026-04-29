@@ -86,12 +86,6 @@ public static class WorkspaceTools
         return defaultWs;
     }
 
-    private static string ResolvePath(IServiceProvider sp, string path, string? workspaceName = null)
-    {
-        var workspace = ResolveWorkspace(sp, workspaceName);
-        return PathContainment.NormalizePath(workspace.RootPath, path);
-    }
-
     private static bool RequiresApproval(WorkspacePolicyMode mode, ApprovalActionType action)
     {
         return action switch
@@ -196,6 +190,12 @@ public static class WorkspaceTools
         return Convert.ToBase64String(bytes).Replace("+", "").Replace("/", "").Replace("=", "");
     }
 
+    private static IWorkspaceExecutionRouter GetRouter(IServiceProvider sp, ResolvedWorkspace workspace)
+    {
+        var factory = sp.GetRequiredService<IWorkspaceExecutionRouterFactory>();
+        return factory.GetRouter(workspace);
+    }
+
     public static async Task<object> ListFiles(IServiceProvider sp, string path, bool recursive = false, bool include_hidden = false, string? workspace = null)
     {
         var ws = ResolveWorkspace(sp, workspace);
@@ -203,87 +203,8 @@ public static class WorkspaceTools
         if (ws.PolicyMode is WorkspacePolicyMode.Disabled)
             return new { error = "Workspace is disabled." };
 
-        var resolvedPath = ResolvePath(sp, path, workspace);
-
-        if (!Directory.Exists(resolvedPath))
-            return new { error = $"Path does not exist: {path}" };
-
-        var entries = new List<object>();
-        var totalCount = 0;
-
-        try
-        {
-            if (!recursive)
-            {
-                foreach (var dir in Directory.GetDirectories(resolvedPath, "*", SearchOption.TopDirectoryOnly))
-                {
-                    var dirInfo = new DirectoryInfo(dir);
-                    if (!include_hidden && (dirInfo.Attributes & FileAttributes.Hidden) != 0)
-                        continue;
-                    var relative = MakeRelative(ws.RootPath, dir);
-                    entries.Add(new { type = "directory", path = relative, name = dirInfo.Name });
-                }
-
-                foreach (var file in Directory.GetFiles(resolvedPath, "*", SearchOption.TopDirectoryOnly))
-                {
-                    var fileInfo = new FileInfo(file);
-                    if (!include_hidden && (fileInfo.Attributes & FileAttributes.Hidden) != 0)
-                        continue;
-                    var relative = MakeRelative(ws.RootPath, file);
-                    entries.Add(new { type = "file", path = relative, name = fileInfo.Name, size = fileInfo.Length });
-                }
-            }
-            else
-            {
-                var queue = new Queue<string>();
-                queue.Enqueue(resolvedPath);
-
-                while (queue.Count > 0 && entries.Count < MaxListEntries)
-                {
-                    var current = queue.Dequeue();
-
-                    foreach (var dir in Directory.GetDirectories(current, "*", SearchOption.TopDirectoryOnly))
-                    {
-                        var dirInfo = new DirectoryInfo(dir);
-                        if (!include_hidden && (dirInfo.Attributes & FileAttributes.Hidden) != 0)
-                            continue;
-                        var relative = MakeRelative(ws.RootPath, dir);
-                        entries.Add(new { type = "directory", path = relative, name = dirInfo.Name });
-                        totalCount++;
-                        if (entries.Count < MaxListEntries)
-                            queue.Enqueue(dir);
-                    }
-
-                    foreach (var file in Directory.GetFiles(current, "*", SearchOption.TopDirectoryOnly))
-                    {
-                        var fileInfo = new FileInfo(file);
-                        if (!include_hidden && (fileInfo.Attributes & FileAttributes.Hidden) != 0)
-                            continue;
-                        var relative = MakeRelative(ws.RootPath, file);
-                        entries.Add(new { type = "file", path = relative, name = fileInfo.Name, size = fileInfo.Length });
-                        totalCount++;
-                    }
-                }
-            }
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return new { error = $"Access denied: {ex.Message}" };
-        }
-
-        var truncated = recursive && totalCount > MaxListEntries;
-
-        return new
-        {
-            title = $"Directory listing: {path}",
-            path,
-            recursive,
-            entries,
-            count = entries.Count,
-            total_entries = totalCount,
-            truncated,
-            note = truncated ? $"Showing top {MaxListEntries} entries (breadth-first). {totalCount - MaxListEntries} more entries not shown." : null,
-        };
+        var router = GetRouter(sp, ws);
+        return await router.ListFiles(ws, path, recursive, include_hidden);
     }
 
     public static async Task<object> ReadFile(IServiceProvider sp, string path,
@@ -296,40 +217,40 @@ public static class WorkspaceTools
         if (ws.PolicyMode is WorkspacePolicyMode.Disabled)
             return new { error = "Workspace is disabled." };
 
-        var resolvedPath = ResolvePath(sp, path, workspace);
+        // For large file handling with LCM artifacts, we still need to check file size locally
+        // This is a special case that may need to be handled differently for bridge workspaces
+        var router = GetRouter(sp, ws);
+        var result = await router.ReadFile(ws, path, offset, length);
 
-        if (!File.Exists(resolvedPath))
-            return new { error = $"File does not exist: {path}" };
+        // Handle large file truncation with LCM artifacts (local execution only for now)
+        if (result is not IDictionary<string, object> resultDict)
+            return result;
 
-        try
+        // Check if we need to create an LCM artifact for large files
+        if (!resultDict.ContainsKey("byte_count") || resultDict["byte_count"] is not int byteCount)
+            return result;
+
+        if (byteCount <= MaxReadSize)
+            return result;
+
+        // Large file handling - create LCM artifact (only for local for now)
+        if (ws.Workspace.RuntimeKind == WorkspaceRuntimeKind.Local)
         {
-            // TODO: optimize reads for buffer
-            var content = await File.ReadAllTextAsync(resolvedPath);
-            if (offset.HasValue || length.HasValue)
+            var ctx = sp.GetRequiredService<AgentExecutionContext>();
+            var repo = sp.GetRequiredService<WorkspaceRepository>();
+            var fileId = GenerateFileId(ws.Name, path, DateTime.UtcNow);
+
+            // Get the content from result to store as artifact
+            if (resultDict.TryGetValue("content", out var contentObj) && contentObj is string content)
             {
-                var lines = content.Split('\n').Skip(offset ?? 0);
-                if (length.HasValue)
-                    lines = lines.Take(length.Value);
-                content = string.Join('\n', lines);
-            }
-
-            var byteCount = Encoding.UTF8.GetByteCount(content);
-
-            if (byteCount > MaxReadSize)
-            {
-                var ctx = sp.GetRequiredService<AgentExecutionContext>();
-                var repo = sp.GetRequiredService<WorkspaceRepository>();
-                var fileId = GenerateFileId(ws.Name, resolvedPath, DateTime.UtcNow);
-
                 var artifact = await repo.CreateLcmFileArtifact(
                     ctx.SessionId,
                     fileId,
                     "ws_read_file",
                     path,
                     byteCount,
-                    resolvedPath);
+                    null);
 
-                var snippet = content[..Math.Min(content.Length, MaxReadSize)];
                 return new
                 {
                     title = $"File read (truncated): {path}",
@@ -337,23 +258,13 @@ public static class WorkspaceTools
                     workspace_path = path,
                     byte_count = byteCount,
                     truncated = true,
-                    content = snippet,
+                    content = content[..Math.Min(content.Length, MaxReadSize)],
                     note = $"File exceeds {MaxReadSize} bytes. Full content stored as artifact {fileId}.",
                 };
             }
+        }
 
-            return new
-            {
-                title = $"File read: {path}",
-                path,
-                byte_count = byteCount,
-                content,
-            };
-        }
-        catch (Exception ex)
-        {
-            return new { error = $"Failed to read file: {ex.Message}" };
-        }
+        return result;
     }
 
     public static async Task<object> WriteFile(IServiceProvider sp, string path, string content, string mode = "overwrite", string? approval_token = null, string? workspace = null)
@@ -372,49 +283,8 @@ public static class WorkspaceTools
             return approvalCheck;
 
         var ws = ResolveWorkspace(sp, workspace);
-        var resolvedPath = ResolvePath(sp, path, workspace);
-
-        if (!PathContainment.IsPathAllowed(ws.RootPath, resolvedPath, ws.AllowlistPatterns, ws.DenylistPatterns))
-            return new { error = $"Path is denied by workspace policy: {path}" };
-
-        try
-        {
-            var parentDir = Path.GetDirectoryName(resolvedPath);
-            if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
-                Directory.CreateDirectory(parentDir);
-
-            FileMode fileMode;
-            switch (mode)
-            {
-                case "append":
-                    fileMode = FileMode.Append;
-                    break;
-                case "create_only":
-                    if (File.Exists(resolvedPath))
-                        return new { error = $"File already exists and mode is create_only: {path}" };
-                    fileMode = FileMode.CreateNew;
-                    break;
-                default:
-                    fileMode = FileMode.Create;
-                    break;
-            }
-
-            await using var stream = new FileStream(resolvedPath, fileMode, FileAccess.Write, FileShare.None);
-            var bytes = Encoding.UTF8.GetBytes(content);
-            await stream.WriteAsync(bytes);
-
-            return new
-            {
-                title = $"File written: {path}",
-                path,
-                mode,
-                bytes_written = Encoding.UTF8.GetByteCount(content),
-            };
-        }
-        catch (Exception ex)
-        {
-            return new { error = $"Failed to write file: {ex.Message}" };
-        }
+        var router = GetRouter(sp, ws);
+        return await router.WriteFile(ws, path, content, mode);
     }
 
     public static async Task<object> EditFile(IServiceProvider sp, string path,
@@ -437,43 +307,8 @@ public static class WorkspaceTools
             return approvalCheck;
 
         var ws = ResolveWorkspace(sp, workspace);
-        var resolvedPath = ResolvePath(sp, path, workspace);
-
-        if (!PathContainment.IsPathAllowed(ws.RootPath, resolvedPath, ws.AllowlistPatterns, ws.DenylistPatterns))
-            return new { error = $"Path is denied by workspace policy: {path}" };
-
-        if (!File.Exists(resolvedPath))
-            return new { error = $"File does not exist: {path}" };
-
-        try
-        {
-            var oldFile = await File.ReadAllTextAsync(resolvedPath);
-
-            var (newContent, error) = StringReplacer.Replace(oldFile, oldString, newString, replaceAll);
-
-            if (error is not null)
-                return new
-                {
-                    error = error switch
-                    {
-                        StringReplacer.Error.OldStringNotFound => $"oldString not found in file {path}",
-                        StringReplacer.Error.MultipleMatchesFound => $"multiple matches of oldString found in file {path}, to replace all occurrences call this tool with replaceAll=true",
-                        _ => $"Error replacing string in '{path}'",
-                    }
-                };
-
-            await File.WriteAllTextAsync(resolvedPath, newContent);
-
-            return new
-            {
-                title = $"File edited: {path}",
-                path,
-            };
-        }
-        catch (Exception ex)
-        {
-            return new { error = $"Failed to write file: {ex.Message}" };
-        }
+        var router = GetRouter(sp, ws);
+        return await router.EditFile(ws, path, oldString, newString, replaceAll);
     }
 
     public static async Task<object> DeleteFile(IServiceProvider sp, string path, bool recursive = false, string? approval_token = null, string? workspace = null)
@@ -492,39 +327,8 @@ public static class WorkspaceTools
             return approvalCheck;
 
         var ws = ResolveWorkspace(sp, workspace);
-        var resolvedPath = ResolvePath(sp, path, workspace);
-
-        if (!PathContainment.IsPathAllowed(ws.RootPath, resolvedPath, ws.AllowlistPatterns, ws.DenylistPatterns))
-            return new { error = $"Path is denied by workspace policy: {path}" };
-
-        try
-        {
-            if (Directory.Exists(resolvedPath))
-            {
-                if (!recursive)
-                    return new { error = $"Path is a directory. Use recursive=true to delete: {path}" };
-                Directory.Delete(resolvedPath, true);
-            }
-            else if (File.Exists(resolvedPath))
-            {
-                File.Delete(resolvedPath);
-            }
-            else
-            {
-                return new { error = $"Path does not exist: {path}" };
-            }
-
-            return new
-            {
-                title = $"Deleted: {path}",
-                path,
-                recursive,
-            };
-        }
-        catch (Exception ex)
-        {
-            return new { error = $"Failed to delete: {ex.Message}" };
-        }
+        var router = GetRouter(sp, ws);
+        return await router.DeleteFile(ws, path, recursive);
     }
 
     public static async Task<object> MoveFile(IServiceProvider sp, string source, string destination, string? approval_token = null, string? workspace = null)
@@ -543,40 +347,8 @@ public static class WorkspaceTools
             return approvalCheck;
 
         var ws = ResolveWorkspace(sp, workspace);
-        var resolvedSource = ResolvePath(sp, source, workspace);
-        var resolvedDest = ResolvePath(sp, destination, workspace);
-
-        if (!PathContainment.IsPathAllowed(ws.RootPath, resolvedSource, ws.AllowlistPatterns, ws.DenylistPatterns))
-            return new { error = $"Source path is denied by workspace policy: {source}" };
-
-        if (!PathContainment.IsPathAllowed(ws.RootPath, resolvedDest, ws.AllowlistPatterns, ws.DenylistPatterns))
-            return new { error = $"Destination path is denied by workspace policy: {destination}" };
-
-        if (!File.Exists(resolvedSource) && !Directory.Exists(resolvedSource))
-            return new { error = $"Source does not exist: {source}" };
-
-        try
-        {
-            var parentDir = Path.GetDirectoryName(resolvedDest);
-            if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
-                Directory.CreateDirectory(parentDir);
-
-            if (Directory.Exists(resolvedSource))
-                Directory.Move(resolvedSource, resolvedDest);
-            else
-                File.Move(resolvedSource, resolvedDest);
-
-            return new
-            {
-                title = $"Moved: {source} -> {destination}",
-                source,
-                destination,
-            };
-        }
-        catch (Exception ex)
-        {
-            return new { error = $"Failed to move: {ex.Message}" };
-        }
+        var router = GetRouter(sp, ws);
+        return await router.MoveFile(ws, source, destination);
     }
 
     public static async Task<object> MakeDirectory(IServiceProvider sp, string path, string? approval_token = null, string? workspace = null)
@@ -595,47 +367,12 @@ public static class WorkspaceTools
             return approvalCheck;
 
         var ws = ResolveWorkspace(sp, workspace);
-        var resolvedPath = ResolvePath(sp, path, workspace);
-
-        if (!PathContainment.IsPathAllowed(ws.RootPath, resolvedPath, ws.AllowlistPatterns, ws.DenylistPatterns))
-            return new { error = $"Path is denied by workspace policy: {path}" };
-
-        try
-        {
-            if (Directory.Exists(resolvedPath))
-                return new { error = $"Directory already exists: {path}" };
-
-            Directory.CreateDirectory(resolvedPath);
-
-            return new
-            {
-                title = $"Directory created: {path}",
-                path,
-            };
-        }
-        catch (Exception ex)
-        {
-            return new { error = $"Failed to create directory: {ex.Message}" };
-        }
-    }
-
-    private static string MakeRelative(string workspaceRoot, string fullPath)
-    {
-        var normalizedRoot = Path.GetFullPath(workspaceRoot).TrimEnd(Path.DirectorySeparatorChar);
-        var normalizedPath = Path.GetFullPath(fullPath);
-
-        if (normalizedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
-        {
-            var relative = normalizedPath[normalizedRoot.Length..].TrimStart(Path.DirectorySeparatorChar);
-            return string.IsNullOrEmpty(relative) ? "." : relative;
-        }
-
-        return normalizedPath;
+        var router = GetRouter(sp, ws);
+        return await router.MakeDirectory(ws, path);
     }
 
     private static string GenerateFileId(string workspaceName, string filePath, DateTime timestamp)
     {
-        var workspaceBytes = Encoding.UTF8.GetBytes(workspaceName);
         var pathBytes = Encoding.UTF8.GetBytes(filePath);
         var timestampBytes = BitConverter.GetBytes(timestamp.Ticks);
         var combinedBytes = pathBytes.Concat(timestampBytes).ToArray();
