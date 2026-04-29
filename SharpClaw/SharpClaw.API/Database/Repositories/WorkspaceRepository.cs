@@ -76,6 +76,49 @@ public class WorkspaceRepository(IConfiguration configuration)
         return updated > 0;
     }
 
+    public async Task UpsertBridgeClient(string bridgeId, string displayName, string status)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.ExecuteAsync(
+            """
+            insert into bridge_clients (bridge_id, display_name, status, last_seen_at)
+            values (@bridgeId, @displayName, @status, now())
+            on conflict (bridge_id) do update set
+                display_name = excluded.display_name,
+                status = excluded.status,
+                last_seen_at = now(),
+                updated_at = now()
+            """,
+            new { bridgeId, displayName, status });
+    }
+
+    public async Task UpdateBridgeStatus(string bridgeId, string status)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.ExecuteAsync(
+            """
+            update bridge_clients
+            set status = @status, last_seen_at = now(), updated_at = now()
+            where bridge_id = @bridgeId
+            """,
+            new { bridgeId, status });
+    }
+
+    public async Task<IReadOnlyList<BridgeClientInfo>> GetBridgeClients()
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var results = await connection.QueryAsync(
+            "select bridge_id, display_name, status, last_seen_at, created_at from bridge_clients order by created_at desc");
+        return results.Select(r => new BridgeClientInfo
+        {
+            BridgeId = r.bridge_id,
+            DisplayName = r.display_name,
+            Status = r.status,
+            LastSeenAt = r.last_seen_at,
+            CreatedAt = r.created_at,
+        }).ToArray();
+    }
+
     public async Task<AgentWorkspaceAssignment?> GetAssignment(long agentId, long workspaceId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
@@ -553,4 +596,13 @@ public class WorkspaceRepository(IConfiguration configuration)
             CreatedAt = created_at,
         };
     }
+}
+
+public record BridgeClientInfo
+{
+    public string BridgeId { get; init; } = string.Empty;
+    public string DisplayName { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+    public DateTime? LastSeenAt { get; init; }
+    public DateTime CreatedAt { get; init; }
 }

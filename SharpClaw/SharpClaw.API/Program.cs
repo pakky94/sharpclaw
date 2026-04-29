@@ -20,6 +20,7 @@ builder.Services.AddSingleton<FragmentsRepository>();
 builder.Services.AddSingleton<WorkspaceRepository>();
 builder.Services.AddSingleton<LocalWorkspaceExecutor>();
 builder.Services.AddSingleton<IWorkspaceExecutionRouterFactory, WorkspaceExecutionRouterFactory>();
+builder.Services.AddSingleton<BridgeConnectionManager>();
 builder.Services.AddSingleton<ApprovalService>();
 builder.Services.AddSingleton<FragmentEmbeddingService>();
 builder.Services.AddHostedService<FragmentEmbeddingBackgroundService>();

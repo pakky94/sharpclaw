@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using SharpClaw.API.Agents.Workspace;
 
 namespace SharpClaw.API.Agents.Workspace;
@@ -10,11 +11,16 @@ public interface IWorkspaceExecutionRouterFactory
 public class WorkspaceExecutionRouterFactory : IWorkspaceExecutionRouterFactory
 {
     private readonly LocalWorkspaceExecutor _localExecutor;
+    private readonly BridgeConnectionManager _connectionManager;
     private readonly ILogger<WorkspaceExecutionRouterFactory> _logger;
 
-    public WorkspaceExecutionRouterFactory(LocalWorkspaceExecutor localExecutor, ILogger<WorkspaceExecutionRouterFactory> logger)
+    public WorkspaceExecutionRouterFactory(
+        LocalWorkspaceExecutor localExecutor,
+        BridgeConnectionManager connectionManager,
+        ILogger<WorkspaceExecutionRouterFactory> logger)
     {
         _localExecutor = localExecutor;
+        _connectionManager = connectionManager;
         _logger = logger;
     }
 
@@ -31,11 +37,23 @@ public class WorkspaceExecutionRouterFactory : IWorkspaceExecutionRouterFactory
     private IWorkspaceExecutionRouter CreateBridgeExecutor(ResolvedWorkspace workspace)
     {
         var bridgeId = workspace.Workspace.RuntimeTarget ?? "unknown";
-        _logger.LogWarning("Bridge execution requested but not yet implemented. Bridge ID: {BridgeId}, Workspace: {WorkspaceName}", 
-            bridgeId, workspace.Name);
         
-        // For now, return a stub that returns not-implemented errors
-        // In later phases, this will look up the bridge connection and return a real executor
-        return new BridgeWorkspaceExecutor(bridgeId);
+        // Check if bridge is connected
+        var bridges = _connectionManager.GetConnectedBridges();
+        var bridge = bridges.FirstOrDefault(b => b.BridgeId == bridgeId);
+        
+        if (bridge is null)
+        {
+            _logger.LogWarning("Bridge {BridgeId} not connected. Workspace: {WorkspaceName}", 
+                bridgeId, workspace.Name);
+            // Return executor that returns proper error for offline bridge
+            return new BridgeWorkspaceExecutor(bridgeId, _connectionManager, 
+                _logger as ILogger<BridgeWorkspaceExecutor> ?? 
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<BridgeWorkspaceExecutor>.Instance);
+        }
+        
+        return new BridgeWorkspaceExecutor(bridgeId, _connectionManager, 
+            _logger as ILogger<BridgeWorkspaceExecutor> ?? 
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<BridgeWorkspaceExecutor>.Instance);
     }
 }
