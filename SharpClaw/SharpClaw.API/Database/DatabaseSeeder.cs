@@ -287,9 +287,21 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     last_seen_at timestamptz null,
                     capabilities jsonb not null default '{}'::jsonb,
                     auth_fingerprint varchar(255) null,
+                    is_devcontainer boolean not null default false,
+                    container_id varchar(255) null,
+                    workspace_path_in_container text null,
                     created_at timestamptz not null default now(),
                     updated_at timestamptz not null default now()
                 );
+
+                alter table bridge_clients
+                    add column if not exists is_devcontainer boolean not null default false;
+
+                alter table bridge_clients
+                    add column if not exists container_id varchar(255) null;
+
+                alter table bridge_clients
+                    add column if not exists workspace_path_in_container text null;
 
                 create table if not exists bridge_execution_events(
                     id bigserial primary key,

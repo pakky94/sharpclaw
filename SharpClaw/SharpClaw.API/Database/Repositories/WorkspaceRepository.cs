@@ -76,20 +76,23 @@ public class WorkspaceRepository(IConfiguration configuration)
         return updated > 0;
     }
 
-    public async Task UpsertBridgeClient(string bridgeId, string displayName, string status)
+    public async Task UpsertBridgeClient(string bridgeId, string displayName, string status, bool isDevContainer = false, string? containerId = null, string? workspacePathInContainer = null)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.ExecuteAsync(
             """
-            insert into bridge_clients (bridge_id, display_name, status, last_seen_at)
-            values (@bridgeId, @displayName, @status, now())
+            insert into bridge_clients (bridge_id, display_name, status, last_seen_at, is_devcontainer, container_id, workspace_path_in_container)
+            values (@bridgeId, @displayName, @status, now(), @isDevContainer, @containerId, @workspacePathInContainer)
             on conflict (bridge_id) do update set
                 display_name = excluded.display_name,
                 status = excluded.status,
                 last_seen_at = now(),
-                updated_at = now()
+                updated_at = now(),
+                is_devcontainer = excluded.is_devcontainer,
+                container_id = excluded.container_id,
+                workspace_path_in_container = excluded.workspace_path_in_container
             """,
-            new { bridgeId, displayName, status });
+            new { bridgeId, displayName, status, isDevContainer, containerId, workspacePathInContainer });
     }
 
     public async Task UpdateBridgeStatus(string bridgeId, string status)

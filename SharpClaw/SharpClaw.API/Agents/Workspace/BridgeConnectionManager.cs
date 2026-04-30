@@ -110,8 +110,14 @@ public class BridgeConnectionManager : BackgroundService
 
         _logger.LogInformation("Bridge registered: {BridgeId} ({DisplayName})", registration.BridgeId, registration.DisplayName);
 
-        // Update or create bridge client record in database
-        await _workspaceRepository.UpsertBridgeClient(registration.BridgeId, registration.DisplayName, "online");
+        // Update or create bridge client record in database (including devcontainer info)
+        await _workspaceRepository.UpsertBridgeClient(
+            registration.BridgeId,
+            registration.DisplayName,
+            "online",
+            registration.IsDevContainer,
+            registration.ContainerId,
+            registration.WorkspacePathInContainer);
 
         // Send acknowledgment
         await SendMessage(connection, new { type = "register_ack", status = "ok" });

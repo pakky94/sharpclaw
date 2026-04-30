@@ -51,6 +51,9 @@ public class BridgeRegistration
     public string? Shell { get; set; }
     public int? MaxTimeoutMs { get; set; }
     public Dictionary<string, object>? RootMappings { get; set; }
+    public bool IsDevContainer { get; set; }
+    public string? ContainerId { get; set; }
+    public string? WorkspacePathInContainer { get; set; }
 }
 
 public class BridgeHeartbeat

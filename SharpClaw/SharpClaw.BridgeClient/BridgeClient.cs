@@ -553,20 +553,65 @@ public class SharpClawBridgeClient
         }
     }
 
+    private static (bool isDevContainer, string? containerId, string? workspacePathInContainer) DetectDevContainer()
+    {
+        // Check for Docker container indicators
+        var containerId = Environment.GetEnvironmentVariable("DOCKER_CONTAINER");
+        if (string.IsNullOrEmpty(containerId))
+            containerId = Environment.GetEnvironmentVariable("DEVCONTAINER_IPC");
+
+        // Check for .dockerenv file (Linux containers)
+        if (string.IsNullOrEmpty(containerId) && File.Exists("/.dockerenv"))
+        {
+            // Try to get container ID from hostname (often the short container ID)
+            try { containerId = Environment.MachineName; } catch { }
+        }
+
+        // Check for /proc/1/cgroup (Linux container)
+        if (string.IsNullOrEmpty(containerId) && File.Exists("/proc/1/cgroup"))
+        {
+            try
+            {
+                var cgroup = File.ReadAllText("/proc/1/cgroup");
+                if (cgroup.Contains("docker") || cgroup.Contains("containerd"))
+                    containerId = "detected";
+            }
+            catch { }
+        }
+
+        var isDevContainer = !string.IsNullOrEmpty(containerId);
+
+        // Determine workspace path in container (default to root path from environment or current directory)
+        string? workspacePathInContainer = null;
+        if (isDevContainer)
+        {
+            // Try to get workspace path from environment variable set by devcontainer CLI
+            workspacePathInContainer = Environment.GetEnvironmentVariable("DEVCONTAINER_WORKSPACE_FOLDER")
+                ?? Environment.GetEnvironmentVariable("WORKSPACE_FOLDER");
+        }
+
+        return (isDevContainer, containerId, workspacePathInContainer);
+    }
+
     private async Task SendRegistration()
     {
+        var (isDevContainer, containerId, workspacePathInContainer) = DetectDevContainer();
+
         var registration = new Dictionary<string, object>
         {
             { "type", "register" },
             { "bridge_id", _bridgeId },
-            { "display_name", "SharpClaw Bridge Client" },
-            { "capabilities", new[] { "list_files", "read_file", "write_file", "edit_file", "delete_file", "move_file", "make_directory" } },
+            { "display_name", isDevContainer ? $"DevContainer Bridge ({Environment.MachineName})" : "SharpClaw Bridge Client" },
+            { "capabilities", new[] { "list_files", "read_file", "write_file", "edit_file", "delete_file", "move_file", "make_directory", "run_command" } },
             { "os", Environment.OSVersion.ToString() },
-            { "shell", Environment.OSVersion.Platform == PlatformID.Win32NT ? "cmd.exe" : "/bin/bash" }
+            { "shell", Environment.OSVersion.Platform == PlatformID.Win32NT ? "cmd.exe" : "/bin/bash" },
+            { "is_devcontainer", isDevContainer },
+            { "container_id", containerId ?? "" },
+            { "workspace_path_in_container", workspacePathInContainer ?? "" }
         };
 
         await SendMessage(registration);
-        Console.WriteLine("Registration sent.");
+        Console.WriteLine($"Registration sent. DevContainer: {isDevContainer}, ContainerId: {containerId}");
     }
 
     private async Task SendHeartbeat()

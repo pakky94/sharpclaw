@@ -36,6 +36,9 @@ public class BridgeRegistration
     public string[] Capabilities { get; set; } = [];
     public string Os { get; set; } = string.Empty;
     public string Shell { get; set; } = string.Empty;
+    public bool IsDevContainer { get; set; }
+    public string? ContainerId { get; set; }
+    public string? WorkspacePathInContainer { get; set; }
 }
 
 public class BridgeHeartbeat
