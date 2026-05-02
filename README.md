@@ -63,3 +63,16 @@ The image is built via a multi-stage root `Dockerfile`:
 3. Copy web `dist` into API `wwwroot`
 
 The backend serves both API routes and frontend static files from the same container.
+
+## Bridge Client (Remote Execution)
+
+The bridge client runs outside the main container and connects via WebSocket for remote workspace execution.
+
+Build as a single executable:
+
+```powershell
+cd SharpClaw/SharpClaw.BridgeClient
+dotnet publish -c Release -o ../publish/bridge-client
+```
+
+Output: `SharpClaw/publish/bridge-client/SharpClaw.BridgeClient`

@@ -5,6 +5,7 @@
   </Folder>
   <Project Path="SharpClaw.API/SharpClaw.API.csproj" />
   <Project Path="SharpClaw.AppHost/SharpClaw.AppHost.csproj" />
+  <Project Path="SharpClaw.Common/SharpClaw.Common.csproj" />
   <Project Path="SharpClaw.ServiceDefaults/SharpClaw.ServiceDefaults.csproj" />
   <Project Path="SharpClaw.BridgeClient/SharpClaw.BridgeClient.csproj" />
 </Solution>

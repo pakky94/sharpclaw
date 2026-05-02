@@ -2,9 +2,8 @@ using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
-using Microsoft.Extensions.Logging;
 using SharpClaw.API.Database.Repositories;
+using SharpClaw.Common;
 
 namespace SharpClaw.API.Agents.Workspace;
 
@@ -37,7 +36,7 @@ public class BridgeConnectionManager : BackgroundService
         }
         finally
         {
-            _connections.TryRemove(bridgeId, out _);
+            _connections.TryRemove(connection.BridgeId, out _);
             connection.Dispose();
             _logger.LogInformation("Bridge {BridgeId} disconnected", bridgeId);
         }
@@ -84,12 +83,16 @@ public class BridgeConnectionManager : BackgroundService
                         await HandleHeartbeat(connection, root);
                         break;
                     case "response":
-                        await HandleResponse(connection, root);
+                        HandleResponse(connection, root);
                         break;
                     default:
                         _logger.LogWarning("Unknown bridge message type: {Type}", type);
                         break;
                 }
+            }
+            else
+            {
+                _logger.LogWarning("type property is missing from response: {Message}", message);
             }
         }
         catch (Exception ex)
@@ -103,7 +106,14 @@ public class BridgeConnectionManager : BackgroundService
         var registration = JsonSerializer.Deserialize<BridgeRegistration>(root.GetRawText());
         if (registration is null) return;
 
-        connection.BridgeId = registration.BridgeId;
+        var newBridgeId = registration.BridgeId;
+        if (!string.IsNullOrEmpty(newBridgeId) && newBridgeId != connection.BridgeId)
+        {
+            _connections.TryRemove(connection.BridgeId, out _);
+            connection.BridgeId = newBridgeId;
+            _connections[newBridgeId] = connection;
+        }
+
         connection.DisplayName = registration.DisplayName;
         connection.Capabilities = registration.Capabilities ?? [];
         connection.Status = "online";
@@ -133,16 +143,23 @@ public class BridgeConnectionManager : BackgroundService
         await SendMessage(connection, new { type = "heartbeat_ack", timestamp = DateTime.UtcNow });
     }
 
-    private async Task HandleResponse(BridgeConnection connection, JsonElement root)
+    private void HandleResponse(BridgeConnection connection, JsonElement root)
     {
-        if (root.TryGetProperty("request_id", out var requestIdProp))
+        var response = root.Deserialize<BridgeResponse>();
+
+        if (response?.RequestId is null)
         {
-            var requestId = requestIdProp.GetString();
-            if (requestId is not null && connection.PendingRequests.TryRemove(requestId, out var tcs))
-            {
-                var response = JsonSerializer.Deserialize<BridgeResponse>(root.GetRawText());
-                tcs.SetResult(response ?? new BridgeResponse { Status = "error", ErrorMessage = "Invalid response" });
-            }
+            _logger.LogWarning("Invalid response: {Response}", root.GetRawText());
+            return;
+        }
+
+        if (connection.PendingRequests.TryRemove(response.RequestId, out var tcs))
+        {
+            tcs.SetResult(response);
+        }
+        else
+        {
+            _logger.LogWarning("Received response for unknown request: {RequestId}", response.RequestId);
         }
     }
 

@@ -15,6 +15,7 @@
     </ItemGroup>
 
     <ItemGroup>
+      <ProjectReference Include="..\SharpClaw.Common\SharpClaw.Common.csproj" />
       <ProjectReference Include="..\SharpClaw.ServiceDefaults\SharpClaw.ServiceDefaults.csproj" />
     </ItemGroup>
 

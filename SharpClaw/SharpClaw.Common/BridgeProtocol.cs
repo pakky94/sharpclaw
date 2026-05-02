@@ -1,7 +1,13 @@
-namespace SharpClaw.API.Agents.Workspace;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace SharpClaw.Common;
 
 public class BridgeRequest
 {
+    [JsonPropertyName("type")]
+    public string Type => "request";
+
     public string RequestId { get; set; } = Guid.NewGuid().ToString();
     public Guid SessionId { get; set; }
     public long AgentId { get; set; }
@@ -10,6 +16,62 @@ public class BridgeRequest
     public Dictionary<string, object?> Args { get; set; } = [];
     public BridgePolicyContext PolicyContext { get; set; } = new();
     public BridgeLimits Limits { get; set; } = new();
+
+    public string? TryGetStringArg(string name)
+    {
+        if (Args.TryGetValue(name, out var value))
+        {
+            return value switch
+            {
+                string str => str,
+                JsonElement element => element.GetString(),
+                _ => null
+            };
+        }
+        return null;
+    }
+
+    public int? TryGetIntArg(string name)
+    {
+        if (Args.TryGetValue(name, out var value))
+        {
+            return value switch
+            {
+                int num => num,
+                JsonElement element => element.GetInt32(),
+                _ => null
+            };
+        }
+        return null;
+    }
+
+    public long? TryGetLongArg(string name)
+    {
+        if (Args.TryGetValue(name, out var value))
+        {
+            return value switch
+            {
+                long num => num,
+                JsonElement element => element.GetInt64(),
+                _ => null
+            };
+        }
+        return null;
+    }
+
+    public bool? TryGetBoolArg(string name)
+    {
+        if (Args.TryGetValue(name, out var value))
+        {
+            return value switch
+            {
+                bool boolValue => boolValue,
+                JsonElement element => element.GetBoolean(),
+                _ => null
+            };
+        }
+        return null;
+    }
 }
 
 public class BridgePolicyContext
@@ -28,6 +90,8 @@ public class BridgeLimits
 
 public class BridgeResponse
 {
+    [JsonPropertyName("type")]
+    public string Type => "response";
     public string RequestId { get; set; } = string.Empty;
     public string Status { get; set; } = "ok"; // ok, error, timeout
     public object? Result { get; set; }
@@ -44,6 +108,8 @@ public class BridgeExecutionMetadata
 
 public class BridgeRegistration
 {
+    [JsonPropertyName("type")]
+    public string Type => "register";
     public string BridgeId { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
     public string[] Capabilities { get; set; } = [];
@@ -58,6 +124,8 @@ public class BridgeRegistration
 
 public class BridgeHeartbeat
 {
+    [JsonPropertyName("type")]
+    public string Type => "heartbeat";
     public string BridgeId { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     public string Status { get; set; } = "online";

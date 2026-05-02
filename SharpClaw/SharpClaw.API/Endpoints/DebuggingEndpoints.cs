@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.API.Agents;
 using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database;

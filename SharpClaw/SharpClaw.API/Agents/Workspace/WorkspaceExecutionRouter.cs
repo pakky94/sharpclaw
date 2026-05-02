@@ -1,6 +1,3 @@
-using Microsoft.Extensions.Logging;
-using SharpClaw.API.Agents.Workspace;
-
 namespace SharpClaw.API.Agents.Workspace;
 
 public interface IWorkspaceExecutionRouterFactory

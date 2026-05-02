@@ -116,13 +116,15 @@ export type ChildSessionSpawnedEventData = {
 }
 
 export type WorkspaceConfig = {
-  id: number
-  name: string
-  rootPath: string
-  allowlistPatterns: string[]
-  denylistPatterns: string[]
-  createdAt: string
-  updatedAt: string
+  id: number;
+  name: string;
+  rootPath: string;
+  allowlistPatterns: string[];
+  denylistPatterns: string[];
+  runtimeKind: 'local' | 'bridge';
+  runtimeTarget: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type WorkspaceAssignment = {
@@ -137,15 +139,23 @@ export type AgentWorkspaceEntry = {
 }
 
 export type ApprovalEvent = {
-  id: number
-  sessionId: string
-  agentId: number
-  approvalToken: string
-  actionType: string
-  targetPath: string | null
-  commandPreview: string | null
-  riskLevel: string
-  status: string
-  createdAt: string
-  resolvedAt: string | null
+  id: number;
+  sessionId: string;
+  agentId: number;
+  approvalToken: string;
+  actionType: string;
+  targetPath: string | null;
+  commandPreview: string | null;
+  riskLevel: string;
+  status: string;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export type BridgeStatus = {
+  bridgeId: string;
+  displayName: string;
+  status: string;
+  lastSeenAt: string | null;
+  createdAt: string;
 }

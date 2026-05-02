@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { API_BASE_URL, fetchJson } from '../services/chatApi'
-import type { AgentConfig, WorkspaceConfig, AgentWorkspaceEntry, ApprovalEvent } from '../types/chat'
+import type { AgentConfig, WorkspaceConfig, AgentWorkspaceEntry, ApprovalEvent, BridgeStatus } from '../types/chat'
 import { asErrorMessage } from '../utils/chatUtils'
 import './AgentConsolePage.css'
 
@@ -18,14 +18,16 @@ const POLICY_MODES = [
 ]
 
 type WorkspaceDraft = {
-  name: string
-  rootPath: string
-  allowlistText: string
-  denylistText: string
+  name: string;
+  rootPath: string;
+  allowlistText: string;
+  denylistText: string;
+  runtimeKind: 'local' | 'bridge';
+  runtimeTarget: string;
 }
 
 function emptyDraft(): WorkspaceDraft {
-  return { name: '', rootPath: '', allowlistText: '', denylistText: '' }
+  return { name: '', rootPath: '', allowlistText: '', denylistText: '', runtimeKind: 'local', runtimeTarget: '' }
 }
 
 export function WorkspaceManagementPage({ onUnsavedChange }: WorkspaceManagementPageProps) {
@@ -35,6 +37,7 @@ export function WorkspaceManagementPage({ onUnsavedChange }: WorkspaceManagement
   const [workspaces, setWorkspaces] = useState<WorkspaceConfig[]>([])
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<number | null>(null)
   const [draft, setDraft] = useState<WorkspaceDraft>(emptyDraft())
+  const [bridges, setBridges] = useState<BridgeStatus[]>([])
   const [dirty, setDirty] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -45,7 +48,17 @@ export function WorkspaceManagementPage({ onUnsavedChange }: WorkspaceManagement
   useEffect(() => {
     void loadAgents()
     void loadWorkspaces()
+    void loadBridges()
   }, [])
+
+  async function loadBridges() {
+    try {
+      const data = await fetchJson<{ bridges: BridgeStatus[] }>(`${API_BASE_URL}/bridge/status`)
+      setBridges(data.bridges)
+    } catch {
+      setBridges([])
+    }
+  }
 
   useEffect(() => {
     onUnsavedChange?.(dirty)
@@ -65,6 +78,8 @@ export function WorkspaceManagementPage({ onUnsavedChange }: WorkspaceManagement
       rootPath: ws.rootPath,
       allowlistText: ws.allowlistPatterns.join('\n'),
       denylistText: ws.denylistPatterns.join('\n'),
+      runtimeKind: ws.runtimeKind ?? 'local',
+      runtimeTarget: ws.runtimeTarget ?? '',
     })
     setDirty(false)
   }
@@ -126,6 +141,8 @@ export function WorkspaceManagementPage({ onUnsavedChange }: WorkspaceManagement
           rootPath: draft.rootPath.trim() || undefined,
           allowlistPatterns: draft.allowlistText.split('\n').map((l) => l.trim()).filter(Boolean),
           denylistPatterns: draft.denylistText.split('\n').map((l) => l.trim()).filter(Boolean),
+          runtimeKind: draft.runtimeKind,
+          runtimeTarget: draft.runtimeTarget || undefined,
         }),
       })
       await loadWorkspaces()
@@ -412,6 +429,58 @@ export function WorkspaceManagementPage({ onUnsavedChange }: WorkspaceManagement
           }}
           disabled={loading}
         />
+
+        <label className="field-label">
+          Runtime Kind
+        </label>
+        <select
+          className="text-input"
+          value={draft.runtimeKind}
+          onChange={(e) => {
+            setDraft((d) => ({ ...d, runtimeKind: e.target.value as 'local' | 'bridge' }))
+            setDirty(true)
+          }}
+          disabled={loading}
+        >
+          <option value="local">Local (same as API)</option>
+          <option value="bridge">Bridge (remote execution)</option>
+        </select>
+
+        {draft.runtimeKind === 'bridge' && (
+          <>
+            <label className="field-label">
+              Bridge (Runtime Target)
+            </label>
+            <select
+              className="text-input"
+              value={draft.runtimeTarget}
+              onChange={(e) => {
+                setDraft((d) => ({ ...d, runtimeTarget: e.target.value }))
+                setDirty(true)
+              }}
+              disabled={loading}
+            >
+              <option value="">Select a bridge...</option>
+              {bridges.filter((b) => b.status === 'online').map((b) => (
+                <option key={b.bridgeId} value={b.bridgeId}>
+                  {b.displayName || b.bridgeId}
+                </option>
+              ))}
+            </select>
+            {bridges.filter((b) => b.status === 'offline').length > 0 && (
+              <div className="bridge-list" style={{ marginTop: '8px' }}>
+                <small>Offline bridges:</small>
+                <ul style={{ margin: '4px 0', paddingLeft: '20px' }}>
+                  {bridges.filter((b) => b.status === 'offline').map((b) => (
+                    <li key={b.bridgeId} style={{ fontSize: '0.85rem', color: '#888' }}>
+                      <code>{b.bridgeId}</code> - {b.displayName || 'Unnamed'}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
 
         <label className="field-label" htmlFor="workspace-allowlist">
           Allowlist Patterns (one per line, empty = all allowed)

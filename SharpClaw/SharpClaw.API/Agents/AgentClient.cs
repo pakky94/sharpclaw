@@ -26,6 +26,7 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
 
         var services = new ServiceCollection()
             .Configure<LmStudioConfiguration>(configuration)
+            .AddLogging(configure => configure.SetMinimumLevel(LogLevel.Information).AddConsole())
             .AddSingleton(context)
             .AddSingleton(configuration)
             .AddSingleton<ChatRepository>()
@@ -33,7 +34,10 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
             .AddSingleton<FragmentsRepository>()
             .AddSingleton<FragmentEmbeddingService>()
             .AddSingleton<WorkspaceRepository>()
-            .AddSingleton<ApprovalService>();
+            .AddSingleton<ApprovalService>()
+            .AddSingleton<LocalWorkspaceExecutor>()
+            .AddSingleton(serviceProvider.GetRequiredService<BridgeConnectionManager>())
+            .AddSingleton<IWorkspaceExecutionRouterFactory, WorkspaceExecutionRouterFactory>();
 
         if (runState is not null)
             services.AddSingleton(runState);

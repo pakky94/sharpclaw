@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
+using SharpClaw.Common;
 
 namespace SharpClaw.BridgeClient;
 
@@ -85,6 +85,7 @@ public class SharpClawBridgeClient
         try
         {
             using var doc = JsonDocument.Parse(message);
+            Console.WriteLine($"Recieved: {message}");
             var root = doc.RootElement;
 
             if (root.TryGetProperty("type", out var typeProp))
@@ -115,70 +116,46 @@ public class SharpClawBridgeClient
 
     private async Task HandleRequest(JsonElement root)
     {
-        if (!root.TryGetProperty("request_id", out var requestIdProp) ||
-            !root.TryGetProperty("operation", out var operationProp))
+        var request = root.Deserialize<BridgeRequest>();
+
+        if (request is null)
+        {
+            await SendResponse("unknown", "error", new Dictionary<string, object> { { "error", "Invalid request" } });
             return;
-
-        var requestId = requestIdProp.GetString() ?? Guid.NewGuid().ToString();
-        var operation = operationProp.GetString() ?? "unknown";
-        
-        var args = new Dictionary<string, object?>();
-        if (root.TryGetProperty("args", out var argsProp))
-        {
-            foreach (var prop in argsProp.EnumerateObject())
-            {
-                args[prop.Name] = prop.Value.ValueKind switch
-                {
-                    JsonValueKind.String => prop.Value.GetString(),
-                    JsonValueKind.Number => prop.Value.GetInt32(),
-                    JsonValueKind.True => true,
-                    JsonValueKind.False => false,
-                    _ => null
-                };
-            }
         }
 
-        var policyContext = new BridgePolicyContext();
-        if (root.TryGetProperty("policy_context", out var policyProp))
-        {
-            if (policyProp.TryGetProperty("root_path", out var rootPathProp))
-                policyContext.RootPath = rootPathProp.GetString() ?? "";
-            if (policyProp.TryGetProperty("policy_mode", out var policyModeProp))
-                policyContext.PolicyMode = policyModeProp.GetString() ?? "";
-        }
-
-        Console.WriteLine($"Handling operation: {operation}");
+        Console.WriteLine($"Handling operation: {request.Operation} ({request.RequestId})");
 
         try
         {
-            object? result = operation switch
+            object? result = request.Operation switch
             {
-                "list_files" => HandleListFiles(args, policyContext),
-                "read_file" => HandleReadFile(args, policyContext),
-                "write_file" => HandleWriteFile(args, policyContext),
-                "edit_file" => HandleEditFile(args, policyContext),
-                "delete_file" => HandleDeleteFile(args, policyContext),
-                "move_file" => HandleMoveFile(args, policyContext),
-                "make_directory" => HandleMakeDirectory(args, policyContext),
-                "run_command" => await HandleRunCommand(args, policyContext),
-                _ => new Dictionary<string, object> { { "error", $"Operation {operation} not supported" } }
+                "list_files" => HandleListFiles(request),
+                "read_file" => HandleReadFile(request),
+                "write_file" => HandleWriteFile(request),
+                "edit_file" => HandleEditFile(request),
+                "delete_file" => HandleDeleteFile(request),
+                "move_file" => HandleMoveFile(request),
+                "make_directory" => HandleMakeDirectory(request),
+                "run_command" => await HandleRunCommand(request),
+                _ => new Dictionary<string, object> { { "error", $"Operation {request.Operation} not supported" } }
             };
 
-            await SendResponse(requestId, "ok", result);
+            await SendResponse(request.RequestId, "ok", result);
         }
         catch (Exception ex)
         {
-            await SendResponse(requestId, "error", new Dictionary<string, object> { { "error", ex.Message } });
+            await SendResponse(request.RequestId, "error", new Dictionary<string, object> { { "error", ex.Message } });
         }
     }
 
-    private object HandleListFiles(Dictionary<string, object?> args, BridgePolicyContext policyContext)
+    private static object HandleListFiles(BridgeRequest request)
     {
-        var path = args.GetValueOrDefault("path") as string ?? ".";
-        var recursive = args.GetValueOrDefault("recursive") is true;
-        var includeHidden = args.GetValueOrDefault("include_hidden") is true;
+        var path = request.TryGetStringArg("path") ?? ".";
+        var recursive = request.TryGetBoolArg("recursive") is true;
+        var includeHidden = request.TryGetBoolArg("include_hidden") is true;
 
-        var rootPath = policyContext.RootPath;
+        var rootPath = request.PolicyContext.RootPath;
         var resolvedPath = Path.IsPathRooted(path) ? path : Path.Combine(rootPath, path);
 
         if (!Directory.Exists(resolvedPath))
@@ -218,13 +195,13 @@ public class SharpClawBridgeClient
         };
     }
 
-    private object HandleReadFile(Dictionary<string, object?> args, BridgePolicyContext policyContext)
+    private static object HandleReadFile(BridgeRequest request)
     {
-        var path = args.GetValueOrDefault("path") as string ?? "";
-        var offset = args.GetValueOrDefault("offset") is int off ? off : (int?)null;
-        var length = args.GetValueOrDefault("length") is int len ? len : (int?)null;
+        var path = request.TryGetStringArg("path") ?? "";
+        var offset = request.TryGetIntArg("offset") ?? null;
+        var length = request.TryGetIntArg("length") ?? null;
 
-        var rootPath = policyContext.RootPath;
+        var rootPath = request.PolicyContext.RootPath;
         var resolvedPath = Path.IsPathRooted(path) ? path : Path.Combine(rootPath, path);
 
         if (!File.Exists(resolvedPath))
@@ -249,17 +226,17 @@ public class SharpClawBridgeClient
         };
     }
 
-    private object HandleWriteFile(Dictionary<string, object?> args, BridgePolicyContext policyContext)
+    private static object HandleWriteFile(BridgeRequest request)
     {
-        var path = args.GetValueOrDefault("path") as string ?? "";
-        var content = args.GetValueOrDefault("content") as string ?? "";
-        var mode = args.GetValueOrDefault("mode") as string ?? "overwrite";
+        var path = request.TryGetStringArg("path") ?? "";
+        var content = request.TryGetStringArg("content") ?? "";
+        var mode = request.TryGetStringArg("mode") ?? "overwrite";
 
-        var rootPath = policyContext.RootPath;
+        var rootPath = request.PolicyContext.RootPath;
         var resolvedPath = Path.IsPathRooted(path) ? path : Path.Combine(rootPath, path);
 
         // Check path is allowed (basic policy check)
-        if (!IsPathAllowed(resolvedPath, rootPath, policyContext))
+        if (!IsPathAllowed(resolvedPath, rootPath, request.PolicyContext))
             return new Dictionary<string, object> { { "error", $"Path is denied by policy: {path}" } };
 
         try
@@ -296,17 +273,17 @@ public class SharpClawBridgeClient
         }
     }
 
-    private object HandleEditFile(Dictionary<string, object?> args, BridgePolicyContext policyContext)
+    private static object HandleEditFile(BridgeRequest request)
     {
-        var path = args.GetValueOrDefault("path") as string ?? "";
-        var oldString = args.GetValueOrDefault("oldString") as string ?? "";
-        var newString = args.GetValueOrDefault("newString") as string ?? "";
-        var replaceAll = args.GetValueOrDefault("replaceAll") is true;
+        var path = request.TryGetStringArg("path") ?? "";
+        var oldString = request.TryGetStringArg("oldString") ?? "";
+        var newString = request.TryGetStringArg("newString") ?? "";
+        var replaceAll = request.TryGetBoolArg("replaceAll") is true;
 
-        var rootPath = policyContext.RootPath;
+        var rootPath = request.PolicyContext.RootPath;
         var resolvedPath = Path.IsPathRooted(path) ? path : Path.Combine(rootPath, path);
 
-        if (!IsPathAllowed(resolvedPath, rootPath, policyContext))
+        if (!IsPathAllowed(resolvedPath, rootPath, request.PolicyContext))
             return new Dictionary<string, object> { { "error", $"Path is denied by policy: {path}" } };
 
         if (!File.Exists(resolvedPath))
@@ -351,15 +328,15 @@ public class SharpClawBridgeClient
         }
     }
 
-    private object HandleDeleteFile(Dictionary<string, object?> args, BridgePolicyContext policyContext)
+    private static object HandleDeleteFile(BridgeRequest request)
     {
-        var path = args.GetValueOrDefault("path") as string ?? "";
-        var recursive = args.GetValueOrDefault("recursive") is true;
+        var path = request.TryGetStringArg("path") ?? "";
+        var recursive = request.TryGetBoolArg("recursive") is true;
 
-        var rootPath = policyContext.RootPath;
+        var rootPath = request.PolicyContext.RootPath;
         var resolvedPath = Path.IsPathRooted(path) ? path : Path.Combine(rootPath, path);
 
-        if (!IsPathAllowed(resolvedPath, rootPath, policyContext))
+        if (!IsPathAllowed(resolvedPath, rootPath, request.PolicyContext))
             return new Dictionary<string, object> { { "error", $"Path is denied by policy: {path}" } };
 
         try
@@ -393,19 +370,19 @@ public class SharpClawBridgeClient
         }
     }
 
-    private object HandleMoveFile(Dictionary<string, object?> args, BridgePolicyContext policyContext)
+    private static object HandleMoveFile(BridgeRequest request)
     {
-        var source = args.GetValueOrDefault("source") as string ?? "";
-        var destination = args.GetValueOrDefault("destination") as string ?? "";
+        var source = request.TryGetStringArg("source") ?? "";
+        var destination = request.TryGetStringArg("destination") ?? "";
 
-        var rootPath = policyContext.RootPath;
+        var rootPath = request.PolicyContext.RootPath;
         var resolvedSource = Path.IsPathRooted(source) ? source : Path.Combine(rootPath, source);
         var resolvedDest = Path.IsPathRooted(destination) ? destination : Path.Combine(rootPath, destination);
 
-        if (!IsPathAllowed(resolvedSource, rootPath, policyContext))
+        if (!IsPathAllowed(resolvedSource, rootPath, request.PolicyContext))
             return new Dictionary<string, object> { { "error", $"Source path denied by policy: {source}" } };
 
-        if (!IsPathAllowed(resolvedDest, rootPath, policyContext))
+        if (!IsPathAllowed(resolvedDest, rootPath, request.PolicyContext))
             return new Dictionary<string, object> { { "error", $"Destination path denied by policy: {destination}" } };
 
         if (!File.Exists(resolvedSource) && !Directory.Exists(resolvedSource))
@@ -435,14 +412,14 @@ public class SharpClawBridgeClient
         }
     }
 
-    private object HandleMakeDirectory(Dictionary<string, object?> args, BridgePolicyContext policyContext)
+    private static object HandleMakeDirectory(BridgeRequest request)
     {
-        var path = args.GetValueOrDefault("path") as string ?? "";
+        var path = request.TryGetStringArg("path") ?? "";
 
-        var rootPath = policyContext.RootPath;
+        var rootPath = request.PolicyContext.RootPath;
         var resolvedPath = Path.IsPathRooted(path) ? path : Path.Combine(rootPath, path);
 
-        if (!IsPathAllowed(resolvedPath, rootPath, policyContext))
+        if (!IsPathAllowed(resolvedPath, rootPath, request.PolicyContext))
             return new Dictionary<string, object> { { "error", $"Path is denied by policy: {path}" } };
 
         if (Directory.Exists(resolvedPath))
@@ -476,13 +453,13 @@ public class SharpClawBridgeClient
         return true;
     }
 
-    private async Task<object> HandleRunCommand(Dictionary<string, object?> args, BridgePolicyContext policyContext)
+    private static async Task<object> HandleRunCommand(BridgeRequest request)
     {
-        var command = args.GetValueOrDefault("command") as string ?? "";
-        var cwd = args.GetValueOrDefault("cwd") as string ?? ".";
-        var timeoutMs = args.GetValueOrDefault("timeout_ms") is int t ? t : 30000;
+        var command = request.TryGetStringArg("command") ?? "";
+        var cwd = request.TryGetStringArg("cwd") ?? ".";
+        var timeoutMs = request.TryGetIntArg("timeout_ms") ?? 30000;
 
-        var rootPath = policyContext.RootPath;
+        var rootPath = request.PolicyContext.RootPath;
         var resolvedCwd = Path.IsPathRooted(cwd) ? cwd : Path.Combine(rootPath, cwd);
 
         if (!Directory.Exists(resolvedCwd))
@@ -597,17 +574,16 @@ public class SharpClawBridgeClient
     {
         var (isDevContainer, containerId, workspacePathInContainer) = DetectDevContainer();
 
-        var registration = new Dictionary<string, object>
+        var registration = new BridgeRegistration
         {
-            { "type", "register" },
-            { "bridge_id", _bridgeId },
-            { "display_name", isDevContainer ? $"DevContainer Bridge ({Environment.MachineName})" : "SharpClaw Bridge Client" },
-            { "capabilities", new[] { "list_files", "read_file", "write_file", "edit_file", "delete_file", "move_file", "make_directory", "run_command" } },
-            { "os", Environment.OSVersion.ToString() },
-            { "shell", Environment.OSVersion.Platform == PlatformID.Win32NT ? "cmd.exe" : "/bin/bash" },
-            { "is_devcontainer", isDevContainer },
-            { "container_id", containerId ?? "" },
-            { "workspace_path_in_container", workspacePathInContainer ?? "" }
+            BridgeId = _bridgeId,
+            DisplayName = isDevContainer ? $"DevContainer Bridge ({Environment.MachineName})" : "SharpClaw Bridge Client",
+            Capabilities = ["list_files", "read_file", "write_file", "edit_file", "delete_file", "move_file", "make_directory", "run_command"],
+            Os = Environment.OSVersion.ToString(),
+            Shell = Environment.OSVersion.Platform == PlatformID.Win32NT ? "cmd.exe" : "/bin/bash",
+            IsDevContainer = isDevContainer,
+            ContainerId = containerId ?? "",
+            WorkspacePathInContainer = workspacePathInContainer ?? "",
         };
 
         await SendMessage(registration);
@@ -616,11 +592,10 @@ public class SharpClawBridgeClient
 
     private async Task SendHeartbeat()
     {
-        var heartbeat = new Dictionary<string, object>
+        var heartbeat = new BridgeHeartbeat
         {
-            { "type", "heartbeat" },
-            { "bridge_id", _bridgeId },
-            { "timestamp", DateTime.UtcNow }
+            BridgeId = _bridgeId,
+            Timestamp = DateTime.UtcNow,
         };
 
         await SendMessage(heartbeat);
@@ -628,12 +603,12 @@ public class SharpClawBridgeClient
 
     private async Task SendResponse(string requestId, string status, object? result)
     {
-        var response = new Dictionary<string, object?>
+        Console.WriteLine($"Response: {requestId} {status} res: {result}");
+        var response = new BridgeResponse
         {
-            { "type", "response" },
-            { "request_id", requestId },
-            { "status", status },
-            { "result", result }
+            RequestId = requestId,
+            Status = status,
+            Result = result,
         };
 
         await SendMessage(response);
@@ -658,4 +633,12 @@ public class SharpClawBridgeClient
         }
         return fullPath;
     }
+}
+
+public class FileEntry
+{
+    public string type { get; set; } = string.Empty;
+    public string name { get; set; } = string.Empty;
+    public string path { get; set; } = string.Empty;
+    public long? size { get; set; }
 }

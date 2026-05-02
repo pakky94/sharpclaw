@@ -1,8 +1,4 @@
-﻿using System.Net.WebSockets;
-using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using SharpClaw.BridgeClient;
+﻿using SharpClaw.BridgeClient;
 
 var bridgeId = args.Length > 0 ? args[0] : Guid.NewGuid().ToString("N");
 var serverUrl = args.Length > 1 ? args[1] : "ws://localhost:5846/bridge/connect";

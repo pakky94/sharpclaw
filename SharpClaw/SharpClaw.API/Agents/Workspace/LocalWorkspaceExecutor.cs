@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text;
-using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Helpers;
 
 namespace SharpClaw.API.Agents.Workspace;

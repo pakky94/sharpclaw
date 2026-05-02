@@ -1,5 +1,3 @@
-using SharpClaw.API.Agents.Workspace;
-
 namespace SharpClaw.API.Agents.Workspace;
 
 public interface IWorkspaceExecutionRouter
