@@ -48,18 +48,40 @@ public class BridgeConnectionManager : BackgroundService
 
         while (connection.Socket.State == WebSocketState.Open)
         {
-            var result = await connection.Socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+            var (messageType, message) = await ReceiveMessage(connection.Socket, buffer, CancellationToken.None);
 
-            if (result.MessageType == WebSocketMessageType.Close)
+            if (messageType == WebSocketMessageType.Close)
             {
                 await connection.Socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
                 break;
             }
 
-            if (result.MessageType == WebSocketMessageType.Text)
-            {
-                var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
+            if (messageType == WebSocketMessageType.Text && message is not null)
                 await ProcessBridgeMessage(connection, message);
+        }
+    }
+
+    private static async Task<(WebSocketMessageType messageType, string? message)> ReceiveMessage(WebSocket socket, byte[] buffer, CancellationToken cancellationToken)
+    {
+        using var messageBuffer = new MemoryStream();
+
+        while (true)
+        {
+            var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
+
+            if (result.MessageType == WebSocketMessageType.Close)
+                return (WebSocketMessageType.Close, null);
+
+            if (result.MessageType == WebSocketMessageType.Text && result.Count > 0)
+                messageBuffer.Write(buffer, 0, result.Count);
+
+            if (result.EndOfMessage)
+            {
+                if (result.MessageType != WebSocketMessageType.Text)
+                    return (result.MessageType, null);
+
+                var message = Encoding.UTF8.GetString(messageBuffer.ToArray());
+                return (WebSocketMessageType.Text, message);
             }
         }
     }

@@ -46,19 +46,16 @@ public class SharpClawBridgeClient
         {
             while (_isConnected && _socket?.State == WebSocketState.Open)
             {
-                var result = await _socket.ReceiveAsync(new ArraySegment<byte>(buffer), _cts.Token);
+                var (messageType, message) = await ReceiveMessage(buffer);
 
-                if (result.MessageType == WebSocketMessageType.Close)
+                if (messageType == WebSocketMessageType.Close)
                 {
                     Console.WriteLine("Server requested close.");
                     break;
                 }
 
-                if (result.MessageType == WebSocketMessageType.Text)
-                {
-                    var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                if (messageType == WebSocketMessageType.Text && message is not null)
                     await ProcessMessage(message);
-                }
             }
         }
         catch (OperationCanceledException)
@@ -76,6 +73,34 @@ public class SharpClawBridgeClient
                 if (_socket.State == WebSocketState.Open)
                     await _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
                 _socket.Dispose();
+            }
+        }
+    }
+
+    private async Task<(WebSocketMessageType messageType, string? message)> ReceiveMessage(byte[] buffer)
+    {
+        if (_socket is null)
+            return (WebSocketMessageType.Close, null);
+
+        using var messageBuffer = new MemoryStream();
+
+        while (true)
+        {
+            var result = await _socket.ReceiveAsync(new ArraySegment<byte>(buffer), _cts.Token);
+
+            if (result.MessageType == WebSocketMessageType.Close)
+                return (WebSocketMessageType.Close, null);
+
+            if (result.MessageType == WebSocketMessageType.Text && result.Count > 0)
+                messageBuffer.Write(buffer, 0, result.Count);
+
+            if (result.EndOfMessage)
+            {
+                if (result.MessageType != WebSocketMessageType.Text)
+                    return (result.MessageType, null);
+
+                var message = Encoding.UTF8.GetString(messageBuffer.ToArray());
+                return (WebSocketMessageType.Text, message);
             }
         }
     }
