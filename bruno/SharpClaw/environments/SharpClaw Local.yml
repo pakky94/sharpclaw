@@ -8,3 +8,5 @@ variables:
     value: "0"
   - name: sessionId
     value: aa191bce-b3df-4433-95ce-16781a642b8a
+  - name: searxngBaseUrl
+    value: http://localhost:8080

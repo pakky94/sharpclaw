@@ -1,0 +1,15 @@
+info:
+  name: ollama
+  type: http
+  seq: 9
+
+http:
+  method: POST
+  url: http://localhost:21434/v1/embedding
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

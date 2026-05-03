@@ -26,7 +26,9 @@ builder.Services.AddSingleton<ApprovalService>();
 builder.Services.AddSingleton<FragmentEmbeddingService>();
 builder.Services.AddHostedService<FragmentEmbeddingBackgroundService>();
 builder.Services.Configure<LmStudioConfiguration>(builder.Configuration.GetSection("LmStudio"));
+builder.Services.Configure<SearchProviderConfiguration>(builder.Configuration.GetSection("WebSearch"));
 builder.Services.Configure<BraveSearchConfiguration>(builder.Configuration.GetSection("WebSearch:Brave"));
+builder.Services.Configure<SearxngSearchConfiguration>(builder.Configuration.GetSection("WebSearch:Searxng"));
 builder.Services.AddSingleton<ChatProvider>();
 builder.Services.AddSingleton<SessionStore>();
 builder.Services.AddSingleton<Agent>();
@@ -38,12 +40,39 @@ builder.Services.AddHttpClient<BraveSearchService>("BraveSearch", (sp, client) =
     client.BaseAddress = new Uri(config.BaseUrl);
     client.Timeout = TimeSpan.FromSeconds(30);
 });
+builder.Services.AddHttpClient<SearxngSearchService>("SearxngSearch", (sp, client) =>
+{
+    var config = sp.GetRequiredService<IOptions<SearxngSearchConfiguration>>().Value;
+    client.BaseAddress = new Uri(config.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
 builder.Services.AddSingleton<ISearchService>(sp =>
 {
+    var providerConfig = sp.GetRequiredService<IOptions<SearchProviderConfiguration>>().Value;
     var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
-    var logger = sp.GetRequiredService<ILogger<BraveSearchService>>();
-    var config = sp.GetRequiredService<IOptions<BraveSearchConfiguration>>().Value;
-    return new BraveSearchService(httpClientFactory.CreateClient("BraveSearch"), Microsoft.Extensions.Options.Options.Create(config), logger);
+
+    if (string.Equals(providerConfig.ActiveProvider, "Searxng", StringComparison.OrdinalIgnoreCase))
+    {
+        var logger = sp.GetRequiredService<ILogger<SearxngSearchService>>();
+        var config = sp.GetRequiredService<IOptions<SearxngSearchConfiguration>>().Value;
+        return new SearxngSearchService(
+            httpClientFactory.CreateClient("SearxngSearch"),
+            Microsoft.Extensions.Options.Options.Create(config),
+            logger);
+    }
+
+    if (string.Equals(providerConfig.ActiveProvider, "Brave", StringComparison.OrdinalIgnoreCase))
+    {
+        var logger = sp.GetRequiredService<ILogger<BraveSearchService>>();
+        var config = sp.GetRequiredService<IOptions<BraveSearchConfiguration>>().Value;
+        return new BraveSearchService(
+            httpClientFactory.CreateClient("BraveSearch"),
+            Microsoft.Extensions.Options.Options.Create(config),
+            logger);
+    }
+
+    throw new InvalidOperationException(
+        $"Unsupported web search provider '{providerConfig.ActiveProvider}'. Supported values: Brave, Searxng.");
 });
 builder.Services.AddHttpClient<WebFetchService>("WebFetch", (sp, client) =>
 {
