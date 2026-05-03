@@ -1,3 +1,4 @@
+using SharpClaw.API.Helpers;
 using SharpClaw.Common;
 
 namespace SharpClaw.API.Agents.Workspace;
@@ -39,8 +40,8 @@ public class BridgeWorkspaceExecutor : IWorkspaceExecutionRouter
 
         var response = await _connectionManager.SendRequest(_bridgeId, request);
 
-        if (response.Status != "ok")
-            return new { error = response.ErrorMessage ?? "Bridge execution failed.", status = response.Status };
+        if (response.IsError())
+            return response.ToErrorObject();
 
         return response.Result ?? new { };
     }
@@ -69,8 +70,8 @@ public class BridgeWorkspaceExecutor : IWorkspaceExecutionRouter
 
         var response = await _connectionManager.SendRequest(_bridgeId, request);
 
-        if (response.Status != "ok")
-            return new { error = response.ErrorMessage ?? "Bridge execution failed.", status = response.Status };
+        if (response.IsError())
+            return response.ToErrorObject();
 
         return response.Result ?? new { };
     }
@@ -99,8 +100,8 @@ public class BridgeWorkspaceExecutor : IWorkspaceExecutionRouter
 
         var response = await _connectionManager.SendRequest(_bridgeId, request);
 
-        if (response.Status != "ok")
-            return new { error = response.ErrorMessage ?? "Bridge execution failed.", status = response.Status };
+        if (response.IsError())
+            return response.ToErrorObject();
 
         return response.Result ?? new { };
     }
@@ -130,8 +131,8 @@ public class BridgeWorkspaceExecutor : IWorkspaceExecutionRouter
 
         var response = await _connectionManager.SendRequest(_bridgeId, request);
 
-        if (response.Status != "ok")
-            return new { error = response.ErrorMessage ?? "Bridge execution failed.", status = response.Status };
+        if (response.IsError())
+            return response.ToErrorObject();
 
         return response.Result ?? new { };
     }
@@ -159,8 +160,8 @@ public class BridgeWorkspaceExecutor : IWorkspaceExecutionRouter
 
         var response = await _connectionManager.SendRequest(_bridgeId, request);
 
-        if (response.Status != "ok")
-            return new { error = response.ErrorMessage ?? "Bridge execution failed.", status = response.Status };
+        if (response.IsError())
+            return response.ToErrorObject();
 
         return response.Result ?? new { };
     }
@@ -188,8 +189,8 @@ public class BridgeWorkspaceExecutor : IWorkspaceExecutionRouter
 
         var response = await _connectionManager.SendRequest(_bridgeId, request);
 
-        if (response.Status != "ok")
-            return new { error = response.ErrorMessage ?? "Bridge execution failed.", status = response.Status };
+        if (response.IsError())
+            return response.ToErrorObject();
 
         return response.Result ?? new { };
     }
@@ -216,8 +217,8 @@ public class BridgeWorkspaceExecutor : IWorkspaceExecutionRouter
 
         var response = await _connectionManager.SendRequest(_bridgeId, request);
 
-        if (response.Status != "ok")
-            return new { error = response.ErrorMessage ?? "Bridge execution failed.", status = response.Status };
+        if (response.IsError())
+            return response.ToErrorObject();
 
         return response.Result ?? new { };
     }
@@ -247,8 +248,8 @@ public class BridgeWorkspaceExecutor : IWorkspaceExecutionRouter
 
         var response = await _connectionManager.SendRequest(_bridgeId, request);
 
-        if (response.Status != "ok")
-            return new { error = response.ErrorMessage ?? "Bridge execution failed.", status = response.Status };
+        if (response.IsError())
+            return response.ToErrorObject();
 
         return response.Result ?? new { };
     }
