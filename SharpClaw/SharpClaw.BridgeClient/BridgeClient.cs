@@ -8,27 +8,26 @@ namespace SharpClaw.BridgeClient;
 
 public class SharpClawBridgeClient
 {
-    private readonly string _bridgeId;
+    private Configuration _config;
     private ClientWebSocket? _socket;
     private CancellationTokenSource _cts = new();
     private bool _isConnected;
 
-    public SharpClawBridgeClient(string bridgeId)
+    public SharpClawBridgeClient(Configuration config)
     {
-        _bridgeId = bridgeId;
+        _config = config;
     }
 
-    public async Task ConnectAsync(string serverUrl)
+    public async Task ConnectAsync()
     {
         _socket = new ClientWebSocket();
         _cts = new CancellationTokenSource();
 
-        await _socket.ConnectAsync(new Uri(serverUrl), _cts.Token);
+        await _socket.ConnectAsync(new Uri(_config.ServerUrl), _cts.Token);
         _isConnected = true;
 
-        Console.WriteLine($"Connected to {serverUrl}");
+        Console.WriteLine($"Connected to {_config.ServerUrl}");
 
-        // Send registration
         await SendRegistration();
     }
 
@@ -544,8 +543,8 @@ public class SharpClawBridgeClient
                 { "command", command },
                 { "cwd", resolvedCwd },
                 { "exit_code", process.ExitCode },
-                { "stdout", string.IsNullOrWhiteSpace(stdout) ? null : stdout },
-                { "stderr", string.IsNullOrWhiteSpace(stderr) ? null : stderr },
+                { "stdout", string.IsNullOrWhiteSpace(stdout) ? string.Empty : stdout },
+                { "stderr", string.IsNullOrWhiteSpace(stderr) ? string.Empty : stderr },
                 { "duration_ms", (int)(process.ExitTime - process.StartTime).TotalMilliseconds }
             };
         }
@@ -601,8 +600,8 @@ public class SharpClawBridgeClient
 
         var registration = new BridgeRegistration
         {
-            BridgeId = _bridgeId,
-            DisplayName = isDevContainer ? $"DevContainer Bridge ({Environment.MachineName})" : "SharpClaw Bridge Client",
+            BridgeId = _config.BridgeId,
+            DisplayName = isDevContainer ? $"DevContainer Bridge ({Environment.MachineName})" : _config.DisplayName ?? "SharpClaw Bridge Client",
             Capabilities = ["list_files", "read_file", "write_file", "edit_file", "delete_file", "move_file", "make_directory", "run_command"],
             Os = Environment.OSVersion.ToString(),
             Shell = Environment.OSVersion.Platform == PlatformID.Win32NT ? "cmd.exe" : "/bin/bash",
@@ -619,7 +618,7 @@ public class SharpClawBridgeClient
     {
         var heartbeat = new BridgeHeartbeat
         {
-            BridgeId = _bridgeId,
+            BridgeId = _config.BridgeId,
             Timestamp = DateTime.UtcNow,
         };
 
