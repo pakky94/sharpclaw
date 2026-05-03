@@ -8,6 +8,7 @@ namespace SharpClaw.BridgeClient;
 
 public class SharpClawBridgeClient
 {
+    private const int MaxListEntries = 100;
     private Configuration _config;
     private ClientWebSocket? _socket;
     private CancellationTokenSource _cts = new();
@@ -186,37 +187,89 @@ public class SharpClawBridgeClient
             return new Dictionary<string, object> { { "error", $"Path does not exist: {path}" } };
 
         var entries = new List<FileEntry>();
-        var count = 0;
+        var totalCount = 0;
 
-        if (!recursive)
+        try
         {
-            foreach (var dir in Directory.GetDirectories(resolvedPath))
+            if (!recursive)
             {
-                var dirInfo = new DirectoryInfo(dir);
-                if (!includeHidden && (dirInfo.Attributes & FileAttributes.Hidden) != 0) continue;
-                entries.Add(new FileEntry { type = "directory", name = dirInfo.Name, path = GetRelativePath(rootPath, dir) });
-                count++;
-            }
+                foreach (var dir in Directory.GetDirectories(resolvedPath, "*", SearchOption.TopDirectoryOnly))
+                {
+                    var dirInfo = new DirectoryInfo(dir);
+                    if (!includeHidden && (dirInfo.Attributes & FileAttributes.Hidden) != 0)
+                        continue;
 
-            foreach (var file in Directory.GetFiles(resolvedPath))
+                    entries.Add(new FileEntry { type = "directory", name = dirInfo.Name, path = GetRelativePath(rootPath, dir) });
+                }
+
+                foreach (var file in Directory.GetFiles(resolvedPath, "*", SearchOption.TopDirectoryOnly))
+                {
+                    var fileInfo = new FileInfo(file);
+                    if (!includeHidden && (fileInfo.Attributes & FileAttributes.Hidden) != 0)
+                        continue;
+
+                    entries.Add(new FileEntry { type = "file", name = fileInfo.Name, path = GetRelativePath(rootPath, file), size = fileInfo.Length });
+                }
+
+                totalCount = entries.Count;
+            }
+            else
             {
-                var fileInfo = new FileInfo(file);
-                if (!includeHidden && (fileInfo.Attributes & FileAttributes.Hidden) != 0) continue;
-                entries.Add(new FileEntry { type = "file", name = fileInfo.Name, path = GetRelativePath(rootPath, file), size = fileInfo.Length });
-                count++;
+                var queue = new Queue<string>();
+                queue.Enqueue(resolvedPath);
+
+                while (queue.Count > 0 && entries.Count < MaxListEntries)
+                {
+                    var current = queue.Dequeue();
+
+                    foreach (var dir in Directory.GetDirectories(current, "*", SearchOption.TopDirectoryOnly))
+                    {
+                        var dirInfo = new DirectoryInfo(dir);
+                        if (!includeHidden && (dirInfo.Attributes & FileAttributes.Hidden) != 0)
+                            continue;
+
+                        entries.Add(new FileEntry { type = "directory", name = dirInfo.Name, path = GetRelativePath(rootPath, dir) });
+                        totalCount++;
+
+                        if (entries.Count < MaxListEntries)
+                            queue.Enqueue(dir);
+                    }
+
+                    foreach (var file in Directory.GetFiles(current, "*", SearchOption.TopDirectoryOnly))
+                    {
+                        var fileInfo = new FileInfo(file);
+                        if (!includeHidden && (fileInfo.Attributes & FileAttributes.Hidden) != 0)
+                            continue;
+
+                        entries.Add(new FileEntry { type = "file", name = fileInfo.Name, path = GetRelativePath(rootPath, file), size = fileInfo.Length });
+                        totalCount++;
+                    }
+                }
             }
         }
+        catch (UnauthorizedAccessException ex)
+        {
+            return new Dictionary<string, object> { { "error", $"Access denied: {ex.Message}" } };
+        }
 
-        return new Dictionary<string, object>
+        var truncated = recursive && totalCount > MaxListEntries;
+        var count = entries.Count;
+
+        var result = new Dictionary<string, object>
         {
             { "title", $"Directory listing: {path}" },
             { "path", path },
             { "recursive", recursive },
             { "entries", entries },
             { "count", count },
-            { "total_entries", count },
-            { "truncated", false }
+            { "total_entries", totalCount },
+            { "truncated", truncated }
         };
+
+        if (truncated)
+            result["note"] = $"Showing top {MaxListEntries} entries (breadth-first). {totalCount - MaxListEntries} more entries not shown.";
+
+        return result;
     }
 
     private static object HandleReadFile(BridgeRequest request)
