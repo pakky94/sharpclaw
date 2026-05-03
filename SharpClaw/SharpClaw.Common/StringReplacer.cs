@@ -1,6 +1,6 @@
 ﻿using System.Text;
 
-namespace SharpClaw.API.Helpers;
+namespace SharpClaw.Common;
 
 public static class StringReplacer
 {

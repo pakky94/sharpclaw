@@ -158,7 +158,7 @@ public class SharpClawBridgeClient
                 "list_files" => HandleListFiles(request),
                 "read_file" => HandleReadFile(request),
                 "write_file" => HandleWriteFile(request),
-                "edit_file" => HandleEditFile(request),
+                "edit_file" => await HandleEditFile(request),
                 "delete_file" => HandleDeleteFile(request),
                 "move_file" => HandleMoveFile(request),
                 "make_directory" => HandleMakeDirectory(request),
@@ -350,7 +350,7 @@ public class SharpClawBridgeClient
         }
     }
 
-    private static object HandleEditFile(BridgeRequest request)
+    private static async Task<object> HandleEditFile(BridgeRequest request)
     {
         var path = request.TryGetStringArg("path") ?? "";
         var oldString = request.TryGetStringArg("oldString") ?? "";
@@ -368,40 +368,32 @@ public class SharpClawBridgeClient
 
         try
         {
-            var oldFile = File.ReadAllText(resolvedPath);
+            var oldFile = await File.ReadAllTextAsync(resolvedPath);
 
-            if (string.IsNullOrEmpty(oldString))
-                return new Dictionary<string, object> { { "error", "oldString cannot be empty" } };
+            var (newContent, error) = StringReplacer.Replace(oldFile, oldString, newString, replaceAll);
 
-            string newContent;
-            if (replaceAll)
+            if (error is not null)
+                return new
+                {
+                    error = error switch
+                    {
+                        StringReplacer.Error.OldStringNotFound => $"oldString not found in file {path}",
+                        StringReplacer.Error.MultipleMatchesFound => $"multiple matches of oldString found in file {path}, to replace all occurrences call this tool with replaceAll=true",
+                        _ => $"Error replacing string in '{path}'",
+                    }
+                };
+
+            await File.WriteAllTextAsync(resolvedPath, newContent);
+
+            return new
             {
-                newContent = oldFile.Replace(oldString, newString);
-            }
-            else
-            {
-                var index = oldFile.IndexOf(oldString);
-                if (index == -1)
-                    return new Dictionary<string, object> { { "error", $"oldString not found in file {path}" } };
-
-                // Check for multiple matches
-                if (oldFile.IndexOf(oldString, index + 1) != -1)
-                    return new Dictionary<string, object> { { "error", $"Multiple matches found in file {path}, use replaceAll=true" } };
-
-                newContent = oldFile.Substring(0, index) + newString + oldFile.Substring(index + oldString.Length);
-            }
-
-            File.WriteAllText(resolvedPath, newContent);
-
-            return new Dictionary<string, object>
-            {
-                { "title", $"File edited: {path}" },
-                { "path", path }
+                title = $"File edited: {path}",
+                path,
             };
         }
         catch (Exception ex)
         {
-            return new Dictionary<string, object> { { "error", $"Failed to edit file: {ex.Message}" } };
+            return new { error = $"Failed to write file: {ex.Message}" };
         }
     }
 
