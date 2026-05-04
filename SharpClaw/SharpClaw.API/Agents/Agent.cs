@@ -37,6 +37,8 @@ public class Agent(
             AgentId = agentId,
             LlmModel = agentConfig.LlmModel,
             Temperature = agentConfig.Temperature,
+            SoftCompactThreshold = agentConfig.SoftCompactThreshold,
+            HardCompactThreshold = agentConfig.HardCompactThreshold,
             Messages = [],
             Workspace = defaultWs,
             ActiveWorkspaceNames = activeWorkspaces,

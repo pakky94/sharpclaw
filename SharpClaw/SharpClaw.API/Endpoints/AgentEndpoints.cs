@@ -6,6 +6,9 @@ namespace SharpClaw.API.Endpoints;
 
 public static class AgentEndpoints
 {
+    private const long DefaultSoftCompactThreshold = 75 * 1024;
+    private const long DefaultHardCompactThreshold = 85 * 1024;
+
     public static void Register(WebApplication app)
     {
         app.MapGet("/agents", async ([FromServices] AgentsRepository repository) =>
@@ -34,11 +37,24 @@ public static class AgentEndpoints
             var name = request.Name.Trim();
             var model = string.IsNullOrWhiteSpace(request.LlmModel) ? "openai/gpt-oss-20b" : request.LlmModel.Trim();
             var temperature = request.Temperature ?? 0.1f;
+            var softCompactThreshold = request.SoftCompactThreshold ?? DefaultSoftCompactThreshold;
+            var hardCompactThreshold = request.HardCompactThreshold ?? DefaultHardCompactThreshold;
 
             if (string.IsNullOrWhiteSpace(name))
                 return Results.BadRequest(new { error = "Name is required." });
+            if (softCompactThreshold <= 0)
+                return Results.BadRequest(new { error = "Soft compact threshold must be greater than 0." });
+            if (hardCompactThreshold <= 0)
+                return Results.BadRequest(new { error = "Hard compact threshold must be greater than 0." });
+            if (hardCompactThreshold <= softCompactThreshold)
+                return Results.BadRequest(new { error = "Hard compact threshold must be greater than soft compact threshold." });
 
-            var created = await repository.CreateAgent(name, model, temperature);
+            var created = await repository.CreateAgent(
+                name,
+                model,
+                temperature,
+                softCompactThreshold,
+                hardCompactThreshold);
             await fragmentsRepository.EnsureRootFragment(created.Id);
             await fragmentsRepository.UpsertFragmentByPath(created.Id, "AGENTS.md", DatabaseSeeder.AgentsMd);
             return Results.Ok(created);
@@ -50,14 +66,32 @@ public static class AgentEndpoints
             [FromServices] AgentsRepository repository
         ) =>
         {
+            var existing = await repository.GetAgent(agentId);
+            if (existing is null)
+                return Results.NotFound(new { error = $"Agent {agentId} was not found." });
+
             var name = request.Name.Trim();
             var model = string.IsNullOrWhiteSpace(request.LlmModel) ? "openai/gpt-oss-20b" : request.LlmModel.Trim();
             var temperature = request.Temperature ?? 0.1f;
+            var softCompactThreshold = request.SoftCompactThreshold ?? existing.SoftCompactThreshold;
+            var hardCompactThreshold = request.HardCompactThreshold ?? existing.HardCompactThreshold;
 
             if (string.IsNullOrWhiteSpace(name))
                 return Results.BadRequest(new { error = "Name is required." });
+            if (softCompactThreshold <= 0)
+                return Results.BadRequest(new { error = "Soft compact threshold must be greater than 0." });
+            if (hardCompactThreshold <= 0)
+                return Results.BadRequest(new { error = "Hard compact threshold must be greater than 0." });
+            if (hardCompactThreshold <= softCompactThreshold)
+                return Results.BadRequest(new { error = "Hard compact threshold must be greater than soft compact threshold." });
 
-            var updated = await repository.UpdateAgent(agentId, name, model, temperature);
+            var updated = await repository.UpdateAgent(
+                agentId,
+                name,
+                model,
+                temperature,
+                softCompactThreshold,
+                hardCompactThreshold);
             return updated is null
                 ? Results.NotFound(new { error = $"Agent {agentId} was not found." })
                 : Results.Ok(updated);
@@ -134,6 +168,8 @@ public class CreateAgentRequest
     public required string Name { get; set; }
     public string? LlmModel { get; set; }
     public float? Temperature { get; set; }
+    public long? SoftCompactThreshold { get; set; }
+    public long? HardCompactThreshold { get; set; }
 }
 
 public class UpdateAgentRequest
@@ -141,6 +177,8 @@ public class UpdateAgentRequest
     public required string Name { get; set; }
     public string? LlmModel { get; set; }
     public float? Temperature { get; set; }
+    public long? SoftCompactThreshold { get; set; }
+    public long? HardCompactThreshold { get; set; }
 }
 
 public class UpsertAgentFileRequest

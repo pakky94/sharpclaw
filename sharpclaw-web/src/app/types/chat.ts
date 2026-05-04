@@ -14,6 +14,8 @@ export type AgentConfig = {
   name: string
   llmModel: string
   temperature: number
+  softCompactThreshold: number
+  hardCompactThreshold: number
   createdAt: string
   updatedAt: string
 }

@@ -44,6 +44,8 @@ public static class DebuggingEndpoints
                 AgentId = agentId,
                 LlmModel = agent.LlmModel,
                 Temperature = agent.Temperature,
+                SoftCompactThreshold = agent.SoftCompactThreshold,
+                HardCompactThreshold = agent.HardCompactThreshold,
                 Messages = [],
                 Workspace = resolvedWorkspace,
                 ActiveWorkspaceNames = resolvedWorkspace is null

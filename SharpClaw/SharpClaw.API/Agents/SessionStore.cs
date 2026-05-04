@@ -44,6 +44,8 @@ public class SessionStore(
                 AgentId = persistedSession.AgentId,
                 LlmModel = agentConfig.LlmModel,
                 Temperature = agentConfig.Temperature,
+                SoftCompactThreshold = agentConfig.SoftCompactThreshold,
+                HardCompactThreshold = agentConfig.HardCompactThreshold,
                 Messages = [..await chatRepository.LoadActiveConversation(sessionId)],
                 Workspace = defaultWs,
                 ActiveWorkspaceNames = activeWsNames,

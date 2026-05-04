@@ -18,8 +18,8 @@ public class AgentExecutionContext
 
     // public long SoftCompactThreshold = 35 * 1024;
     // public long HardCompactThreshold = 50 * 1024;
-    public long SoftCompactThreshold = 75 * 1024;
-    public long HardCompactThreshold = 85 * 1024;
+    public long SoftCompactThreshold { get; set; } = 75 * 1024;
+    public long HardCompactThreshold { get; set; } = 85 * 1024;
 
     public int FreshMessagesCount = 8;
 

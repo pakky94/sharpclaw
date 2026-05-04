@@ -41,6 +41,8 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     name varchar(511) not null,
                     llm_model varchar(255) not null default 'openai/gpt-oss-20b',
                     temperature real not null default 0.1,
+                    soft_compact_threshold bigint not null default 76800,
+                    hard_compact_threshold bigint not null default 87040,
                     created_at timestamptz not null default now(),
                     updated_at timestamptz not null default now()
                 );
@@ -144,6 +146,11 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     add column if not exists name varchar(255) null;
                 alter table sessions
                     add column if not exists visible_in_sidebar boolean not null default true;
+
+                alter table agents
+                    add column if not exists soft_compact_threshold bigint not null default 76800;
+                alter table agents
+                    add column if not exists hard_compact_threshold bigint not null default 87040;
 
                 update sessions
                 set visible_in_sidebar = false
@@ -330,8 +337,8 @@ public partial class DatabaseSeeder(IConfiguration configuration)
             if (await connection.ExecuteScalarAsync<int>("select count(*) from agents where name = 'Main'") == 0)
                 await connection.ExecuteAsync(
                     """
-                    insert into agents (name, llm_model, temperature)
-                    values ('Main', 'qwen/qwen3.5-35b-a3b', 0.1);
+                    insert into agents (name, llm_model, temperature, soft_compact_threshold, hard_compact_threshold)
+                    values ('Main', 'qwen/qwen3.5-35b-a3b', 0.1, 76800, 87040);
                     """);
 
             await connection.ExecuteAsync(
