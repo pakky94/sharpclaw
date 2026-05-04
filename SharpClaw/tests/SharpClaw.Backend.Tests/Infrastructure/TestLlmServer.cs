@@ -11,6 +11,7 @@ public sealed class TestLlmServer : IAsyncDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _serveTask;
     private readonly List<(Func<RequestContext, bool> Condition, Func<HttpListenerContext, Task> Action)> _mocks = [];
+    private string? _lastChatRequestBody;
 
     private TestLlmServer(HttpListener listener, Uri endpoint)
     {
@@ -20,6 +21,12 @@ public sealed class TestLlmServer : IAsyncDisposable
     }
 
     public Uri Endpoint { get; }
+
+    /// <summary>
+    /// Returns the raw JSON body of the most recent chat completions request received.
+    /// Useful for inspecting what model, temperature, etc. the application sent.
+    /// </summary>
+    public string? LastChatRequestBody => _lastChatRequestBody;
 
     public static TestLlmServer Start()
     {
@@ -113,6 +120,7 @@ public sealed class TestLlmServer : IAsyncDisposable
     {
         using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
         var body = await reader.ReadToEndAsync();
+        _lastChatRequestBody = body;
         using var json = JsonDocument.Parse(body);
         var request = json.RootElement;
 

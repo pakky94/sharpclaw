@@ -54,6 +54,51 @@ public sealed class BackendApiClient(HttpClient client)
         return await ReadDocumentAsync(response, cancellationToken);
     }
 
+    public async Task<JsonDocument> GetAgentAsync(long agentId, CancellationToken cancellationToken = default)
+    {
+        var response = await client.GetAsync($"/agents/{agentId}", cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> CreateAgentAsync(
+        string name,
+        string? llmModel = null,
+        float? temperature = null,
+        long? softCompactThreshold = null,
+        long? hardCompactThreshold = null,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsJsonAsync("/agents", new
+        {
+            name,
+            llmModel,
+            temperature,
+            softCompactThreshold,
+            hardCompactThreshold,
+        }, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> UpdateAgentAsync(
+        long agentId,
+        string name,
+        string? llmModel = null,
+        float? temperature = null,
+        long? softCompactThreshold = null,
+        long? hardCompactThreshold = null,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await client.PutAsJsonAsync($"/agents/{agentId}", new
+        {
+            name,
+            llmModel,
+            temperature,
+            softCompactThreshold,
+            hardCompactThreshold,
+        }, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
     public async Task<Guid> CreateSessionAsync(long? agentId = null, string? name = null, CancellationToken cancellationToken = default)
     {
         var response = await client.PostAsJsonAsync("/sessions", new { agentId, name }, cancellationToken);

@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using SharpClaw.API.Agents;
 using SharpClaw.API.Database;
 using SharpClaw.API.Database.Repositories;
 
@@ -63,7 +64,8 @@ public static class AgentEndpoints
         app.MapPut("/agents/{agentId:long}", async (
             long agentId,
             [FromBody] UpdateAgentRequest request,
-            [FromServices] AgentsRepository repository
+            [FromServices] AgentsRepository repository,
+            [FromServices] SessionStore sessionStore
         ) =>
         {
             var existing = await repository.GetAgent(agentId);
@@ -92,6 +94,10 @@ public static class AgentEndpoints
                 temperature,
                 softCompactThreshold,
                 hardCompactThreshold);
+
+            // Refresh all in-memory sessions with the updated config so changes take effect immediately
+            await sessionStore.RefreshAgentConfigForSessions(agentId);
+
             return updated is null
                 ? Results.NotFound(new { error = $"Agent {agentId} was not found." })
                 : Results.Ok(updated);

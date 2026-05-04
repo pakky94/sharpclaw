@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using SharpClaw.API.Database.Repositories;
 
 namespace SharpClaw.API.Agents;
@@ -93,5 +93,29 @@ public class SessionStore(
     {
         _sessions.TryAdd(session.SessionId, session);
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Refreshes the agent-level configuration (LlmModel, Temperature, compaction thresholds)
+    /// for all in-memory sessions belonging to the given agent. This ensures that changes made
+    /// via the agent update endpoint take effect immediately without requiring a restart.
+    /// </summary>
+    public async Task RefreshAgentConfigForSessions(long agentId)
+    {
+        var agentConfig = await agentsRepository.GetAgent(agentId);
+        if (agentConfig is null)
+            return;
+
+        foreach (var kvp in _sessions)
+        {
+            var session = kvp.Value;
+            if (session.Context.AgentId != agentId)
+                continue;
+
+            session.Context.LlmModel = agentConfig.LlmModel;
+            session.Context.Temperature = agentConfig.Temperature;
+            session.Context.SoftCompactThreshold = agentConfig.SoftCompactThreshold;
+            session.Context.HardCompactThreshold = agentConfig.HardCompactThreshold;
+        }
     }
 }

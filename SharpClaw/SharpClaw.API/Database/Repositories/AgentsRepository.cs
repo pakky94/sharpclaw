@@ -1,4 +1,4 @@
-﻿using Dapper;
+using Dapper;
 using Npgsql;
 
 namespace SharpClaw.API.Database.Repositories;
@@ -28,7 +28,7 @@ public class AgentsRepository(IConfiguration configuration)
         return rows.ToArray();
     }
 
-    public async Task<AgentConfig?> GetAgent(long agentId)
+    public virtual async Task<AgentConfig?> GetAgent(long agentId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         return await connection.QueryFirstOrDefaultAsync<AgentConfig>(
