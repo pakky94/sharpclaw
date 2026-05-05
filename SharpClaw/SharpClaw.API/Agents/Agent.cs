@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Memory.Lcm;
 using SharpClaw.API.Database.Repositories;
@@ -200,7 +201,7 @@ public class Agent(
                             var dep = parentSession.Run?.SessionDependencies.SingleOrDefault(d => d.CallId == callId);
 
                             if (dep is null)
-                                throw new Exception("Parent content from task not found");
+                                throw new Exception($"Session dependency not found for callId {callId} in {JsonSerializer.Serialize(parentSession.Run?.SessionDependencies)}");
 
                             var message = parentSession.Context.Messages
                                 .FirstOrDefault(r => r.Messages
@@ -209,7 +210,7 @@ public class Agent(
                                               && trc.CallId == callId));
 
                             if (message is null)
-                                throw new Exception("Parent content from task not found");
+                                throw new Exception($"Message containing task result not found for callId {callId} in {JsonSerializer.Serialize(parentSession.Context.Messages)}");
 
                             var content = message.Messages
                                 .SelectMany(m => m.Contents)
@@ -217,7 +218,7 @@ public class Agent(
                                                      && trc.CallId == callId) as FunctionResultContent;
 
                             if (content is null)
-                                throw new Exception("Parent content from task not found");
+                                throw new Exception($"Task result content not found for callId {callId} in {JsonSerializer.Serialize(message.Messages)}");
 
                             var description = content.Result is IDictionary<string, object?> d
                                               && d.TryGetValue("description", out var desc)
