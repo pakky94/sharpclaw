@@ -373,6 +373,76 @@ public sealed class ToolInvocationTests(SharpClawAppFixture fixture)
         Assert.Equal("completed", completedEvents[^1].Type);
     }
 
+    [Fact]
+    public async Task ResumeIfPossible_BlocksWhenPendingApprovalsExist()
+    {
+        await fixture.ResetStateAsync();
+
+        fixture.LlmServer!.ToolCallSse("ws_run_command",
+            """{"command":"echo blocked-by-approval"}""",
+            c => c.Messages.Last().Content == "TEST_RESUME_BLOCKED_BY_APPROVAL");
+
+        var sessionId = await fixture.Api.CreateSessionAsync();
+        var messageId = await fixture.Api.EnqueueMessageAsync(sessionId, "TEST_RESUME_BLOCKED_BY_APPROVAL");
+
+        var token = await fixture.Api.WaitForPendingApprovalTokenAsync(sessionId, TimeSpan.FromSeconds(15));
+        Assert.False(string.IsNullOrWhiteSpace(token));
+
+        using var resume = await fixture.Api.ResumeIfPossibleAsync(sessionId);
+        Assert.Equal(0, resume.RootElement.GetProperty("resumed").GetInt32());
+        Assert.True(resume.RootElement.GetProperty("blockedByApprovals").GetInt32() >= 1);
+
+        var events = await fixture.Api.WaitForStreamEventTypes(
+            sessionId,
+            messageId,
+            requiredTypes: ["approval_required"],
+            timeout: TimeSpan.FromSeconds(20));
+        Assert.Contains(events, e => e.Type == "approval_required");
+    }
+
+    [Fact]
+    public async Task StopSession_StopsDescendantChildSessions()
+    {
+        await fixture.ResetStateAsync();
+
+        fixture.LlmServer?.ToolCallSse("task",
+            """
+            {
+              "description": "child-stop",
+              "prompt": "STOP_CHILD_PROMPT"
+            }
+            """,
+            c => c.Messages.Last().Role == "user"
+                 && c.Messages.Last().Content == "TEST_STOP_TREE");
+
+        fixture.LlmServer?.ToolCallSse("ws_run_command",
+            """{"command":"echo child-needs-approval"}""",
+            c => c.Messages.Last().Role == "user"
+                 && c.Messages.Last().Content == "STOP_CHILD_PROMPT");
+
+        var rootSessionId = await fixture.Api.CreateSessionAsync();
+        var messageId = await fixture.Api.EnqueueMessageAsync(rootSessionId, "TEST_STOP_TREE");
+
+        var events = await fixture.Api.WaitForStreamEventTypes(
+            rootSessionId,
+            messageId,
+            requiredTypes: ["child_session_spawned", "approval_required"],
+            timeout: TimeSpan.FromSeconds(20));
+        Assert.Contains(events, e => e.Type == "child_session_spawned");
+        Assert.Contains(events, e => e.Type == "approval_required");
+
+        using var rootHistory = await fixture.Api.GetHistoryAsync(rootSessionId);
+        var childSessionId = rootHistory.RootElement.GetProperty("childSessions").EnumerateArray().First().GetProperty("childSessionId").GetGuid();
+
+        using var stopResult = await fixture.Api.StopSessionAsync(rootSessionId, includeDescendants: true);
+        Assert.True(stopResult.RootElement.GetProperty("stopped").GetInt32() >= 2);
+
+        using var rootStoppedHistory = await fixture.Api.GetHistoryAsync(rootSessionId);
+        using var childHistory = await fixture.Api.GetHistoryAsync(childSessionId);
+        Assert.Equal("failed", rootStoppedHistory.RootElement.GetProperty("runStatus").GetString());
+        Assert.Equal("failed", childHistory.RootElement.GetProperty("runStatus").GetString());
+    }
+
     private static (string Status, string? Output)? TryReadTaskResultPayload(StreamEvent ev)
     {
         if (string.IsNullOrWhiteSpace(ev.Payload) || !ev.Payload.StartsWith("data: ", StringComparison.Ordinal))

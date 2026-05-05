@@ -44,6 +44,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   const [showToolEvents, setShowToolEvents] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeRun, setActiveRun] = useState<{ sessionId: string; status: RunStatus } | null>(null)
+  const [runControlBusy, setRunControlBusy] = useState(false)
   const [currentParentSessionId, setCurrentParentSessionId] = useState<string | null>(null)
   const [pendingApprovals, setPendingApprovals] = useState<Array<{
     token: string
@@ -400,6 +401,46 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
     }
   }
 
+  async function resumeSessionIfPossible() {
+    if (!selectedSessionId) return
+    try {
+      setRunControlBusy(true)
+      setError(null)
+      await fetchJson(`${API_BASE_URL}/sessions/${selectedSessionId}/resume-if-possible`, {
+        method: 'POST',
+      })
+      await loadHistory(selectedSessionId)
+      if (selectedAgentId !== null) {
+        await refreshSessions(selectedAgentId, selectedSessionId)
+      }
+    } catch (e) {
+      setError(asErrorMessage(e))
+    } finally {
+      setRunControlBusy(false)
+    }
+  }
+
+  async function stopSession() {
+    if (!selectedSessionId) return
+    try {
+      setRunControlBusy(true)
+      setError(null)
+      await fetchJson(`${API_BASE_URL}/sessions/${selectedSessionId}/stop`, {
+        method: 'POST',
+      })
+      closeStream()
+      setActiveRun(null)
+      await loadHistory(selectedSessionId)
+      if (selectedAgentId !== null) {
+        await refreshSessions(selectedAgentId, selectedSessionId)
+      }
+    } catch (e) {
+      setError(asErrorMessage(e))
+    } finally {
+      setRunControlBusy(false)
+    }
+  }
+
   function streamRun(sessionId: string, latestMessageId: number, assistantMessageId: string) {
     return new Promise<void>((resolve, reject) => {
       closeStream()
@@ -674,7 +715,11 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
           hasUnsavedDraft={prompt.trim().length > 0}
           showToolEvents={showToolEvents}
           apiBaseUrl={API_BASE_URL}
+          runStatus={activeRun?.sessionId === selectedSessionId ? activeRun.status : null}
+          runControlBusy={runControlBusy}
           onShowToolEventsChange={setShowToolEvents}
+          onResumeIfPossible={() => void resumeSessionIfPossible()}
+          onStop={() => void stopSession()}
           onGoToSession={(sessionId) => {
             setSelectedSessionId(sessionId)
             void loadHistory(sessionId)

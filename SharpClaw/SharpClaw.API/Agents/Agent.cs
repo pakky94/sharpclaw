@@ -104,6 +104,9 @@ public class Agent(
 
     private async Task<string?> GetMessageResponse(Guid sessionId, AgentSessionState session, AgentRunState run)
     {
+        if (!sessionStore.TryMarkRunExecuting(sessionId))
+            return null;
+
         await session.Mutex.WaitAsync();
 
         try
@@ -111,12 +114,14 @@ public class Agent(
             if (session.Run is null)
                 throw new InvalidOperationException($"Session {sessionId} has no Run.");
 
+            ThrowIfStopRequested(run, sessionId);
             session.Run.MarkStarted(session.Context.MaxSequenceId() + 1); // TODO: move this inside running task
 
             AgentClientResponse? response = null;
 
             while (response is null or { ShouldContinue: true, QueuedTasks.Count: 0, QueuedApprovals.Count: 0 })
             {
+                ThrowIfStopRequested(run, sessionId);
                 await TryCompactHistory(session);
 
                 var agentsMd = (await fragmentsRepository.ReadFragmentByPath(session.Context.AgentId, "AGENTS.md"))?.Content ?? string.Empty;
@@ -143,6 +148,7 @@ public class Agent(
                     ],
                     BuildTools(),
                     run);
+                ThrowIfStopRequested(run, sessionId);
 
                 // TODO: add transaction here
                 foreach (var message in response.Responses)
@@ -176,6 +182,7 @@ public class Agent(
                             description: queuedTask.ChildDescription);
                         if (taskResultMessage is not null)
                             await chatRepository.UpdateMessage(taskResultMessage);
+                        ThrowIfStopRequested(run, sessionId);
                         await EnqueueMessage(childSessionId, queuedTask.ChildPrompt);
                     }
                 }
@@ -239,7 +246,7 @@ public class Agent(
 
                             parentSession.Run!.SessionDependencies.Remove(dep);
 
-                            if (parentSession.Run.SessionDependencies.Count == 0)
+                            if (!parentSession.Run.IsStopRequested && parentSession.Run.SessionDependencies.Count == 0)
                                 _ = Task.Run(() => GetMessageResponse(parentSession.SessionId, parentSession, parentSession.Run));
                         }
                         finally
@@ -257,12 +264,15 @@ public class Agent(
         }
         catch (Exception ex)
         {
-            run.MarkFailed(ex.Message);
+            if (run.Status is not AgentRunStatus.Failed)
+                run.MarkFailed(ex.Message);
+            await chatRepository.UpdateSession(sessionId, AgentRunStatus.Failed);
             logger.LogWarning(ex, "Exception processing session {SessionId}", sessionId);
         }
         finally
         {
             session.Mutex.Release();
+            sessionStore.ClearRunExecuting(sessionId);
         }
 
         return null; // TODO: return error from here? possibly yes
@@ -549,7 +559,10 @@ public class Agent(
             session.Run.AppendToolResultForCall(approval.CallId, Serialization.SerializeToolPayload(toolResult));
 
             var pendingApprovals = await workspaceRepository.GetPendingApprovalsForSession(approval.SessionId);
-            if (pendingApprovals.Count == 0 && session.Run.SessionDependencies.Count == 0)
+            if (!session.Run.IsStopRequested
+                && session.Run.Status == AgentRunStatus.Waiting
+                && pendingApprovals.Count == 0
+                && session.Run.SessionDependencies.Count == 0)
                 shouldResume = true;
         }
         finally
@@ -612,6 +625,94 @@ public class Agent(
         var session = await sessionStore.GetOrLoadSession(sessionId);
         _ = Task.Run(() => GetMessageResponse(sessionId, session, session.Run));
     }
+
+    public async Task<ResumeSessionsResult> ResumeIfPossible(Guid sessionId, bool includeDescendants = true)
+    {
+        var targetSessionIds = includeDescendants
+            ? await chatRepository.GetSessionAndDescendantIds(sessionId)
+            : [sessionId];
+
+        var sessionsById = new Dictionary<Guid, AgentSessionState>();
+        foreach (var id in targetSessionIds)
+            sessionsById[id] = await sessionStore.GetOrLoadSession(id);
+
+        var resumed = 0;
+        var blockedByApprovals = 0;
+        var blockedByDependencies = 0;
+        var alreadyActive = 0;
+        var notWaiting = 0;
+
+        foreach (var id in targetSessionIds.Reverse())
+        {
+            var session = sessionsById[id];
+            var run = session.Run;
+
+            if (sessionStore.IsRunExecuting(id))
+            {
+                alreadyActive++;
+                continue;
+            }
+
+            if (run.Status is AgentRunStatus.Completed or AgentRunStatus.Failed)
+            {
+                notWaiting++;
+                continue;
+            }
+
+            if (run.IsStopRequested)
+            {
+                notWaiting++;
+                continue;
+            }
+
+            var pendingApprovals = await workspaceRepository.GetPendingApprovalsForSession(id);
+            if (pendingApprovals.Count > 0)
+            {
+                blockedByApprovals++;
+                continue;
+            }
+
+            if (run.SessionDependencies.Count > 0)
+            {
+                blockedByDependencies++;
+                continue;
+            }
+
+            run.SetStatus(AgentRunStatus.Pending);
+            await chatRepository.UpdateSession(id, AgentRunStatus.Pending);
+            _ = Task.Run(() => GetMessageResponse(id, session, run));
+            resumed++;
+        }
+
+        return new ResumeSessionsResult(resumed, blockedByApprovals, blockedByDependencies, alreadyActive, notWaiting);
+    }
+
+    public async Task<StopSessionsResult> StopSession(Guid sessionId, bool includeDescendants = true)
+    {
+        var targetSessionIds = includeDescendants
+            ? await chatRepository.GetSessionAndDescendantIds(sessionId)
+            : [sessionId];
+
+        var stopped = 0;
+        foreach (var id in targetSessionIds)
+        {
+            var session = await sessionStore.GetOrLoadSession(id);
+            session.Run.RequestStop("Session stopped by user.");
+            session.Run.MarkFailed("Session stopped by user.");
+            await chatRepository.UpdateSession(id, AgentRunStatus.Failed);
+            stopped++;
+        }
+
+        return new StopSessionsResult(stopped);
+    }
+
+    private static void ThrowIfStopRequested(AgentRunState run, Guid sessionId)
+    {
+        if (!run.IsStopRequested)
+            return;
+
+        throw new OperationCanceledException($"Session {sessionId} was stopped by user.");
+    }
 }
 
 public enum ApprovalResolutionResult
@@ -621,6 +722,16 @@ public enum ApprovalResolutionResult
     WrongSession,
     FailedToResolve,
 }
+
+public record ResumeSessionsResult(
+    int Resumed,
+    int BlockedByApprovals,
+    int BlockedByDependencies,
+    int AlreadyActive,
+    int NotWaiting);
+
+public record StopSessionsResult(
+    int Stopped);
 
 public class AgentSessionState(Guid sessionId, AgentExecutionContext context,
     Guid? parentSessionId = null,

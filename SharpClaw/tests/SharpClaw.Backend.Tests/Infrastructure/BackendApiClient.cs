@@ -201,6 +201,18 @@ public sealed class BackendApiClient(HttpClient client)
         response.EnsureSuccessStatusCode();
     }
 
+    public async Task<JsonDocument> ResumeIfPossibleAsync(Guid sessionId, bool includeDescendants = true, CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsync($"/sessions/{sessionId}/resume-if-possible?includeDescendants={includeDescendants.ToString().ToLowerInvariant()}", content: null, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> StopSessionAsync(Guid sessionId, bool includeDescendants = true, CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsync($"/sessions/{sessionId}/stop?includeDescendants={includeDescendants.ToString().ToLowerInvariant()}", content: null, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
     public Task<IReadOnlyList<StreamEvent>> WaitForStreamCompleted(
         Guid sessionId,
         long messageId,

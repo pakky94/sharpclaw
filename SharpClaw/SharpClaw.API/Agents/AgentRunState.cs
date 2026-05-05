@@ -19,6 +19,7 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
     private readonly List<AgentRunEvent> _events = [];
     private long _currentMessageId = 0;
     private long _sequence = 0;
+    private volatile bool _stopRequested = false;
 
     public Guid SessionId => sessionId;
     public DateTimeOffset? StartedAt { get; private set; }
@@ -26,6 +27,7 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
     public DateTimeOffset? CompletedAt { get; private set; }
     public AgentRunStatus Status { get; private set; } = AgentRunStatus.Completed;
     public string? Error { get; private set; }
+    public bool IsStopRequested => _stopRequested;
     public List<SessionDependency> SessionDependencies { get; private set; } = sessionDependencies;
     public Task? CompactionTask { get; set; } = null;
 
@@ -39,6 +41,7 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
 
     public void MarkStarted(long messageId)
     {
+        _stopRequested = false;
         _currentMessageId = messageId;
         StartedAt = DateTimeOffset.UtcNow;
         StartMessageId = messageId;
@@ -109,6 +112,9 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
 
     public void MarkCompleted()
     {
+        if (Status is AgentRunStatus.Completed or AgentRunStatus.Failed)
+            return;
+
         Console.WriteLine($"completing session {sessionId}");
         CompletedAt = DateTimeOffset.UtcNow;
         Status = AgentRunStatus.Completed;
@@ -117,10 +123,20 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
 
     public void MarkFailed(string error)
     {
+        if (Status is AgentRunStatus.Completed or AgentRunStatus.Failed)
+            return;
+
         CompletedAt = DateTimeOffset.UtcNow;
         Status = AgentRunStatus.Failed;
         Error = error;
         AddEvent(_currentMessageId, "failed", error);
+    }
+
+    public void RequestStop(string? reason = null)
+    {
+        _stopRequested = true;
+        if (!string.IsNullOrWhiteSpace(reason))
+            Error = reason;
     }
 
     public void AppendApprovalRequired(string token, string action, string? target, string? commandPreview, string risk, string description, Guid? sourceSessionId = null)

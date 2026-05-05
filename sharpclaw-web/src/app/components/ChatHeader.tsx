@@ -9,8 +9,12 @@ type ChatHeaderProps = {
   hasUnsavedDraft: boolean
   showToolEvents: boolean
   apiBaseUrl: string
+  runStatus: 'pending' | 'waiting' | 'running' | 'completed' | 'failed' | null
+  runControlBusy?: boolean
   onShowToolEventsChange: (nextValue: boolean) => void
   onGoToSession: (sessionId: string) => void
+  onResumeIfPossible: () => void
+  onStop: () => void
   onError?: (message: string) => void
 }
 
@@ -25,8 +29,12 @@ export function ChatHeader({
   hasUnsavedDraft,
   showToolEvents,
   apiBaseUrl,
+  runStatus,
+  runControlBusy,
   onShowToolEventsChange,
   onGoToSession,
+  onResumeIfPossible,
+  onStop,
   onError,
 }: ChatHeaderProps) {
   const [activeWorkspaces, setActiveWorkspaces] = useState<ActiveWorkspace[]>([])
@@ -137,6 +145,26 @@ export function ChatHeader({
           <input type="checkbox" checked={showToolEvents} onChange={(event) => onShowToolEventsChange(event.target.checked)} />
           Show tool calls/results
         </label>
+        {selectedSession && (
+          <>
+            <button
+              type="button"
+              className="button ghost"
+              onClick={onResumeIfPossible}
+              disabled={runControlBusy}
+            >
+              Resume
+            </button>
+            <button
+              type="button"
+              className="button ghost"
+              onClick={onStop}
+              disabled={runControlBusy || (runStatus !== 'pending' && runStatus !== 'waiting' && runStatus !== 'running')}
+            >
+              Stop
+            </button>
+          </>
+        )}
         <code>{apiBaseUrl}</code>
       </div>
     </header>

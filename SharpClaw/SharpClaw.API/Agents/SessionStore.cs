@@ -10,6 +10,7 @@ public class SessionStore(
 )
 {
     private readonly ConcurrentDictionary<Guid, AgentSessionState> _sessions = new();
+    private readonly ConcurrentDictionary<Guid, byte> _executingRuns = new();
     private readonly SemaphoreSlim _sessionsMutex = new(1, 1);
 
     public async Task<AgentSessionState> GetOrLoadSession(Guid sessionId)
@@ -111,6 +112,21 @@ public class SessionStore(
     {
         _sessions.TryAdd(session.SessionId, session);
         return Task.CompletedTask;
+    }
+
+    public bool TryMarkRunExecuting(Guid sessionId)
+    {
+        return _executingRuns.TryAdd(sessionId, 0);
+    }
+
+    public void ClearRunExecuting(Guid sessionId)
+    {
+        _executingRuns.TryRemove(sessionId, out _);
+    }
+
+    public bool IsRunExecuting(Guid sessionId)
+    {
+        return _executingRuns.ContainsKey(sessionId);
     }
 
     /// <summary>

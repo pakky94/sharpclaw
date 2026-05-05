@@ -90,6 +90,56 @@ public static class ChatEndpoints
             }
         });
 
+        app.MapPost("/sessions/{sessionId:guid}/resume-if-possible", async (
+            Guid sessionId,
+            [FromQuery] bool? includeDescendants,
+            [FromServices] Agent agent
+        ) =>
+        {
+            try
+            {
+                var result = await agent.ResumeIfPossible(
+                    sessionId,
+                    includeDescendants: includeDescendants ?? true);
+                return Results.Ok(new
+                {
+                    sessionId,
+                    resumed = result.Resumed,
+                    blockedByApprovals = result.BlockedByApprovals,
+                    blockedByDependencies = result.BlockedByDependencies,
+                    alreadyActive = result.AlreadyActive,
+                    notWaiting = result.NotWaiting,
+                });
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+        });
+
+        app.MapPost("/sessions/{sessionId:guid}/stop", async (
+            Guid sessionId,
+            [FromQuery] bool? includeDescendants,
+            [FromServices] Agent agent
+        ) =>
+        {
+            try
+            {
+                var result = await agent.StopSession(
+                    sessionId,
+                    includeDescendants: includeDescendants ?? true);
+                return Results.Ok(new
+                {
+                    sessionId,
+                    stopped = result.Stopped,
+                });
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+        });
+
         app.MapGet("/agents/{agentId:long}/sessions", async (
             long agentId,
             [FromServices] Agent agent
