@@ -308,6 +308,71 @@ public sealed class ToolInvocationTests(SharpClawAppFixture fixture)
         Assert.Equal(parentSessionId, listedParent);
     }
 
+    [Fact]
+    public async Task ApprovalFromNestedChild_BubblesToAncestors_AndCanBeResolvedFromRootSession()
+    {
+        await fixture.ResetStateAsync();
+
+        fixture.LlmServer?.ToolCallSse("task",
+            """
+            {
+              "description": "l1",
+              "prompt": "NESTED_L1"
+            }
+            """,
+            c => c.Messages.Last().Role == "user"
+                 && c.Messages.Last().Content == "TEST_NESTED_APPROVAL_BUBBLE");
+
+        fixture.LlmServer?.ToolCallSse("task",
+            """
+            {
+              "description": "l2",
+              "prompt": "NESTED_L2"
+            }
+            """,
+            c => c.Messages.Last().Role == "user"
+                 && c.Messages.Last().Content == "NESTED_L1");
+
+        fixture.LlmServer?.ToolCallSse("ws_run_command",
+            """{"command":"echo nested-approval"}""",
+            c => c.Messages.Last().Role == "user"
+                 && c.Messages.Last().Content == "NESTED_L2");
+
+        fixture.LlmServer?.TextSse("L2 done",
+            c => c.Messages.Last().Role == "tool");
+
+        fixture.LlmServer?.TextSse("L1 done",
+            c => c.Messages.Last().Role == "tool"
+                 && (c.Messages.Last().Content?.Contains("L2 done", StringComparison.Ordinal) ?? false));
+
+        fixture.LlmServer?.TextSse("Parent done",
+            c => c.Messages.Last().Role == "tool"
+                 && (c.Messages.Last().Content?.Contains("L1 done", StringComparison.Ordinal) ?? false));
+
+        var rootSessionId = await fixture.Api.CreateSessionAsync();
+        var messageId = await fixture.Api.EnqueueMessageAsync(rootSessionId, "TEST_NESTED_APPROVAL_BUBBLE");
+
+        var events = await fixture.Api.WaitForStreamEventTypes(
+            rootSessionId,
+            messageId,
+            requiredTypes: ["approval_required"],
+            timeout: TimeSpan.FromSeconds(20));
+        Assert.Contains(events, e => e.Type == "approval_required");
+
+        using var pendingDoc = await fixture.Api.GetPendingApprovalsAsync(rootSessionId);
+        var pendingApprovals = pendingDoc.RootElement.GetProperty("approvals").EnumerateArray().ToArray();
+        Assert.NotEmpty(pendingApprovals);
+
+        var token = pendingApprovals[0].GetProperty("approvalToken").GetString()
+                    ?? throw new InvalidOperationException("Expected approval token.");
+        var sourceSessionId = pendingApprovals[0].GetProperty("sessionId").GetGuid();
+        Assert.NotEqual(rootSessionId, sourceSessionId);
+
+        await fixture.Api.ApproveAsync(rootSessionId, token);
+        var completedEvents = await fixture.Api.WaitForStreamCompleted(rootSessionId, messageId);
+        Assert.Equal("completed", completedEvents[^1].Type);
+    }
+
     private static (string Status, string? Output)? TryReadTaskResultPayload(StreamEvent ev)
     {
         if (string.IsNullOrWhiteSpace(ev.Payload) || !ev.Payload.StartsWith("data: ", StringComparison.Ordinal))

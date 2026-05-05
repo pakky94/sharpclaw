@@ -490,7 +490,8 @@ public class Agent(
         if (approval is null || approval.Status != ApprovalStatus.Pending)
             return ApprovalResolutionResult.InvalidToken;
 
-        if (approval.SessionId != sessionId)
+        var allowed = await chatRepository.IsAncestorOrSelf(sessionId, approval.SessionId);
+        if (!allowed)
             return ApprovalResolutionResult.WrongSession;
 
         var resolved = await workspaceRepository.ResolveApprovalEvent(

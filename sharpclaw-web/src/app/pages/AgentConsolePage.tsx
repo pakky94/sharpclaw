@@ -45,14 +45,15 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   const [error, setError] = useState<string | null>(null)
   const [activeRun, setActiveRun] = useState<{ sessionId: string; status: RunStatus } | null>(null)
   const [currentParentSessionId, setCurrentParentSessionId] = useState<string | null>(null)
-  const [pendingApproval, setPendingApproval] = useState<{
+  const [pendingApprovals, setPendingApprovals] = useState<Array<{
     token: string
     action: string
     target: string | null
     commandPreview: string | null
     risk: string
     description: string
-  } | null>(null)
+    sourceSessionId?: string | null
+  }>>([])
   const streamRef = useRef<{ sessionId: string; latestMessageId: number; source: EventSource } | null>(null)
   const draftSessionKey = selectedSessionId ?? (selectedAgentId !== null ? `__new__:${selectedAgentId}` : '__new__:none')
   const prompt = draftsBySessionKey[draftSessionKey] ?? ''
@@ -109,6 +110,52 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
       closeStream()
     }
   }, [])
+
+  useEffect(() => {
+    if (!selectedSessionId) {
+      setPendingApprovals([])
+      return
+    }
+
+    let cancelled = false
+    const sync = async () => {
+      try {
+        const data = await fetchJson<{ sessionId: string; approvals: Array<{
+          approvalToken: string
+          actionType: string
+          targetPath: string | null
+          commandPreview: string | null
+          riskLevel: string
+          description: string | null
+          sessionId: string
+        }> }>(`${API_BASE_URL}/sessions/${selectedSessionId}/approvals/pending`)
+
+        if (cancelled) return
+        const mapped = data.approvals.map((a) => ({
+          token: a.approvalToken,
+          action: a.actionType,
+          target: a.targetPath,
+          commandPreview: a.commandPreview,
+          risk: a.riskLevel,
+          description: a.description ?? 'Action requires approval',
+          sourceSessionId: a.sessionId,
+        }))
+        setPendingApprovals(mapped)
+      } catch {
+        // Keep existing queue when polling fails.
+      }
+    }
+
+    void sync()
+    const interval = window.setInterval(() => {
+      void sync()
+    }, 2000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [selectedSessionId])
 
   useEffect(() => {
     onUnsavedChange?.(hasUnsavedDrafts)
@@ -511,15 +558,30 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
 
       source.addEventListener('approval_required', (event) => {
         const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
-        const data = payload.data as { approval_token: string; action: string; target: string | null; command_preview: string | null; risk: string; description: string } | undefined
+        const data = payload.data as {
+          approval_token: string
+          action: string
+          target: string | null
+          command_preview: string | null
+          risk: string
+          description: string
+          source_session_id?: string | null
+        } | undefined
         if (data) {
-          setPendingApproval({
-            token: data.approval_token,
-            action: data.action,
-            target: data.target,
-            commandPreview: data.command_preview,
-            risk: data.risk,
-            description: data.description,
+          setPendingApprovals((prev) => {
+            if (prev.some((p) => p.token === data.approval_token)) return prev
+            return [
+              ...prev,
+              {
+                token: data.approval_token,
+                action: data.action,
+                target: data.target,
+                commandPreview: data.command_preview,
+                risk: data.risk,
+                description: data.description,
+                sourceSessionId: data.source_session_id ?? payload.sessionId,
+              },
+            ]
           })
         }
       })
@@ -527,7 +589,8 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   }
 
   async function resolveApproval(approved: boolean) {
-    if (!pendingApproval || !selectedSessionId) return
+    if (pendingApprovals.length === 0 || !selectedSessionId) return
+    const pendingApproval = pendingApprovals[0]
     try {
       setError(null)
       const method = approved ? 'approve' : 'reject'
@@ -535,7 +598,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         `${API_BASE_URL}/sessions/${selectedSessionId}/approvals/${pendingApproval.token}/${method}`,
         { method: 'POST' },
       )
-      setPendingApproval(null)
+      setPendingApprovals((prev) => prev.filter((x) => x.token !== pendingApproval.token))
     } catch (e) {
       setError(asErrorMessage(e))
     }
@@ -648,31 +711,38 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         />
       </main>
 
-      {pendingApproval && (
+      {pendingApprovals.length > 0 && (
         <div className="approval-overlay">
           <div className="approval-dialog">
             <div className="approval-dialog-header">
               <h3>Action Requires Approval</h3>
-              <span className={`approval-risk-badge ${pendingApproval.risk}`}>{pendingApproval.risk}</span>
+              <span className={`approval-risk-badge ${pendingApprovals[0].risk}`}>{pendingApprovals[0].risk}</span>
             </div>
             <div className="approval-dialog-body">
-              <p className="approval-description">{pendingApproval.description}</p>
-              {pendingApproval.target && (
+              <p className="approval-description">{pendingApprovals[0].description}</p>
+              {pendingApprovals[0].sourceSessionId && (
                 <div className="approval-detail">
-                  <span>Path:</span>
-                  <code>{pendingApproval.target}</code>
+                  <span>Source session:</span>
+                  <code>{pendingApprovals[0].sourceSessionId}</code>
                 </div>
               )}
-              {pendingApproval.commandPreview && (
+              {pendingApprovals[0].target && (
+                <div className="approval-detail">
+                  <span>Path:</span>
+                  <code>{pendingApprovals[0].target}</code>
+                </div>
+              )}
+              {pendingApprovals[0].commandPreview && (
                 <div className="approval-detail">
                   <span>Command:</span>
-                  <code>{pendingApproval.commandPreview}</code>
+                  <code>{pendingApprovals[0].commandPreview}</code>
                 </div>
               )}
               <div className="approval-detail">
                 <span>Action:</span>
-                <span className="approval-action-type">{pendingApproval.action}</span>
+                <span className="approval-action-type">{pendingApprovals[0].action}</span>
               </div>
+              {pendingApprovals.length > 1 && <div className="approval-detail"><span>Queued:</span><span>{pendingApprovals.length - 1} more approvals</span></div>}
             </div>
             <div className="approval-dialog-footer">
               <button

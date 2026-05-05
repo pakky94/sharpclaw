@@ -188,6 +188,77 @@ public class ChatRepository(IConfiguration configuration)
         return rows.ToArray();
     }
 
+    public async Task<IReadOnlyList<Guid>> GetSessionAncestors(Guid sessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<Guid>(
+            """
+            with recursive chain as (
+                select s.parent_session_id as id
+                from sessions s
+                where s.id = @sessionId
+
+                union all
+
+                select p.parent_session_id as id
+                from sessions p
+                join chain c on p.id = c.id
+                where c.id is not null
+            )
+            select id
+            from chain
+            where id is not null;
+            """,
+            new { sessionId });
+        return rows.ToArray();
+    }
+
+    public async Task<IReadOnlyList<Guid>> GetSessionAndDescendantIds(Guid sessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<Guid>(
+            """
+            with recursive descendants as (
+                select s.id
+                from sessions s
+                where s.id = @sessionId
+
+                union all
+
+                select child.id
+                from sessions child
+                join descendants d on child.parent_session_id = d.id
+            )
+            select id from descendants;
+            """,
+            new { sessionId });
+        return rows.ToArray();
+    }
+
+    public async Task<bool> IsAncestorOrSelf(Guid ancestorSessionId, Guid descendantSessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var exists = await connection.ExecuteScalarAsync<bool>(
+            """
+            with recursive chain as (
+                select s.id, s.parent_session_id
+                from sessions s
+                where s.id = @descendantSessionId
+
+                union all
+
+                select p.id, p.parent_session_id
+                from sessions p
+                join chain c on c.parent_session_id = p.id
+            )
+            select exists(
+                select 1 from chain where id = @ancestorSessionId
+            );
+            """,
+            new { ancestorSessionId, descendantSessionId });
+        return exists;
+    }
+
     public async Task<long> PersistMessage(Guid sessionId, ChatResponse response)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);

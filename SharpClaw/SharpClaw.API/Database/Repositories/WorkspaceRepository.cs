@@ -288,6 +288,24 @@ public class WorkspaceRepository(IConfiguration configuration)
         return results.Select(r => r.ToModel()).ToArray();
     }
 
+    public async Task<IReadOnlyList<WorkspaceApprovalEvent>> GetPendingApprovalsForSessions(Guid[] sessionIds)
+    {
+        if (sessionIds.Length == 0)
+            return [];
+
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var results = await connection.QueryAsync<WorkspaceApprovalEventRow>(
+            """
+            select *
+            from workspace_approval_events
+            where session_id = any(@sessionIds)
+              and status = 'pending'
+            order by created_at desc
+            """,
+            new { sessionIds });
+        return results.Select(r => r.ToModel()).ToArray();
+    }
+
     public async Task<LcmFileArtifact> CreateLcmFileArtifact(Guid sessionId, string fileId, string originTool, string workspacePath, long byteCount, string? filesystemPath)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);

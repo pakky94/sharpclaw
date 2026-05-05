@@ -3,7 +3,7 @@ using Microsoft.Extensions.Configuration;
 var builder = DistributedApplication.CreateBuilder(args);
 
 var dbUser = builder.AddParameter("dbUser", "sharpclaw");
-var dbPassword = builder.AddParameter("dbPassword", "password", secret: true);
+var dbPassword = builder.AddParameter("dbPassword", "sharpclaw", secret: true);
 var volatileDb = builder.Configuration.GetValue<bool?>("SHARPCLAW_VOLATILE_DATABASE") ?? false;
 
 var dbBuilder = builder.AddPostgres("sharpclaw-pg", dbUser, dbPassword)
@@ -12,7 +12,7 @@ var dbBuilder = builder.AddPostgres("sharpclaw-pg", dbUser, dbPassword)
 
 if (!volatileDb)
     dbBuilder
-        .WithVolume("sharpclaw-pg-data", "/var/lib/postgresql")
+        .WithVolume("sharpclaw_sharpclaw-pg-data", "/var/lib/postgresql")
         .WithLifetime(ContainerLifetime.Persistent);
 
 var db = dbBuilder.AddDatabase("sharpclaw");

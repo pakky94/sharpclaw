@@ -123,7 +123,7 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
         AddEvent(_currentMessageId, "failed", error);
     }
 
-    public void AppendApprovalRequired(string token, string action, string? target, string? commandPreview, string risk, string description)
+    public void AppendApprovalRequired(string token, string action, string? target, string? commandPreview, string risk, string description, Guid? sourceSessionId = null)
     {
         lock (_eventsLock)
         {
@@ -135,6 +135,7 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
                 command_preview = commandPreview,
                 risk,
                 description,
+                source_session_id = sourceSessionId,
             });
         }
     }

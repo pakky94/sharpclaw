@@ -88,6 +88,16 @@ public class SessionStore(
             : null;
     }
 
+    public AgentRunState? GetLiveRunForSession(Guid sessionId)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var session))
+            return null;
+
+        return session.Run is { Status: AgentRunStatus.Pending or AgentRunStatus.Running or AgentRunStatus.Waiting }
+            ? session.Run
+            : null;
+    }
+
     public bool TryUpdateSessionActiveWorkspaces(Guid sessionId, string[] workspaceNames)
     {
         if (!_sessions.TryGetValue(sessionId, out var session))

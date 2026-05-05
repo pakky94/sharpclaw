@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
+using SharpClaw.API.Agents;
 using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database.Repositories;
 using SharpClaw.API.Helpers;
@@ -170,7 +171,27 @@ public static class WorkspaceTools
                 targetPath,
                 commandPreview,
                 riskLevel.ToString().ToLowerInvariant(),
-                description);
+                description,
+                ctx.SessionId);
+
+            var chatRepository = sp.GetService<ChatRepository>();
+            var sessionStore = sp.GetService<SessionStore>();
+            if (chatRepository is not null && sessionStore is not null)
+            {
+                var ancestorSessionIds = await chatRepository.GetSessionAncestors(ctx.SessionId);
+                foreach (var ancestorSessionId in ancestorSessionIds)
+                {
+                    var ancestorRun = sessionStore.GetLiveRunForSession(ancestorSessionId);
+                    ancestorRun?.AppendApprovalRequired(
+                        token,
+                        actionType.ToString().ToLowerInvariant(),
+                        targetPath,
+                        commandPreview,
+                        riskLevel.ToString().ToLowerInvariant(),
+                        description,
+                        ctx.SessionId);
+                }
+            }
 
             if (!string.IsNullOrWhiteSpace(callId) && !string.IsNullOrWhiteSpace(toolName))
             {
