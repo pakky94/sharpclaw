@@ -74,12 +74,15 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
 
         var queuedTasks = context.QueuedTasks;
         context.QueuedTasks = [];
+        var queuedApprovals = context.QueuedApprovals;
+        context.QueuedApprovals = [];
 
         return new AgentClientResponse
         {
             Responses = response,
             ShouldContinue = _shouldContinue,
             QueuedTasks = queuedTasks,
+            QueuedApprovals = queuedApprovals,
         };
 
         async Task FlushMessageUpdates()
@@ -123,6 +126,7 @@ public class AgentClientResponse
     public required List<ChatResponse> Responses { get; init; }
     public required bool ShouldContinue { get; init; }
     public List<AgentClientTask> QueuedTasks { get; init; } = [];
+    public List<AgentClientApproval> QueuedApprovals { get; init; } = [];
 }
 
 public class AgentClientTask
@@ -139,4 +143,11 @@ public class AgentClientTask
     {
         ChildSession,
     }
+}
+
+public class AgentClientApproval
+{
+    public required string ApprovalToken { get; init; }
+    public required string CallId { get; init; }
+    public required string ToolName { get; init; }
 }

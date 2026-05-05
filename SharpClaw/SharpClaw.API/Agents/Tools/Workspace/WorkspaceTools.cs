@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database.Repositories;
@@ -106,7 +107,10 @@ public static class WorkspaceTools
         ApprovalRiskLevel riskLevel,
         string description,
         string? approvalToken,
-        string? workspaceName = null)
+        string? workspaceName = null,
+        string? callId = null,
+        string? toolName = null,
+        string? toolArguments = null)
     {
         var workspace = ResolveWorkspace(sp, workspaceName);
 
@@ -142,6 +146,7 @@ public static class WorkspaceTools
                 return new { error = $"Action was rejected by user: {description}" };
             if (existing.Status == ApprovalStatus.Expired)
                 return new { error = $"Approval token expired: {approvalToken}" };
+            return new { error = $"Approval token is still pending: {approvalToken}" };
         }
         else
         {
@@ -153,37 +158,39 @@ public static class WorkspaceTools
                 actionType,
                 targetPath,
                 commandPreview,
-                riskLevel);
+                riskLevel,
+                description,
+                callId,
+                toolName,
+                toolArguments);
+
+            runState?.AppendApprovalRequired(
+                token,
+                actionType.ToString().ToLowerInvariant(),
+                targetPath,
+                commandPreview,
+                riskLevel.ToString().ToLowerInvariant(),
+                description);
+
+            if (!string.IsNullOrWhiteSpace(callId) && !string.IsNullOrWhiteSpace(toolName))
+            {
+                ctx.QueuedApprovals.Add(new AgentClientApproval
+                {
+                    ApprovalToken = token,
+                    CallId = callId,
+                    ToolName = toolName,
+                });
+            }
+
+            return null;
         }
+    }
 
-        if (runState is null)
-            return new { error = "Approval system not available." };
-
-        var tcs = runState.CreateApprovalRequest(
-            token,
-            actionType.ToString().ToLowerInvariant(),
-            targetPath,
-            commandPreview,
-            riskLevel.ToString().ToLowerInvariant(),
-            description);
-
-        bool approved;
-        try
-        {
-            approved = await tcs.Task;
-        }
-        catch (OperationCanceledException)
-        {
-            await repo.ResolveApprovalEvent(token, ApprovalStatus.Expired);
-            return new { error = $"Approval timed out or was cancelled: {description}" };
-        }
-
-        await repo.ResolveApprovalEvent(token, approved ? ApprovalStatus.Approved : ApprovalStatus.Rejected);
-
-        if (!approved)
-            return new { error = $"Action was rejected by user: {description}" };
-
-        return null;
+    internal static string? GetContextValue(AIFunctionArguments args, string key)
+    {
+        if (args.Context is null)
+            return null;
+        return args.Context.TryGetValue(key, out var value) ? value as string : null;
     }
 
     private static string GenerateApprovalToken()
@@ -269,8 +276,15 @@ public static class WorkspaceTools
         return result;
     }
 
-    public static async Task<object> WriteFile(IServiceProvider sp, string path, string content, string mode = "overwrite", string? approval_token = null, string? workspace = null)
+    public static async Task<object> WriteFile(IServiceProvider sp, AIFunctionArguments args, string path, string content, string mode = "overwrite", string? approval_token = null, string? workspace = null)
     {
+        var replayArgs = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["path"] = path,
+            ["content"] = content,
+            ["mode"] = mode,
+            ["workspace"] = workspace,
+        });
         var approvalCheck = await CheckApprovalIfNeeded(
             sp,
             ApprovalActionType.Write,
@@ -279,7 +293,10 @@ public static class WorkspaceTools
             ApprovalRiskLevel.Medium,
             $"Write file '{path}' (mode: {mode})",
             approval_token,
-            workspace);
+            workspace,
+            GetContextValue(args, "CallId"),
+            "ws_write_file",
+            replayArgs);
 
         if (approvalCheck is not null)
             return approvalCheck;
@@ -289,12 +306,20 @@ public static class WorkspaceTools
         return await router.WriteFile(ws, path, content, mode);
     }
 
-    public static async Task<object> EditFile(IServiceProvider sp, string path,
+    public static async Task<object> EditFile(IServiceProvider sp, AIFunctionArguments args, string path,
         [Description("The text to replace")] string oldString,
         [Description("The text to replace it with (must be different from oldString)")] string newString,
         [Description("Replace all occurrences of oldString (default false)")] bool replaceAll = false,
         string? approval_token = null, string? workspace = null)
     {
+        var replayArgs = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["path"] = path,
+            ["oldString"] = oldString,
+            ["newString"] = newString,
+            ["replaceAll"] = replaceAll,
+            ["workspace"] = workspace,
+        });
         var approvalCheck = await CheckApprovalIfNeeded(
             sp,
             ApprovalActionType.Write,
@@ -303,7 +328,10 @@ public static class WorkspaceTools
             ApprovalRiskLevel.Medium,
             $"Edit file '{path}'",
             approval_token,
-            workspace);
+            workspace,
+            GetContextValue(args, "CallId"),
+            "ws_edit_file",
+            replayArgs);
 
         if (approvalCheck is not null)
             return approvalCheck;
@@ -313,8 +341,14 @@ public static class WorkspaceTools
         return await router.EditFile(ws, path, oldString, newString, replaceAll);
     }
 
-    public static async Task<object> DeleteFile(IServiceProvider sp, string path, bool recursive = false, string? approval_token = null, string? workspace = null)
+    public static async Task<object> DeleteFile(IServiceProvider sp, AIFunctionArguments args, string path, bool recursive = false, string? approval_token = null, string? workspace = null)
     {
+        var replayArgs = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["path"] = path,
+            ["recursive"] = recursive,
+            ["workspace"] = workspace,
+        });
         var approvalCheck = await CheckApprovalIfNeeded(
             sp,
             ApprovalActionType.Delete,
@@ -323,7 +357,10 @@ public static class WorkspaceTools
             recursive ? ApprovalRiskLevel.High : ApprovalRiskLevel.Medium,
             $"Delete {(recursive ? "directory" : "file")} '{path}'{(recursive ? " recursively" : "")}",
             approval_token,
-            workspace);
+            workspace,
+            GetContextValue(args, "CallId"),
+            "ws_delete_file",
+            replayArgs);
 
         if (approvalCheck is not null)
             return approvalCheck;
@@ -333,8 +370,14 @@ public static class WorkspaceTools
         return await router.DeleteFile(ws, path, recursive);
     }
 
-    public static async Task<object> MoveFile(IServiceProvider sp, string source, string destination, string? approval_token = null, string? workspace = null)
+    public static async Task<object> MoveFile(IServiceProvider sp, AIFunctionArguments args, string source, string destination, string? approval_token = null, string? workspace = null)
     {
+        var replayArgs = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["source"] = source,
+            ["destination"] = destination,
+            ["workspace"] = workspace,
+        });
         var approvalCheck = await CheckApprovalIfNeeded(
             sp,
             ApprovalActionType.Move,
@@ -343,7 +386,10 @@ public static class WorkspaceTools
             ApprovalRiskLevel.Medium,
             $"Move '{source}' to '{destination}'",
             approval_token,
-            workspace);
+            workspace,
+            GetContextValue(args, "CallId"),
+            "ws_move_file",
+            replayArgs);
 
         if (approvalCheck is not null)
             return approvalCheck;
@@ -353,8 +399,13 @@ public static class WorkspaceTools
         return await router.MoveFile(ws, source, destination);
     }
 
-    public static async Task<object> MakeDirectory(IServiceProvider sp, string path, string? approval_token = null, string? workspace = null)
+    public static async Task<object> MakeDirectory(IServiceProvider sp, AIFunctionArguments args, string path, string? approval_token = null, string? workspace = null)
     {
+        var replayArgs = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["path"] = path,
+            ["workspace"] = workspace,
+        });
         var approvalCheck = await CheckApprovalIfNeeded(
             sp,
             ApprovalActionType.Write,
@@ -363,7 +414,10 @@ public static class WorkspaceTools
             ApprovalRiskLevel.Low,
             $"Create directory '{path}'",
             approval_token,
-            workspace);
+            workspace,
+            GetContextValue(args, "CallId"),
+            "ws_make_directory",
+            replayArgs);
 
         if (approvalCheck is not null)
             return approvalCheck;

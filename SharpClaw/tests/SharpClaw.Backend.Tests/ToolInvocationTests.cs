@@ -56,6 +56,8 @@ public sealed class ToolInvocationTests(SharpClawAppFixture fixture)
         var token = await fixture.Api.WaitForPendingApprovalTokenAsync(sessionId, TimeSpan.FromSeconds(15));
         await fixture.Api.ApproveAsync(sessionId, token);
 
+        // await Task.Delay(TimeSpan.FromHours(1));
+
         await fixture.Api.WaitForStreamCompleted(sessionId, messageId);
 
         using var history = await fixture.Api.GetHistoryAsync(sessionId);
@@ -67,6 +69,35 @@ public sealed class ToolInvocationTests(SharpClawAppFixture fixture)
 
         Assert.Contains(messageContents, content =>
             content.GetProperty("type").GetString() == "tool_result");
+    }
+
+    [Fact]
+    public async Task RunCommandToolCall_RejectedApproval_ThenCompletesWithErrorResult()
+    {
+        await fixture.ResetStateAsync();
+
+        fixture.LlmServer!.ToolCallSse("ws_run_command",
+            """{"command":"echo test-from-tool"}""",
+            c => c.Messages.Last().Content == "TEST_TOOL_RUN_COMMAND_REJECT");
+
+        fixture.LlmServer?.TextSse("Tool invocation rejected.",
+            c => c.Messages.Last().Role == "tool"
+                 && (c.Messages.Last().Content?.Contains("rejected", StringComparison.OrdinalIgnoreCase) ?? false));
+
+        var sessionId = await fixture.Api.CreateSessionAsync();
+        var messageId = await fixture.Api.EnqueueMessageAsync(sessionId, "TEST_TOOL_RUN_COMMAND_REJECT");
+
+        var token = await fixture.Api.WaitForPendingApprovalTokenAsync(sessionId, TimeSpan.FromSeconds(15));
+        await fixture.Api.RejectAsync(sessionId, token);
+
+        await fixture.Api.WaitForStreamCompleted(sessionId, messageId);
+
+        using var history = await fixture.Api.GetHistoryAsync(sessionId);
+        var messageContents = ResponseHelpers.FlattenMessageContents(history);
+
+        Assert.Contains(messageContents, content =>
+            content.GetProperty("type").GetString() == "tool_result" &&
+            content.GetProperty("result").GetString()!.Contains("rejected", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

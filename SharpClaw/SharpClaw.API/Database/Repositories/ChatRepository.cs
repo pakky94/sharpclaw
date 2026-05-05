@@ -37,6 +37,7 @@ public class ChatRepository(IConfiguration configuration)
                    agent_id as AgentId,
                    name as Name,
                    visible_in_sidebar as VisibleInSidebar,
+                   status as Status,
                    parent_session_id as ParentSessionId,
                    created_at as CreatedAt,
                    updated_at as UpdatedAt
@@ -76,6 +77,7 @@ public class ChatRepository(IConfiguration configuration)
                       agent_id as AgentId,
                       name as Name,
                       visible_in_sidebar as VisibleInSidebar,
+                      status as Status,
                       parent_session_id as ParentSessionId,
                       created_at as CreatedAt,
                       updated_at as UpdatedAt;
@@ -858,7 +860,7 @@ public class ChatRepository(IConfiguration configuration)
     }
 }
 
-public record PersistedSession(Guid SessionId, long AgentId, string? Name, bool VisibleInSidebar, Guid? ParentSessionId, DateTime CreatedAt, DateTime UpdatedAt);
+public record PersistedSession(Guid SessionId, long AgentId, string? Name, bool VisibleInSidebar, string Status, Guid? ParentSessionId, DateTime CreatedAt, DateTime UpdatedAt);
 public record PersistedSessionSummary(Guid SessionId, long AgentId, string? Name, bool VisibleInSidebar, Guid? ParentSessionId, DateTime CreatedAt, DateTime UpdatedAt, long MessagesCount);
 public record SessionTaskLink(string CallId, Guid ChildSessionId, bool Completed);
 public record PersistedRawMessage(long MessageId, DateTime CreatedAt, ChatResponse Response);

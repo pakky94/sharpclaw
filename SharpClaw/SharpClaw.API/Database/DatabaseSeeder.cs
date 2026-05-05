@@ -226,12 +226,28 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     action_type varchar(32) not null,
                     target_path text null,
                     command_preview text null,
+                    description text null,
+                    call_id varchar(255) null,
+                    tool_name varchar(255) null,
+                    tool_arguments jsonb null,
                     risk_level varchar(16) not null,
                     status varchar(16) not null default 'pending'
                         check (status in ('pending', 'approved', 'rejected', 'expired')),
                     created_at timestamptz not null default now(),
                     resolved_at timestamptz null
                 );
+
+                alter table workspace_approval_events
+                    add column if not exists description text null;
+
+                alter table workspace_approval_events
+                    add column if not exists call_id varchar(255) null;
+
+                alter table workspace_approval_events
+                    add column if not exists tool_name varchar(255) null;
+
+                alter table workspace_approval_events
+                    add column if not exists tool_arguments jsonb null;
 
                 create table if not exists lcm_files(
                     id bigserial primary key,

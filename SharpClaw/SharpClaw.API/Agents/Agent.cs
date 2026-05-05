@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Memory.Lcm;
+using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database.Repositories;
 using SharpClaw.API.Helpers;
 
@@ -14,6 +15,7 @@ public class Agent(
     FragmentsRepository fragmentsRepository,
     WorkspaceRepository workspaceRepository,
     AgentsRepository agentsRepository,
+    IServiceProvider serviceProvider,
     ILogger<Agent> logger)
 {
     public async Task<Guid> CreateSession(
@@ -113,7 +115,7 @@ public class Agent(
 
             AgentClientResponse? response = null;
 
-            while (response is null or { ShouldContinue: true, QueuedTasks.Count: 0 })
+            while (response is null or { ShouldContinue: true, QueuedTasks.Count: 0, QueuedApprovals.Count: 0 })
             {
                 await TryCompactHistory(session);
 
@@ -178,10 +180,11 @@ public class Agent(
                     }
                 }
 
-                if (response.QueuedTasks.Count > 0)
+                if (response.QueuedTasks.Count > 0 || response.QueuedApprovals.Count > 0)
                 {
+                    run.SetStatus(AgentRunStatus.Waiting);
                     await chatRepository.UpdateSession(sessionId, AgentRunStatus.Waiting);
-                } else if (response is not { ShouldContinue: true, QueuedTasks.Count: 0 })
+                } else if (response is not { ShouldContinue: true, QueuedTasks.Count: 0, QueuedApprovals.Count: 0 })
                 {
                     run.MarkCompleted(); // TODO: rework this
                     await chatRepository.UpdateSession(sessionId, AgentRunStatus.Completed);
@@ -481,11 +484,141 @@ public class Agent(
         ["output"] = output,
     };
 
+    public async Task<ApprovalResolutionResult> ResolveWorkspaceApproval(Guid sessionId, string token, bool approved)
+    {
+        var approval = await workspaceRepository.GetApprovalEventByToken(token);
+        if (approval is null || approval.Status != ApprovalStatus.Pending)
+            return ApprovalResolutionResult.InvalidToken;
+
+        if (approval.SessionId != sessionId)
+            return ApprovalResolutionResult.WrongSession;
+
+        var resolved = await workspaceRepository.ResolveApprovalEvent(
+            token,
+            approved ? ApprovalStatus.Approved : ApprovalStatus.Rejected);
+        if (!resolved)
+            return ApprovalResolutionResult.FailedToResolve;
+
+        await ApplyApprovalOutcomeAndMaybeResume(approval, approved);
+        return ApprovalResolutionResult.Resolved;
+    }
+
+    private async Task ApplyApprovalOutcomeAndMaybeResume(WorkspaceApprovalEvent approval, bool approved)
+    {
+        if (string.IsNullOrWhiteSpace(approval.CallId))
+            return;
+
+        var session = await sessionStore.GetOrLoadSession(approval.SessionId);
+        var shouldResume = false;
+
+        await session.Mutex.WaitAsync();
+        try
+        {
+            var message = session.Context.Messages
+                .FirstOrDefault(r => r.Messages
+                    .SelectMany(m => m.Contents)
+                    .Any(m => m is FunctionResultContent trc
+                              && trc.CallId == approval.CallId));
+
+            if (message is null)
+                return;
+
+            var content = message.Messages
+                .SelectMany(m => m.Contents)
+                .FirstOrDefault(m => m is FunctionResultContent trc
+                                     && trc.CallId == approval.CallId) as FunctionResultContent;
+            if (content is null)
+                return;
+
+            object toolResult;
+            if (!approved)
+            {
+                toolResult = new
+                {
+                    error = $"Action was rejected by user: {approval.Description ?? approval.ActionType.ToString()}",
+                };
+            }
+            else
+            {
+                toolResult = await ReplayApprovedToolCall(session, approval);
+            }
+
+            content.Result = toolResult;
+            await chatRepository.UpdateMessage(message);
+            session.Run.AppendToolResultForCall(approval.CallId, Serialization.SerializeToolPayload(toolResult));
+
+            var pendingApprovals = await workspaceRepository.GetPendingApprovalsForSession(approval.SessionId);
+            if (pendingApprovals.Count == 0 && session.Run.SessionDependencies.Count == 0)
+                shouldResume = true;
+        }
+        finally
+        {
+            session.Mutex.Release();
+        }
+
+        if (shouldResume)
+            _ = Task.Run(() => GetMessageResponse(approval.SessionId, session, session.Run));
+    }
+
+    private async Task<object> ReplayApprovedToolCall(AgentSessionState session, WorkspaceApprovalEvent approval)
+    {
+        if (string.IsNullOrWhiteSpace(approval.ToolName))
+        {
+            return new { error = "Cannot replay approved tool call: missing tool name." };
+        }
+
+        var tools = BuildTools();
+        var tool = tools.FirstOrDefault(t => string.Equals(t.Name, approval.ToolName, StringComparison.Ordinal));
+        if (tool is null)
+            return new { error = $"Cannot replay approved tool call: tool '{approval.ToolName}' is not registered." };
+
+        Dictionary<string, object?> args;
+        try
+        {
+            args = string.IsNullOrWhiteSpace(approval.ToolArguments)
+                ? new Dictionary<string, object?>(StringComparer.Ordinal)
+                : JsonSerializer.Deserialize<Dictionary<string, object?>>(approval.ToolArguments)
+                  ?? new Dictionary<string, object?>(StringComparer.Ordinal);
+        }
+        catch (Exception ex)
+        {
+            return new { error = $"Cannot replay approved tool call: invalid stored tool arguments ({ex.Message})." };
+        }
+
+        args["approval_token"] = approval.ApprovalToken;
+
+        var functionArguments = new AIFunctionArguments(args)
+        {
+            Services = new AgentClientServiceProvider(serviceProvider, session.Context, session.Run),
+            Context = new Dictionary<object, object?>
+            {
+                ["CallId"] = approval.CallId,
+            },
+        };
+
+        try
+        {
+            return await tool.InvokeAsync(functionArguments) ?? new { };
+        }
+        catch (Exception ex)
+        {
+            return new { error = $"Approved tool replay failed: {ex.Message}" };
+        }
+    }
+
     public async Task Resume(Guid sessionId)
     {
         var session = await sessionStore.GetOrLoadSession(sessionId);
         _ = Task.Run(() => GetMessageResponse(sessionId, session, session.Run));
     }
+}
+
+public enum ApprovalResolutionResult
+{
+    Resolved,
+    InvalidToken,
+    WrongSession,
+    FailedToResolve,
 }
 
 public class AgentSessionState(Guid sessionId, AgentExecutionContext context,

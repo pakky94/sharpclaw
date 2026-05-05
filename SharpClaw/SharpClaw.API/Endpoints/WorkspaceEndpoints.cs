@@ -153,55 +153,31 @@ public static class WorkspaceEndpoints
         app.MapPost("/sessions/{sessionId:guid}/approvals/{token}/approve", async (
             Guid sessionId,
             string token,
-            [FromServices] SessionStore sessionStore,
-            [FromServices] ApprovalService approvalService) =>
+            [FromServices] Agent agent) =>
         {
-            var run = sessionStore.GetActiveRunForSession(sessionId);
-            if (run is not null)
+            var result = await agent.ResolveWorkspaceApproval(sessionId, token, approved: true);
+            return result switch
             {
-                var resolved = run.ResolveApproval(token, true);
-                if (resolved)
-                    return Results.Ok(new { message = "Approval granted." });
-            }
-
-            var approval = await approvalService.ValidateApprovalToken(token);
-            if (approval is null)
-                return Results.NotFound(new { error = "Invalid or already resolved approval token." });
-
-            if (approval.SessionId != sessionId)
-                return Results.BadRequest(new { error = "Approval token does not belong to this session." });
-
-            var resolvedDb = await approvalService.ResolveApproval(token, true);
-            return resolvedDb
-                ? Results.Ok(new { message = "Approval granted." })
-                : Results.BadRequest(new { error = "Failed to resolve approval." });
+                ApprovalResolutionResult.Resolved => Results.Ok(new { message = "Approval granted." }),
+                ApprovalResolutionResult.WrongSession => Results.BadRequest(new { error = "Approval token does not belong to this session." }),
+                ApprovalResolutionResult.FailedToResolve => Results.BadRequest(new { error = "Failed to resolve approval." }),
+                _ => Results.NotFound(new { error = "Invalid or already resolved approval token." }),
+            };
         });
 
         app.MapPost("/sessions/{sessionId:guid}/approvals/{token}/reject", async (
             Guid sessionId,
             string token,
-            [FromServices] SessionStore sessionStore,
-            [FromServices] ApprovalService approvalService) =>
+            [FromServices] Agent agent) =>
         {
-            var run = sessionStore.GetActiveRunForSession(sessionId);
-            if (run is not null)
+            var result = await agent.ResolveWorkspaceApproval(sessionId, token, approved: false);
+            return result switch
             {
-                var resolved = run.ResolveApproval(token, false);
-                if (resolved)
-                    return Results.Ok(new { message = "Approval rejected." });
-            }
-
-            var approval = await approvalService.ValidateApprovalToken(token);
-            if (approval is null)
-                return Results.NotFound(new { error = "Invalid or already resolved approval token." });
-
-            if (approval.SessionId != sessionId)
-                return Results.BadRequest(new { error = "Approval token does not belong to this session." });
-
-            var resolvedDb = await approvalService.ResolveApproval(token, false);
-            return resolvedDb
-                ? Results.Ok(new { message = "Approval rejected." })
-                : Results.BadRequest(new { error = "Failed to resolve approval." });
+                ApprovalResolutionResult.Resolved => Results.Ok(new { message = "Approval rejected." }),
+                ApprovalResolutionResult.WrongSession => Results.BadRequest(new { error = "Approval token does not belong to this session." }),
+                ApprovalResolutionResult.FailedToResolve => Results.BadRequest(new { error = "Failed to resolve approval." }),
+                _ => Results.NotFound(new { error = "Invalid or already resolved approval token." }),
+            };
         });
 
         app.MapGet("/sessions/{sessionId:guid}/approvals/pending", async (

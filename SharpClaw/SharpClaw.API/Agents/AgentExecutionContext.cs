@@ -15,6 +15,7 @@ public class AgentExecutionContext
     public HashSet<string> ActiveWorkspaceNames { get; set; } = [];
 
     public List<AgentClientTask> QueuedTasks { get; set; } = [];
+    public List<AgentClientApproval> QueuedApprovals { get; set; } = [];
 
     // public long SoftCompactThreshold = 35 * 1024;
     // public long HardCompactThreshold = 50 * 1024;

@@ -103,6 +103,10 @@ public class WorkspaceApprovalEvent
     public ApprovalActionType ActionType { get; set; }
     public string? TargetPath { get; set; }
     public string? CommandPreview { get; set; }
+    public string? Description { get; set; }
+    public string? CallId { get; set; }
+    public string? ToolName { get; set; }
+    public string? ToolArguments { get; set; }
     public ApprovalRiskLevel RiskLevel { get; set; }
     public ApprovalStatus Status { get; set; }
     public DateTime CreatedAt { get; set; }

@@ -216,13 +216,24 @@ public class WorkspaceRepository(IConfiguration configuration)
         return deleted > 0;
     }
 
-    public async Task<WorkspaceApprovalEvent?> CreateApprovalEvent(Guid sessionId, long agentId, string approvalToken, ApprovalActionType actionType, string? targetPath, string? commandPreview, ApprovalRiskLevel riskLevel)
+    public async Task<WorkspaceApprovalEvent?> CreateApprovalEvent(
+        Guid sessionId,
+        long agentId,
+        string approvalToken,
+        ApprovalActionType actionType,
+        string? targetPath,
+        string? commandPreview,
+        ApprovalRiskLevel riskLevel,
+        string? description = null,
+        string? callId = null,
+        string? toolName = null,
+        string? toolArguments = null)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         var result = await connection.QuerySingleAsync<WorkspaceApprovalEventRow>(
             """
-            insert into workspace_approval_events (session_id, agent_id, approval_token, action_type, target_path, command_preview, risk_level)
-            values (@sessionId, @agentId, @approvalToken, @actionType, @targetPath, @commandPreview, @riskLevel)
+            insert into workspace_approval_events (session_id, agent_id, approval_token, action_type, target_path, command_preview, description, call_id, tool_name, tool_arguments, risk_level)
+            values (@sessionId, @agentId, @approvalToken, @actionType, @targetPath, @commandPreview, @description, @callId, @toolName, cast(@toolArguments as jsonb), @riskLevel)
             returning *;
             """,
             new
@@ -233,6 +244,10 @@ public class WorkspaceRepository(IConfiguration configuration)
                 actionType = ActionTypeToDbString(actionType),
                 targetPath,
                 commandPreview,
+                description,
+                callId,
+                toolName,
+                toolArguments,
                 riskLevel = riskLevel.ToString().ToLowerInvariant(),
             });
         return result.ToModel();
@@ -508,6 +523,10 @@ public class WorkspaceRepository(IConfiguration configuration)
         public string action_type { get; set; } = string.Empty;
         public string? target_path { get; set; }
         public string? command_preview { get; set; }
+        public string? description { get; set; }
+        public string? call_id { get; set; }
+        public string? tool_name { get; set; }
+        public string? tool_arguments { get; set; }
         public string risk_level { get; set; } = string.Empty;
         public string status { get; set; } = string.Empty;
         public DateTime created_at { get; set; }
@@ -529,6 +548,10 @@ public class WorkspaceRepository(IConfiguration configuration)
             },
             TargetPath = target_path,
             CommandPreview = command_preview,
+            Description = description,
+            CallId = call_id,
+            ToolName = tool_name,
+            ToolArguments = tool_arguments,
             RiskLevel = risk_level.ToLowerInvariant() switch
             {
                 "medium" => ApprovalRiskLevel.Medium,

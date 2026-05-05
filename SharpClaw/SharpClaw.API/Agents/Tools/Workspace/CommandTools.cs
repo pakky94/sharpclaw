@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database.Repositories;
@@ -122,6 +123,7 @@ public static partial class CommandTools
 
     public static async Task<object> RunCommand(
         IServiceProvider sp,
+        AIFunctionArguments args,
         string command,
         string? cwd = null,
         int? timeout_ms = null,
@@ -138,6 +140,13 @@ public static partial class CommandTools
 
         var riskLevel = ClassifyRisk(command);
         var actionType = ClassifyActionType(command);
+        var replayArgs = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["command"] = command,
+            ["cwd"] = cwd,
+            ["timeout_ms"] = timeout_ms,
+            ["workspace"] = workspace,
+        });
         var approvalCheck = await WorkspaceTools.CheckApprovalIfNeeded(
             sp,
             actionType,
@@ -146,7 +155,10 @@ public static partial class CommandTools
             riskLevel,
             $"Run command: {command}",
             approval_token,
-            workspace);
+            workspace,
+            WorkspaceTools.GetContextValue(args, "CallId"),
+            "ws_run_command",
+            replayArgs);
 
         if (approvalCheck is not null)
             return approvalCheck;

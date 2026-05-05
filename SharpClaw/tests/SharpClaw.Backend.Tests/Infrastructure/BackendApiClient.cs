@@ -195,6 +195,12 @@ public sealed class BackendApiClient(HttpClient client)
         response.EnsureSuccessStatusCode();
     }
 
+    public async Task RejectAsync(Guid sessionId, string token, CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsync($"/sessions/{sessionId}/approvals/{token}/reject", content: null, cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
     public Task<IReadOnlyList<StreamEvent>> WaitForStreamCompleted(
         Guid sessionId,
         long messageId,

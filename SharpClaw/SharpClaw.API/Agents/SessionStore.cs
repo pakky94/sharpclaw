@@ -61,6 +61,14 @@ public class SessionStore(
                     .Select(sd => new SessionDependency(sd.ChildSessionId, sd.CallId))
                     .ToList()
             );
+            loadedSession.Run.SetStatus(persistedSession.Status.ToLowerInvariant() switch
+            {
+                "pending" => AgentRunStatus.Pending,
+                "running" => AgentRunStatus.Running,
+                "waiting" => AgentRunStatus.Waiting,
+                "failed" => AgentRunStatus.Failed,
+                _ => AgentRunStatus.Completed,
+            });
             _sessions[sessionId] = loadedSession;
             return loadedSession;
         }

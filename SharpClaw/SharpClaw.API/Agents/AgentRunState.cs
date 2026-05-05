@@ -17,7 +17,6 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
 {
     private readonly object _eventsLock = new();
     private readonly List<AgentRunEvent> _events = [];
-    private readonly Dictionary<string, TaskCompletionSource<bool>> _pendingApprovals = [];
     private long _currentMessageId = 0;
     private long _sequence = 0;
 
@@ -45,6 +44,11 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
         StartMessageId = messageId;
         Status = AgentRunStatus.Running;
         AddEvent(messageId, "started", null);
+    }
+
+    public void SetStatus(AgentRunStatus status)
+    {
+        Status = status;
     }
 
     public void NextMessage()
@@ -119,12 +123,10 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
         AddEvent(_currentMessageId, "failed", error);
     }
 
-    public TaskCompletionSource<bool> CreateApprovalRequest(string token, string action, string? target, string? commandPreview, string risk, string description)
+    public void AppendApprovalRequired(string token, string action, string? target, string? commandPreview, string risk, string description)
     {
-        var tcs = new TaskCompletionSource<bool>();
         lock (_eventsLock)
         {
-            _pendingApprovals[token] = tcs;
             AddEvent(_currentMessageId, "approval_required", null, new
             {
                 approval_token = token,
@@ -134,33 +136,6 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
                 risk,
                 description,
             });
-        }
-        return tcs;
-    }
-
-    public bool ResolveApproval(string token, bool approved)
-    {
-        lock (_eventsLock)
-        {
-            if (_pendingApprovals.TryGetValue(token, out var tcs))
-            {
-                _pendingApprovals.Remove(token);
-                return tcs.TrySetResult(approved);
-            }
-        }
-        return false;
-    }
-
-    // TODO: what is this method for?
-    public void ExpireApproval(string token)
-    {
-        lock (_eventsLock)
-        {
-            if (_pendingApprovals.TryGetValue(token, out var tcs))
-            {
-                _pendingApprovals.Remove(token);
-                tcs.TrySetCanceled();
-            }
         }
     }
 
