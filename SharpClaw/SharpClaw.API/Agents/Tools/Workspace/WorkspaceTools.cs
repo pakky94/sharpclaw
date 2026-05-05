@@ -98,7 +98,7 @@ public static class WorkspaceTools
         };
     }
 
-    private static async Task<object?> CheckApprovalIfNeeded(
+    internal static async Task<object?> CheckApprovalIfNeeded(
         IServiceProvider sp,
         ApprovalActionType actionType,
         string? targetPath,
@@ -136,6 +136,8 @@ public static class WorkspaceTools
             var existing = await repo.GetApprovalEventByToken(token);
             if (existing is null)
                 return new { error = $"Invalid approval token: {approvalToken}" };
+            if (existing.Status == ApprovalStatus.Approved)
+                return null;
             if (existing.Status == ApprovalStatus.Rejected)
                 return new { error = $"Action was rejected by user: {description}" };
             if (existing.Status == ApprovalStatus.Expired)

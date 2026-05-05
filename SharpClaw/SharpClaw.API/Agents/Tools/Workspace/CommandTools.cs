@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Workspace;
@@ -10,25 +9,6 @@ public static partial class CommandTools
 {
     private const int DefaultTimeoutMs = 30_000;
     private const int MaxOutputBytes = 50_000;
-
-    private static readonly string[] DestructivePatterns = [
-        @"rm\s+(-rf?|--recursive|--force)",
-        @"rd\s+/s",
-        @"del\s+(/f|/s|/q)",
-        @"format\s+",
-        @"diskpart",
-        @"shutdown\s+(/r|/s)",
-        @"rmdir\s+/s",
-        @":\s*:\s*>\s*",
-        @">\s*NUL",
-        @"mkfs",
-        @"dd\s+",
-        @"chmod\s+777",
-        @"chown\s+root",
-        @"net\s+user",
-        @"net\s+localgroup",
-        @"reg\s+(delete|add)",
-    ];
 
     [GeneratedRegex(@"(?i)rm\s+(-rf?|--recursive|--force)", RegexOptions.Compiled)]
     private static partial Regex RmRfRegex();
@@ -158,45 +138,18 @@ public static partial class CommandTools
 
         var riskLevel = ClassifyRisk(command);
         var actionType = ClassifyActionType(command);
+        var approvalCheck = await WorkspaceTools.CheckApprovalIfNeeded(
+            sp,
+            actionType,
+            null,
+            command,
+            riskLevel,
+            $"Run command: {command}",
+            approval_token,
+            workspace);
 
-        var ctx = sp.GetRequiredService<AgentExecutionContext>();
-
-        if (ws.PolicyMode is not WorkspacePolicyMode.TrueUnrestricted)
-        {
-            if (riskLevel >= ApprovalRiskLevel.Critical ||
-                (ws.PolicyMode is WorkspacePolicyMode.Unrestricted && riskLevel >= ApprovalRiskLevel.High) ||
-                (ws.PolicyMode is WorkspacePolicyMode.ConfirmWritesAndExec or WorkspacePolicyMode.ConfirmExecOnly))
-            {
-                if (string.IsNullOrWhiteSpace(approval_token))
-                {
-                    var approvalRepo = sp.GetRequiredService<WorkspaceRepository>();
-                    var token = GenerateApprovalToken();
-                    await approvalRepo.CreateApprovalEvent(
-                        ctx.SessionId,
-                        ctx.AgentId,
-                        token,
-                        actionType,
-                        null,
-                        command,
-                        riskLevel);
-
-                    return new
-                    {
-                        approval_required = true,
-                        approval_token = token,
-                        action = "execute",
-                        command_preview = command.Length > 200 ? command[..200] + "..." : command,
-                        risk = riskLevel.ToString().ToLowerInvariant(),
-                        description = $"Run command: {command}",
-                    };
-                }
-
-                var repo = sp.GetRequiredService<WorkspaceRepository>();
-                var approval = await repo.GetApprovalEventByToken(approval_token);
-                if (approval is null || approval.Status != ApprovalStatus.Approved)
-                    return new { error = $"Invalid or unused approval token: {approval_token}" };
-            }
-        }
+        if (approvalCheck is not null)
+            return approvalCheck;
 
         var timeout = timeout_ms ?? DefaultTimeoutMs;
         timeout = Math.Min(timeout, 120_000);
@@ -208,9 +161,4 @@ public static partial class CommandTools
         return await router.RunCommand(ws, command, timeout, MaxOutputBytes);
     }
 
-    private static string GenerateApprovalToken()
-    {
-        var bytes = RandomNumberGenerator.GetBytes(24);
-        return Convert.ToBase64String(bytes).Replace("+", "").Replace("/", "").Replace("=", "");
-    }
 }
