@@ -188,6 +188,28 @@ public class ChatRepository(IConfiguration configuration)
         return rows.ToArray();
     }
 
+    public async Task<(IReadOnlyList<SessionTaskLink> Links, bool HasMore)> GetSessionTaskLinksPaginated(
+        Guid sessionId, int limit, int offset)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<SessionTaskLink>(
+            """
+            select call_id as CallId,
+                   child_session_id as ChildSessionId,
+                   completed as Completed
+            from session_tasks
+            where session_id = @sessionId
+              and child_session_id is not null
+            order by created_at, id
+            limit @limit + 1
+            offset @offset;
+            """,
+            new { sessionId, limit, offset });
+
+        var hasMore = rows.Count() > limit;
+        return (rows.Take(limit).ToArray(), hasMore);
+    }
+
     public async Task<IReadOnlyList<Guid>> GetSessionAncestors(Guid sessionId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
@@ -505,6 +527,49 @@ public class ChatRepository(IConfiguration configuration)
                 return new PersistedRawMessage(r.MessageId, r.CreatedAt, response);
             })
             .ToArray();
+    }
+
+    public async Task<(IReadOnlyList<PersistedRawMessage> Messages, bool HasMore)> LoadRawMessagesPaginated(
+        Guid sessionId, int limit, long? beforeSequence)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<RawMessageRow>(
+            """
+            select m.id as MessageId,
+                   m.created_at as CreatedAt,
+                   m.payload::text as Payload,
+                   m.parent_summary_id as ParentSummaryId,
+                   ch.sequence as SequenceId
+            from messages m
+            join conversation_history ch on m.id = ch.message_id
+            where m.session_id = @sessionId
+              and (@beforeSequence is null or ch.sequence < @beforeSequence)
+            order by ch.sequence desc
+            limit @limit + 1;
+            """,
+            new { sessionId, limit, beforeSequence });
+
+        var hasMore = rows.Count() > limit;
+        var page = rows.Take(limit).Reverse().Select(r =>
+        {
+            var response = DeserializeResponse(r.Payload);
+            SetDbReference(response, "message", r.MessageId, r.SequenceId, r.ParentSummaryId);
+            return new PersistedRawMessage(r.MessageId, r.CreatedAt, response);
+        }).ToArray();
+
+        return (page, hasMore);
+    }
+
+    public async Task<long> GetMessageCount(Guid sessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        return await connection.QuerySingleAsync<long>(
+            """
+            select count(*)
+            from conversation_history
+            where session_id = @sessionId and is_active;
+            """,
+            new { sessionId });
     }
 
     public async Task<LcmSummaryRecord?> GetLcmSummary(Guid sessionId, string lcmSummaryId)

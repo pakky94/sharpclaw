@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { ChatBubble } from '../types/chat'
 import { MarkdownContent } from './MarkdownContent'
 import { shortenCallId, summarizeInline, summarizeJsonInline } from '../utils/chatUtils'
@@ -6,6 +6,9 @@ import { shortenCallId, summarizeInline, summarizeJsonInline } from '../utils/ch
 type MessagesViewProps = {
   messages: ChatBubble[]
   showToolEvents: boolean
+  hasMoreMessages: boolean
+  loadingOlder: boolean
+  onLoadOlder: () => void
   onToggleToolExpanded: (messageId: string) => void
   onToggleToolResultExpanded: (messageId: string) => void
   onOpenSession: (sessionId: string) => void
@@ -14,6 +17,9 @@ type MessagesViewProps = {
 export function MessagesView({
   messages,
   showToolEvents,
+  hasMoreMessages,
+  loadingOlder,
+  onLoadOlder,
   onToggleToolExpanded,
   onToggleToolResultExpanded,
   onOpenSession,
@@ -22,6 +28,24 @@ export function MessagesView({
   const shouldAutoScrollRef = useRef(true)
   const prevMessageCountRef = useRef(0)
   const prevFirstMessageIdRef = useRef<string | null>(null)
+  const loadingOlderRef = useRef(false)
+  const pendingScrollRestoreRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null)
+
+  // Keep loadingOlderRef in sync
+  // TODO: can we delete this?
+  // loadingOlderRef.current = loadingOlder
+
+  // When the loading indicator appears, capture the scroll position so we
+  // can restore it after older messages are prepended to the DOM.
+  useLayoutEffect(() => {
+    const container = containerRef.current
+    if (loadingOlder && container) {
+      pendingScrollRestoreRef.current = {
+        scrollTop: container.scrollTop,
+        scrollHeight: container.scrollHeight,
+      }
+    }
+  }, [loadingOlder])
 
   useEffect(() => {
     const container = containerRef.current
@@ -32,8 +56,19 @@ export function MessagesView({
     const prevCount = prevMessageCountRef.current
     const firstMessageId = messages[0]?.id ?? null
     const isInitialLoad = prevCount === 0 && messages.length > 0
-    const isNewSession = prevFirstMessageIdRef.current !== null && firstMessageId !== prevFirstMessageIdRef.current
-    if (isInitialLoad || isNewSession || shouldAutoScrollRef.current) {
+    const isNewSession = prevFirstMessageIdRef.current !== null
+        && firstMessageId !== prevFirstMessageIdRef.current
+        && messages.find((message) => message.id === firstMessageId) === undefined
+
+    if (isInitialLoad || isNewSession) {
+      container.scrollTop = container.scrollHeight
+    } else if (prevCount > 0 && messages.length > prevCount && pendingScrollRestoreRef.current) {
+      // Older messages were prepended — restore the scroll position so the
+      // same content stays visible instead of jumping to the bottom.
+      const { scrollTop, scrollHeight } = pendingScrollRestoreRef.current
+      container.scrollTop = scrollTop + (container.scrollHeight - scrollHeight)
+      pendingScrollRestoreRef.current = null
+    } else if (shouldAutoScrollRef.current) {
       container.scrollTop = container.scrollHeight
     }
 
@@ -50,10 +85,25 @@ export function MessagesView({
     const threshold = 80
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
     shouldAutoScrollRef.current = distanceFromBottom < threshold
+
+    // Detect scroll to top for loading older messages
+    if (container.scrollTop < 40 && hasMoreMessages && !loadingOlderRef.current) {
+      onLoadOlder()
+    }
   }
 
   return (
     <section className="messages-view" ref={containerRef} onScroll={handleScroll}>
+      {loadingOlder && (
+        <div className="messages-loading-older">Loading older messages...</div>
+      )}
+      {!loadingOlder && hasMoreMessages && (
+        <div className="messages-load-older-trigger">
+          <button type="button" className="button ghost" onClick={onLoadOlder}>
+            Load older messages
+          </button>
+        </div>
+      )}
       {messages.map((message) => (
         <article key={message.id} className={`bubble ${message.role}`}>
           {message.role === 'tool' ? (

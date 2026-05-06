@@ -373,6 +373,56 @@ public class Agent(
         );
     }
 
+    public async Task<PaginatedSessionHistoryDto> GetHistoryPaginated(
+        Guid sessionId,
+        int limit = 100,
+        long? beforeSequence = null,
+        int childLimit = 50,
+        int childOffset = 0)
+    {
+        var session = await sessionStore.GetOrLoadSession(sessionId);
+
+        var (rawMessages, hasMoreMessages) = await chatRepository.LoadRawMessagesPaginated(
+            sessionId, limit, beforeSequence);
+
+        var (childLinks, hasMoreChildSessions) = await chatRepository.GetSessionTaskLinksPaginated(
+            sessionId, childLimit, childOffset);
+
+        var totalMessageCount = await chatRepository.GetMessageCount(sessionId);
+
+        var messages = new List<SessionMessageDto>(rawMessages.Count);
+        foreach (var raw in rawMessages)
+        {
+            foreach (var message in raw.Response.Messages)
+            {
+                var sequenceId = raw.Response.AdditionalProperties?[Constants.SequenceIdKey] as long?
+                                 ?? throw new UnreachableException("all messages should have a sequenceId");
+
+                messages.Add(new SessionMessageDto(
+                    Role: message.Role.Value,
+                    Text: message.Text,
+                    Contents: GetMessageContents(message),
+                    AuthorName: message.AuthorName,
+                    MessageId: sequenceId
+                ));
+            }
+        }
+
+        return new PaginatedSessionHistoryDto(
+            SessionId: sessionId,
+            ParentSessionId: session.ParentSessionId,
+            LatestSequenceId: session.Context.Messages.LastOrDefault()?.AdditionalProperties?[Constants.SequenceIdKey] as long? ?? 0,
+            RunStatus: session.Run?.Status.ToString().ToLowerInvariant(),
+            Messages: messages,
+            ChildSessions: childLinks
+                .Select(link => new SessionChildLinkDto(link.CallId, link.ChildSessionId, link.Completed))
+                .ToArray(),
+            HasMoreMessages: hasMoreMessages,
+            HasMoreChildSessions: hasMoreChildSessions,
+            TotalMessageCount: totalMessageCount
+        );
+    }
+
     public async Task<IReadOnlyList<AgentSessionDto>> GetSessions(long agentId)
     {
         var sessions = await chatRepository.GetSessions(agentId);

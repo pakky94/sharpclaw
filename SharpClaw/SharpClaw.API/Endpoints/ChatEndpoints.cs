@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using SharpClaw.API.Agents;
 
@@ -155,12 +155,21 @@ public static class ChatEndpoints
 
         app.MapGet("/sessions/{sessionId:guid}/history", async (
             Guid sessionId,
+            [FromQuery] int? limit,
+            [FromQuery] long? before,
+            [FromQuery] int? childLimit,
+            [FromQuery] int? childOffset,
             [FromServices] Agent agent
         ) =>
         {
             try
             {
-                var history = await agent.GetHistory(sessionId);
+                var history = await agent.GetHistoryPaginated(
+                    sessionId,
+                    limit: limit ?? 100,
+                    beforeSequence: before,
+                    childLimit: childLimit ?? 50,
+                    childOffset: childOffset ?? 0);
                 return Results.Ok(new
                 {
                     sessionId = history.SessionId,
@@ -169,6 +178,9 @@ public static class ChatEndpoints
                     runStatus = history.RunStatus,
                     messages = history.Messages,
                     childSessions = history.ChildSessions,
+                    hasMoreMessages = history.HasMoreMessages,
+                    hasMoreChildSessions = history.HasMoreChildSessions,
+                    totalMessageCount = history.TotalMessageCount,
                 });
             }
             catch (KeyNotFoundException ex)

@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI;
 using SharpClaw.API.Helpers;
 
 namespace SharpClaw.API.Agents;
@@ -187,6 +187,18 @@ public record SessionHistoryDto(
     string? RunStatus,
     IReadOnlyList<SessionMessageDto> Messages,
     IReadOnlyList<SessionChildLinkDto> ChildSessions
+);
+
+public record PaginatedSessionHistoryDto(
+    Guid SessionId,
+    Guid? ParentSessionId,
+    long LatestSequenceId,
+    string? RunStatus,
+    IReadOnlyList<SessionMessageDto> Messages,
+    IReadOnlyList<SessionChildLinkDto> ChildSessions,
+    bool HasMoreMessages,
+    bool HasMoreChildSessions,
+    long TotalMessageCount
 );
 
 public record SessionMessageDto(

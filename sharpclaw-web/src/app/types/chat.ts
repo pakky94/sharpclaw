@@ -61,6 +61,9 @@ export type SessionHistoryResponse = {
   latestSequenceId: number
   messages: SessionHistoryMessage[]
   childSessions: SessionChildLink[]
+  hasMoreMessages: boolean
+  hasMoreChildSessions: boolean
+  totalMessageCount: number
 }
 
 export type SessionChildLink = {

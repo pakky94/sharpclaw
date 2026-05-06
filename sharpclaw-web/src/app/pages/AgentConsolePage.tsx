@@ -39,6 +39,8 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const [showToolSessions, setShowToolSessions] = useState(false)
   const [messages, setMessages] = useState<ChatBubble[]>([])
+  const [hasMoreMessages, setHasMoreMessages] = useState(false)
+  const [loadingOlder, setLoadingOlder] = useState(false)
   const [draftsBySessionKey, setDraftsBySessionKey] = useState<Record<string, string>>({})
   const [sendingSessionIds, setSendingSessionIds] = useState<Set<string>>(new Set())
   const [showToolEvents, setShowToolEvents] = useState(false)
@@ -238,6 +240,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
       closeStream()
       const data = await fetchJson<SessionHistoryResponse>(`${API_BASE_URL}/sessions/${sessionId}/history`)
       setCurrentParentSessionId(data.parentSessionId ?? null)
+      setHasMoreMessages(data.hasMoreMessages)
 
       const mapped: ChatBubble[] = data.messages.flatMap((message) =>
         mapHistoryMessageToBubbles(sessionId, message),
@@ -290,6 +293,35 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
       }
     } catch (e) {
       setError(asErrorMessage(e))
+    }
+  }
+
+  async function loadOlderMessages() {
+    if (!selectedSessionId || !hasMoreMessages || loadingOlder) return
+
+    const oldestMessage = messages[0]
+    if (!oldestMessage) return
+
+    try {
+      setLoadingOlder(true)
+      const data = await fetchJson<SessionHistoryResponse>(
+        `${API_BASE_URL}/sessions/${selectedSessionId}/history?before=${oldestMessage.messageId}`
+      )
+      setHasMoreMessages(data.hasMoreMessages)
+
+      const mapped: ChatBubble[] = data.messages.flatMap((message) =>
+        mapHistoryMessageToBubbles(selectedSessionId, message),
+      )
+      const mergedMapped = attachChildSessionsToBubbles(
+        mergeToolResultBubbles(mapped),
+        data.childSessions ?? [],
+      )
+
+      setMessages((prev) => [...mergedMapped, ...prev])
+    } catch (e) {
+      setError(asErrorMessage(e))
+    } finally {
+      setLoadingOlder(false)
     }
   }
 
@@ -729,6 +761,9 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         <MessagesView
           messages={visibleMessages}
           showToolEvents={showToolEvents}
+          hasMoreMessages={hasMoreMessages}
+          loadingOlder={loadingOlder}
+          onLoadOlder={() => void loadOlderMessages()}
           onToggleToolExpanded={toggleToolExpanded}
           onToggleToolResultExpanded={toggleToolResultExpanded}
           onOpenSession={(sessionId) => {
