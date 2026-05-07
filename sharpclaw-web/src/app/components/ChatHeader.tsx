@@ -3,6 +3,12 @@ import type { SessionSummary, WorkspaceConfig } from '../types/chat'
 import { API_BASE_URL, fetchJson } from '../services/chatApi'
 import { asErrorMessage } from '../utils/chatUtils'
 
+function formatTokenCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+  return String(n)
+}
+
 type ChatHeaderProps = {
   selectedSession: SessionSummary | null
   parentSessionId: string | null
@@ -11,6 +17,7 @@ type ChatHeaderProps = {
   apiBaseUrl: string
   runStatus: 'pending' | 'waiting' | 'running' | 'completed' | 'failed' | null
   runControlBusy?: boolean
+  estimatedTokenCount?: number
   onShowToolEventsChange: (nextValue: boolean) => void
   onGoToSession: (sessionId: string) => void
   onResumeIfPossible: () => void
@@ -31,6 +38,7 @@ export function ChatHeader({
   apiBaseUrl,
   runStatus,
   runControlBusy,
+  estimatedTokenCount,
   onShowToolEventsChange,
   onGoToSession,
   onResumeIfPossible,
@@ -91,6 +99,11 @@ export function ChatHeader({
           {hasUnsavedDraft ? ' *' : ''}
         </h2>
         <p>{selectedSession ? `Agent ${selectedSession.agentId}` : 'Create a session to start chatting.'}</p>
+        {estimatedTokenCount !== undefined && estimatedTokenCount > 0 && (
+          <p className="token-count">
+            ~{formatTokenCount(estimatedTokenCount)} tokens in context
+          </p>
+        )}
         {parentSessionId && (
           <button
             type="button"

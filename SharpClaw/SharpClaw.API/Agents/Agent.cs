@@ -156,6 +156,7 @@ public class Agent(
                     await chatRepository.PersistMessage(sessionId, message);
                 }
                 session.Context.Messages = [..session.Context.Messages, ..response.Responses];
+                session.Run.AppendTokenUsage(session.Context.Messages.EstimatedTokenCount());
 
                 foreach (var queuedTask in response.QueuedTasks)
                 {
@@ -419,7 +420,8 @@ public class Agent(
                 .ToArray(),
             HasMoreMessages: hasMoreMessages,
             HasMoreChildSessions: hasMoreChildSessions,
-            TotalMessageCount: totalMessageCount
+            TotalMessageCount: totalMessageCount,
+            EstimatedTokenCount: session.Context.Messages.EstimatedTokenCount()
         );
     }
 

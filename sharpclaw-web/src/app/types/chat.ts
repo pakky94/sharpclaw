@@ -64,6 +64,7 @@ export type SessionHistoryResponse = {
   hasMoreMessages: boolean
   hasMoreChildSessions: boolean
   totalMessageCount: number
+  estimatedTokenCount: number
 }
 
 export type SessionChildLink = {
@@ -78,7 +79,7 @@ export type StreamEvent = {
   messageId: number
   sessionId: string
   sequence: number
-  type: 'started' | 'delta' | 'completed' | 'failed' | 'tool_call' | 'tool_result' | 'approval_required' | 'child_session_spawned'
+  type: 'started' | 'delta' | 'completed' | 'failed' | 'tool_call' | 'tool_result' | 'approval_required' | 'child_session_spawned' | 'token_usage'
   text: string | null
   data?: unknown
   timestamp: string

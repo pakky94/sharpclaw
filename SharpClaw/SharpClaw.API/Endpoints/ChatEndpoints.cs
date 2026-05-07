@@ -181,6 +181,7 @@ public static class ChatEndpoints
                     hasMoreMessages = history.HasMoreMessages,
                     hasMoreChildSessions = history.HasMoreChildSessions,
                     totalMessageCount = history.TotalMessageCount,
+                    estimatedTokenCount = history.EstimatedTokenCount,
                 });
             }
             catch (KeyNotFoundException ex)

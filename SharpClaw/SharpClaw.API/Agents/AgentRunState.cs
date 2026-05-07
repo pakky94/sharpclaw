@@ -102,6 +102,12 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
     public void AppendToolResultForCall(string callId, string? result) =>
         AppendToolResult(callId, result);
 
+    public void AppendTokenUsage(long estimatedTokenCount) =>
+        AddEvent(_currentMessageId, "token_usage", null, new
+        {
+            estimatedTokenCount,
+        });
+
     public void AppendChildSessionSpawned(string callId, Guid childSessionId, string? description) =>
         AddEvent(_currentMessageId, "child_session_spawned", null, new
         {
@@ -198,7 +204,8 @@ public record PaginatedSessionHistoryDto(
     IReadOnlyList<SessionChildLinkDto> ChildSessions,
     bool HasMoreMessages,
     bool HasMoreChildSessions,
-    long TotalMessageCount
+    long TotalMessageCount,
+    long EstimatedTokenCount
 );
 
 public record SessionMessageDto(

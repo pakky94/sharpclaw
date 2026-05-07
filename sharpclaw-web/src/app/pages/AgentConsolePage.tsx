@@ -41,6 +41,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   const [messages, setMessages] = useState<ChatBubble[]>([])
   const [hasMoreMessages, setHasMoreMessages] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
+  const [estimatedTokenCount, setEstimatedTokenCount] = useState(0)
   const [draftsBySessionKey, setDraftsBySessionKey] = useState<Record<string, string>>({})
   const [sendingSessionIds, setSendingSessionIds] = useState<Set<string>>(new Set())
   const [showToolEvents, setShowToolEvents] = useState(false)
@@ -241,6 +242,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
       const data = await fetchJson<SessionHistoryResponse>(`${API_BASE_URL}/sessions/${sessionId}/history`)
       setCurrentParentSessionId(data.parentSessionId ?? null)
       setHasMoreMessages(data.hasMoreMessages)
+      setEstimatedTokenCount(data.estimatedTokenCount)
 
       const mapped: ChatBubble[] = data.messages.flatMap((message) =>
         mapHistoryMessageToBubbles(sessionId, message),
@@ -308,6 +310,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         `${API_BASE_URL}/sessions/${selectedSessionId}/history?before=${oldestMessage.messageId}`
       )
       setHasMoreMessages(data.hasMoreMessages)
+      setEstimatedTokenCount(data.estimatedTokenCount)
 
       const mapped: ChatBubble[] = data.messages.flatMap((message) =>
         mapHistoryMessageToBubbles(selectedSessionId, message),
@@ -606,6 +609,14 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         )
       })
 
+      source.addEventListener('token_usage', (event) => {
+        const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
+        const data = payload.data as { estimatedTokenCount?: number } | undefined
+        if (data?.estimatedTokenCount !== undefined) {
+          setEstimatedTokenCount(data.estimatedTokenCount)
+        }
+      })
+
       source.addEventListener('completed', () => {
         close()
         setActiveRun(null)
@@ -749,6 +760,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
           apiBaseUrl={API_BASE_URL}
           runStatus={activeRun?.sessionId === selectedSessionId ? activeRun.status : null}
           runControlBusy={runControlBusy}
+          estimatedTokenCount={estimatedTokenCount}
           onShowToolEventsChange={setShowToolEvents}
           onResumeIfPossible={() => void resumeSessionIfPossible()}
           onStop={() => void stopSession()}
