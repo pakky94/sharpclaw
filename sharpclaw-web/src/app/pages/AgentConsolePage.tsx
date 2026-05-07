@@ -59,6 +59,8 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
     sourceSessionId?: string | null
   }>>([])
   const streamRef = useRef<{ sessionId: string; latestMessageId: number; source: EventSource } | null>(null)
+  const selectedSessionRef = useRef(selectedSessionId)
+  const resolvingTokensRef = useRef<Set<string>>(new Set())
   const draftSessionKey = selectedSessionId ?? (selectedAgentId !== null ? `__new__:${selectedAgentId}` : '__new__:none')
   const prompt = draftsBySessionKey[draftSessionKey] ?? ''
   const unsavedSessionIds = useMemo(() => {
@@ -116,8 +118,13 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   }, [])
 
   useEffect(() => {
+    selectedSessionRef.current = selectedSessionId
+  }, [selectedSessionId])
+
+  useEffect(() => {
+    setPendingApprovals([])
+
     if (!selectedSessionId) {
-      setPendingApprovals([])
       return
     }
 
@@ -135,7 +142,9 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         }> }>(`${API_BASE_URL}/sessions/${selectedSessionId}/approvals/pending`)
 
         if (cancelled) return
-        const mapped = data.approvals.map((a) => ({
+        const mapped = data.approvals
+          .filter((a) => !resolvingTokensRef.current.has(a.approvalToken))
+          .map((a) => ({
           token: a.approvalToken,
           action: a.actionType,
           target: a.targetPath,
@@ -642,6 +651,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
 
       source.addEventListener('approval_required', (event) => {
         const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
+        if (payload.sessionId !== selectedSessionRef.current) return
         const data = payload.data as {
           approval_token: string
           action: string
@@ -675,16 +685,20 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   async function resolveApproval(approved: boolean) {
     if (pendingApprovals.length === 0 || !selectedSessionId) return
     const pendingApproval = pendingApprovals[0]
+    const token = pendingApproval.token
+    resolvingTokensRef.current.add(token)
     try {
       setError(null)
       const method = approved ? 'approve' : 'reject'
       await fetchJson(
-        `${API_BASE_URL}/sessions/${selectedSessionId}/approvals/${pendingApproval.token}/${method}`,
+        `${API_BASE_URL}/sessions/${selectedSessionId}/approvals/${token}/${method}`,
         { method: 'POST' },
       )
-      setPendingApprovals((prev) => prev.filter((x) => x.token !== pendingApproval.token))
+      setPendingApprovals((prev) => prev.filter((x) => x.token !== token))
     } catch (e) {
       setError(asErrorMessage(e))
+    } finally {
+      resolvingTokensRef.current.delete(token)
     }
   }
 
