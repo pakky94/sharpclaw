@@ -443,6 +443,53 @@ public sealed class ToolInvocationTests(SharpClawAppFixture fixture)
         Assert.Equal("failed", childHistory.RootElement.GetProperty("runStatus").GetString());
     }
 
+    [Fact]
+    public async Task StopSession_ThenResumeIfPossible_ResumesSuccessfully()
+    {
+        await fixture.ResetStateAsync();
+
+        fixture.LlmServer?.TextSse("First response.", _ => true);
+
+        var sessionId = await fixture.Api.CreateSessionAsync();
+        var messageId = await fixture.Api.EnqueueMessageAsync(sessionId, "Hello");
+        await fixture.Api.WaitForStreamCompleted(sessionId, messageId);
+
+        await fixture.Api.StopSessionAsync(sessionId, includeDescendants: false);
+
+        using var stoppedHistory = await fixture.Api.GetHistoryAsync(sessionId);
+        Assert.Equal("failed", stoppedHistory.RootElement.GetProperty("runStatus").GetString());
+
+        // Resume — should succeed
+        using var resume = await fixture.Api.ResumeIfPossibleAsync(sessionId, includeDescendants: false);
+        Assert.Equal(1, resume.RootElement.GetProperty("resumed").GetInt32());
+    }
+
+    [Fact]
+    public async Task StopSession_WhileWaitingForApproval_ThenResumeIfPossible_ResumesSuccessfully()
+    {
+        await fixture.ResetStateAsync();
+
+        fixture.LlmServer!.ToolCallSse("ws_run_command",
+            """{"command":"echo stop-resume-test"}""",
+            c => c.Messages.Last().Role == "user" && c.Messages.Last().Content == "TEST_STOP_RESUME_APPROVAL");
+
+        fixture.LlmServer?.TextSse("After approval response.",
+            c => c.Messages.Last().Role == "tool");
+
+        var sessionId = await fixture.Api.CreateSessionAsync();
+        var messageId = await fixture.Api.EnqueueMessageAsync(sessionId, "TEST_STOP_RESUME_APPROVAL");
+
+        var token = await fixture.Api.WaitForPendingApprovalTokenAsync(sessionId, TimeSpan.FromSeconds(15));
+        Assert.False(string.IsNullOrWhiteSpace(token));
+
+        // Stop while waiting for approval
+        await fixture.Api.StopSessionAsync(sessionId, includeDescendants: false);
+
+        // Resume — should succeed even with pending approvals (user explicitly requested resume)
+        using var resume = await fixture.Api.ResumeIfPossibleAsync(sessionId, includeDescendants: false);
+        Assert.Equal(1, resume.RootElement.GetProperty("resumed").GetInt32());
+    }
+
     private static (string Status, string? Output)? TryReadTaskResultPayload(StreamEvent ev)
     {
         if (string.IsNullOrWhiteSpace(ev.Payload) || !ev.Payload.StartsWith("data: ", StringComparison.Ordinal))

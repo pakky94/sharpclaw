@@ -145,6 +145,11 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
             Error = reason;
     }
 
+    public void ClearStopRequest()
+    {
+        _stopRequested = false;
+    }
+
     public void AppendApprovalRequired(string token, string action, string? target, string? commandPreview, string risk, string description, Guid? sourceSessionId = null)
     {
         lock (_eventsLock)

@@ -699,6 +699,17 @@ public class Agent(
             var session = sessionsById[id];
             var run = session.Run;
 
+            if (run.IsStopRequested)
+            {
+                run.ClearStopRequest();
+                // User explicitly asked to resume — skip all guards
+                run.SetStatus(AgentRunStatus.Pending);
+                await chatRepository.UpdateSession(id, AgentRunStatus.Pending);
+                _ = Task.Run(() => GetMessageResponse(id, session, run));
+                resumed++;
+                continue;
+            }
+
             if (sessionStore.IsRunExecuting(id))
             {
                 alreadyActive++;
@@ -706,12 +717,6 @@ public class Agent(
             }
 
             if (run.Status is AgentRunStatus.Completed or AgentRunStatus.Failed)
-            {
-                notWaiting++;
-                continue;
-            }
-
-            if (run.IsStopRequested)
             {
                 notWaiting++;
                 continue;
@@ -750,7 +755,7 @@ public class Agent(
         {
             var session = await sessionStore.GetOrLoadSession(id);
             session.Run.RequestStop("Session stopped by user.");
-            session.Run.MarkFailed("Session stopped by user.");
+            session.Run.SetStatus(AgentRunStatus.Failed);
             await chatRepository.UpdateSession(id, AgentRunStatus.Failed);
             stopped++;
         }
