@@ -20,6 +20,7 @@ public sealed class BackendApiClient(HttpClient client)
                 workspace_approval_events,
                 lcm_files,
                 session_active_workspaces,
+                scheduled_jobs,
                 sessions
             restart identity cascade;
             """;
@@ -210,6 +211,65 @@ public sealed class BackendApiClient(HttpClient client)
     public async Task<JsonDocument> StopSessionAsync(Guid sessionId, bool includeDescendants = true, CancellationToken cancellationToken = default)
     {
         var response = await client.PostAsync($"/sessions/{sessionId}/stop?includeDescendants={includeDescendants.ToString().ToLowerInvariant()}", content: null, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> ListScheduledJobsAsync(CancellationToken cancellationToken = default)
+    {
+        var response = await client.GetAsync("/jobs", cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> CreateScheduledJobAsync(
+        string name,
+        string cronExpression,
+        string prompt,
+        long agentId,
+        string? timezone = null,
+        bool? enabled = null,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsJsonAsync("/jobs", new
+        {
+            name,
+            cronExpression,
+            prompt,
+            agentId,
+            timezone,
+            enabled,
+        }, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> UpdateScheduledJobAsync(
+        long id,
+        string? name = null,
+        string? cronExpression = null,
+        string? prompt = null,
+        long? agentId = null,
+        string? timezone = null,
+        bool? enabled = null,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Patch, $"/jobs/{id}")
+        {
+            Content = JsonContent.Create(new
+            {
+                name,
+                cronExpression,
+                prompt,
+                agentId,
+                timezone,
+                enabled,
+            }),
+        };
+        var response = await client.SendAsync(request, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> DeleteScheduledJobAsync(long id, CancellationToken cancellationToken = default)
+    {
+        var response = await client.DeleteAsync($"/jobs/{id}", cancellationToken);
         return await ReadDocumentAsync(response, cancellationToken);
     }
 

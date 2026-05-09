@@ -1,4 +1,4 @@
-﻿using Dapper;
+using Dapper;
 using Npgsql;
 
 namespace SharpClaw.API.Database;
@@ -348,6 +348,24 @@ public partial class DatabaseSeeder(IConfiguration configuration)
 
                 create index if not exists idx_bridge_execution_events_session
                     on bridge_execution_events(session_id, started_at desc);
+
+                create table if not exists scheduled_jobs(
+                    id bigserial primary key,
+                    name text not null,
+                    cron_expression text not null,
+                    timezone text not null default 'Europe/Rome',
+                    prompt text not null,
+                    agent_id bigint not null references agents(id),
+                    enabled boolean not null default true,
+                    last_run_at timestamptz,
+                    last_session_id uuid,
+                    next_run_at timestamptz not null,
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
+                );
+
+                create index if not exists idx_scheduled_jobs_enabled_next_run
+                    on scheduled_jobs(enabled, next_run_at);
                 """);
 
             if (await connection.ExecuteScalarAsync<int>("select count(*) from agents where name = 'Main'") == 0)

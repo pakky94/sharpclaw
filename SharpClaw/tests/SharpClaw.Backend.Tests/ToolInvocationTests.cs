@@ -490,6 +490,148 @@ public sealed class ToolInvocationTests(SharpClawAppFixture fixture)
         Assert.Equal(1, resume.RootElement.GetProperty("resumed").GetInt32());
     }
 
+    [Fact]
+    public async Task ListScheduledJobsTool_IsInvoked_AndReturnsJobs()
+    {
+        await fixture.ResetStateAsync();
+
+        // Pre-create a job so the list returns something
+        await fixture.Api.CreateScheduledJobAsync(
+            name: "Existing Job", cronExpression: "0 8 * * *", prompt: "test", agentId: 1);
+
+        fixture.LlmServer?.ToolCallSse("list_scheduled_jobs",
+            "{}",
+            c => c.Messages.Last().Role == "user"
+                 && c.Messages.Last().Content == "TEST_LIST_SCHEDULED_JOBS");
+
+        fixture.LlmServer?.TextSse("Here are your scheduled jobs.",
+            c => c.Messages.Last().Role == "tool");
+
+        var sessionId = await fixture.Api.CreateSessionAsync();
+        var messageId = await fixture.Api.EnqueueMessageAsync(sessionId, "TEST_LIST_SCHEDULED_JOBS");
+        await fixture.Api.WaitForStreamCompleted(sessionId, messageId);
+
+        using var history = await fixture.Api.GetHistoryAsync(sessionId);
+        var messageContents = ResponseHelpers.FlattenMessageContents(history);
+
+        Assert.Contains(messageContents, content =>
+            content.GetProperty("type").GetString() == "tool_call" &&
+            content.GetProperty("toolName").GetString() == "list_scheduled_jobs");
+
+        Assert.Contains(messageContents, content =>
+            content.GetProperty("type").GetString() == "tool_result");
+
+        Assert.Contains(ResponseHelpers.GetMessageTexts(history),
+            text => text.Contains("Here are your scheduled jobs.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CreateScheduledJobTool_IsInvoked_AndPersistsJob()
+    {
+        await fixture.ResetStateAsync();
+
+        fixture.LlmServer?.ToolCallSse("create_scheduled_job",
+            """{"name":"Agent Job","cron_expression":"30 9 * * 1-5","prompt":"Daily standup summary"}""",
+            c => c.Messages.Last().Role == "user"
+                 && c.Messages.Last().Content == "TEST_CREATE_SCHEDULED_JOB");
+
+        fixture.LlmServer?.TextSse("Job created successfully.",
+            c => c.Messages.Last().Role == "tool");
+
+        var sessionId = await fixture.Api.CreateSessionAsync();
+        var messageId = await fixture.Api.EnqueueMessageAsync(sessionId, "TEST_CREATE_SCHEDULED_JOB");
+        await fixture.Api.WaitForStreamCompleted(sessionId, messageId);
+
+        using var history = await fixture.Api.GetHistoryAsync(sessionId);
+        var messageContents = ResponseHelpers.FlattenMessageContents(history);
+
+        Assert.Contains(messageContents, content =>
+            content.GetProperty("type").GetString() == "tool_call" &&
+            content.GetProperty("toolName").GetString() == "create_scheduled_job");
+
+        Assert.Contains(messageContents, content =>
+            content.GetProperty("type").GetString() == "tool_result");
+
+        // Verify the job was actually persisted
+        using var jobs = await fixture.Api.ListScheduledJobsAsync();
+        var jobList = jobs.RootElement.GetProperty("jobs").EnumerateArray().ToArray();
+        Assert.Contains(jobList, j =>
+            j.GetProperty("name").GetString() == "Agent Job" &&
+            j.GetProperty("cronExpression").GetString() == "30 9 * * 1-5");
+    }
+
+    [Fact]
+    public async Task UpdateScheduledJobTool_IsInvoked_AndUpdatesJob()
+    {
+        await fixture.ResetStateAsync();
+
+        // Pre-create a job to update
+        using var created = await fixture.Api.CreateScheduledJobAsync(
+            name: "Update Me", cronExpression: "0 8 * * *", prompt: "original", agentId: 1);
+        var jobId = created.RootElement.GetProperty("id").GetInt64();
+
+        fixture.LlmServer?.ToolCallSse("update_scheduled_job",
+            $$"""{"id":{{jobId}},"name":"Updated Name","enabled":false}""",
+            c => c.Messages.Last().Role == "user"
+                 && c.Messages.Last().Content == "TEST_UPDATE_SCHEDULED_JOB");
+
+        fixture.LlmServer?.TextSse("Job updated successfully.",
+            c => c.Messages.Last().Role == "tool");
+
+        var sessionId = await fixture.Api.CreateSessionAsync();
+        var messageId = await fixture.Api.EnqueueMessageAsync(sessionId, "TEST_UPDATE_SCHEDULED_JOB");
+        await fixture.Api.WaitForStreamCompleted(sessionId, messageId);
+
+        using var history = await fixture.Api.GetHistoryAsync(sessionId);
+        var messageContents = ResponseHelpers.FlattenMessageContents(history);
+
+        Assert.Contains(messageContents, content =>
+            content.GetProperty("type").GetString() == "tool_call" &&
+            content.GetProperty("toolName").GetString() == "update_scheduled_job");
+
+        // Verify the job was actually updated
+        using var jobs = await fixture.Api.ListScheduledJobsAsync();
+        var jobList = jobs.RootElement.GetProperty("jobs").EnumerateArray().ToArray();
+        var updated = jobList.Single(j => j.GetProperty("id").GetInt64() == jobId);
+        Assert.Equal("Updated Name", updated.GetProperty("name").GetString());
+        Assert.False(updated.GetProperty("enabled").GetBoolean());
+    }
+
+    [Fact]
+    public async Task DeleteScheduledJobTool_IsInvoked_AndRemovesJob()
+    {
+        await fixture.ResetStateAsync();
+
+        // Pre-create a job to delete
+        using var created = await fixture.Api.CreateScheduledJobAsync(
+            name: "Delete Me", cronExpression: "0 8 * * *", prompt: "test", agentId: 1);
+        var jobId = created.RootElement.GetProperty("id").GetInt64();
+
+        fixture.LlmServer?.ToolCallSse("delete_scheduled_job",
+            $$"""{"id":{{jobId}}}""",
+            c => c.Messages.Last().Role == "user"
+                 && c.Messages.Last().Content == "TEST_DELETE_SCHEDULED_JOB");
+
+        fixture.LlmServer?.TextSse("Job deleted successfully.",
+            c => c.Messages.Last().Role == "tool");
+
+        var sessionId = await fixture.Api.CreateSessionAsync();
+        var messageId = await fixture.Api.EnqueueMessageAsync(sessionId, "TEST_DELETE_SCHEDULED_JOB");
+        await fixture.Api.WaitForStreamCompleted(sessionId, messageId);
+
+        using var history = await fixture.Api.GetHistoryAsync(sessionId);
+        var messageContents = ResponseHelpers.FlattenMessageContents(history);
+
+        Assert.Contains(messageContents, content =>
+            content.GetProperty("type").GetString() == "tool_call" &&
+            content.GetProperty("toolName").GetString() == "delete_scheduled_job");
+
+        // Verify the job was actually deleted
+        using var jobs = await fixture.Api.ListScheduledJobsAsync();
+        var jobList = jobs.RootElement.GetProperty("jobs").EnumerateArray().ToArray();
+        Assert.DoesNotContain(jobList, j => j.GetProperty("id").GetInt64() == jobId);
+    }
+
     private static (string Status, string? Output)? TryReadTaskResultPayload(StreamEvent ev)
     {
         if (string.IsNullOrWhiteSpace(ev.Payload) || !ev.Payload.StartsWith("data: ", StringComparison.Ordinal))

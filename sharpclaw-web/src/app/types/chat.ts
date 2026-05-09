@@ -165,3 +165,18 @@ export type BridgeStatus = {
   lastSeenAt: string | null;
   createdAt: string;
 }
+
+export type ScheduledJob = {
+  id: number
+  name: string
+  cronExpression: string
+  timezone: string
+  prompt: string
+  agentId: number
+  enabled: boolean
+  lastRunAt: string | null
+  lastSessionId: string | null
+  nextRunAt: string
+  createdAt: string
+  updatedAt: string
+}

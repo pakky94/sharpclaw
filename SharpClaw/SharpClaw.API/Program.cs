@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.WebSockets;
 using Microsoft.Extensions.Options;
 using SharpClaw.API.Agents;
+using SharpClaw.API.Agents.ScheduledJobs;
 using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database;
 using SharpClaw.API.Database.Repositories;
@@ -25,6 +26,8 @@ builder.Services.AddSingleton<BridgeConnectionManager>();
 builder.Services.AddSingleton<ApprovalService>();
 builder.Services.AddSingleton<FragmentEmbeddingService>();
 builder.Services.AddHostedService<FragmentEmbeddingBackgroundService>();
+builder.Services.AddSingleton<ScheduledJobRepository>();
+builder.Services.AddHostedService<CronScheduler>();
 builder.Services.Configure<LmStudioConfiguration>(builder.Configuration.GetSection("LmStudio"));
 builder.Services.Configure<SearchProviderConfiguration>(builder.Configuration.GetSection("WebSearch"));
 builder.Services.Configure<BraveSearchConfiguration>(builder.Configuration.GetSection("WebSearch:Brave"));
@@ -125,6 +128,7 @@ ChatEndpoints.Register(app);
 AgentEndpoints.Register(app);
 WorkspaceEndpoints.Register(app);
 BridgeEndpoints.Register(app);
+ScheduledJobEndpoints.Register(app);
 if (debuggingEndpointsEnabled)
     DebuggingEndpoints.Register(app);
 app.MapFallbackToFile("{*path:nonfile}", "index.html");

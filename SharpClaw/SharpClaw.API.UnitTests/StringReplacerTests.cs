@@ -1,4 +1,5 @@
-﻿using SharpClaw.Common;
+﻿using System.Text.Json;
+using SharpClaw.Common;
 
 namespace SharpClaw.API.UnitTests;
 
@@ -166,5 +167,88 @@ public class StringReplacerTests
             "  456\r\n" +
             "  abc\r\n" +
             "  def", file);
+    }
+
+    [Fact]
+    public void Bug1()
+    {
+        var source = """
+                     export type ApprovalEvent = {
+                       id: number;
+                       sessionId: string;
+                       agentId: number;
+                       approvalToken: string;
+                       actionType: string;
+                       targetPath: string | null;
+                       commandPreview: string | null;
+                       riskLevel: string;
+                       status: string;
+                       createdAt: string;
+                       resolvedAt: string | null;
+                     }
+                     
+                     export type BridgeStatus = {
+                       bridgeId: string;
+                       displayName: string;
+                       status: string;
+                       lastSeenAt: string | null;
+                       createdAt: string;
+                     }
+                     
+                     """;
+
+        var argsStr = """
+                   {
+                     "newString": "export type BridgeStatus = {\n  bridgeId: string;\n  displayName: string;\n  status: string;\n  lastSeenAt: string | null;\n  createdAt: string;\n}\n\nexport type ScheduledJob = {\n  id: number\n  name: string\n  cronExpression: string\n  timezone: string\n  prompt: string\n  agentId: number\n  enabled: boolean\n  lastRunAt: string | null\n  lastSessionId: string | null\n  nextRunAt: string\n  createdAt: string\n  updatedAt: string\n}",
+                     "oldString": "export type BridgeStatus = {\n  bridgeId: string;\n  displayName: string;\n  status: string;\n  lastSeenAt: string | null;\n  createdAt: string;\n}"
+                   }
+                   """;
+        var args = JsonSerializer.Deserialize<JsonElement>(argsStr);
+        var oldString = args.GetProperty("oldString").GetString() ?? string.Empty;
+        var newString = args.GetProperty("newString").GetString() ?? string.Empty;
+
+        var (file, error) = StringReplacer.Replace(source, oldString, newString, true);
+
+        Assert.Null(error);
+        Assert.Equal(
+            """
+            export type ApprovalEvent = {
+              id: number;
+              sessionId: string;
+              agentId: number;
+              approvalToken: string;
+              actionType: string;
+              targetPath: string | null;
+              commandPreview: string | null;
+              riskLevel: string;
+              status: string;
+              createdAt: string;
+              resolvedAt: string | null;
+            }
+            
+            export type BridgeStatus = {
+              bridgeId: string;
+              displayName: string;
+              status: string;
+              lastSeenAt: string | null;
+              createdAt: string;
+            }
+            
+            export type ScheduledJob = {
+              id: number
+              name: string
+              cronExpression: string
+              timezone: string
+              prompt: string
+              agentId: number
+              enabled: boolean
+              lastRunAt: string | null
+              lastSessionId: string | null
+              nextRunAt: string
+              createdAt: string
+              updatedAt: string
+            }
+            
+            """, file);
     }
 }
