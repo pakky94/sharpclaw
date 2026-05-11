@@ -18,6 +18,13 @@ public class Agent(
     IServiceProvider serviceProvider,
     ILogger<Agent> logger)
 {
+    public delegate Task AsyncEventHandler(object sender, TurnCompletedEventArgs e);
+    public class TurnCompletedEventArgs(Guid sessionId) : EventArgs
+    {
+        public Guid SessionId => sessionId;
+    }
+    public event AsyncEventHandler? OnTurnCompleted;
+
     public async Task<Guid> CreateSession(
         long agentId = 1,
         Guid? parentSessionId = null,
@@ -257,6 +264,10 @@ public class Agent(
                     }
                 }
 
+                if (OnTurnCompleted is not null)
+                {
+                    await OnTurnCompleted(this, new TurnCompletedEventArgs(sessionId));
+                }
                 // TODO: transaction ends here
                 await TryCompactHistory(session, true);
             }

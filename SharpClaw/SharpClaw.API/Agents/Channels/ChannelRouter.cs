@@ -27,6 +27,11 @@ public class ChannelRouter
         _chatRepository = chatRepository;
         _agent = agent;
         _logger = logger;
+
+        _agent.OnTurnCompleted += async (_, args) =>
+        {
+            await BroadcastNewMessages(args.SessionId);
+        };
     }
 
     public void RegisterAdapter(IChannelAdapter adapter)
@@ -67,14 +72,7 @@ public class ChannelRouter
             var sessionId = await ResolveSession(channel, identityId);
 
             // 2. Enqueue the message — this starts the agent run
-            var run = await _agent.EnqueueMessage(sessionId, text);
-
-            // TODO: move this logic to Agent, register a callback inside _agent to trigger `BroadcastNewMessages` when a turn completes
-            // 3. Wait for the run to complete
-            await WaitForRunCompletion(sessionId, run);
-
-            // 4. Broadcast new messages to all connected channels
-            await BroadcastNewMessages(sessionId);
+            _ = await _agent.EnqueueMessage(sessionId, text);
         }
         catch (Exception ex)
         {
@@ -131,90 +129,77 @@ public class ChannelRouter
         return sessionId;
     }
 
-    private async Task WaitForRunCompletion(Guid sessionId, AgentRunState run)
-    {
-        var maxWait = TimeSpan.FromMinutes(5);
-        var pollInterval = TimeSpan.FromMilliseconds(250);
-        var deadline = DateTimeOffset.UtcNow + maxWait;
-
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            // CompletedAt is set by both MarkCompleted() and MarkFailed(),
-            // so it reliably signals terminal state regardless of outcome.
-            if (run.CompletedAt.HasValue)
-                return;
-
-            await Task.Delay(pollInterval);
-        }
-
-        _logger.LogWarning("Timed out waiting for run completion on session {SessionId}", sessionId);
-    }
-
     private async Task BroadcastNewMessages(Guid sessionId)
     {
-        var connectedChannels = await _channelRepository.GetConnectedChannelsForSession(sessionId);
-
-        foreach (var info in connectedChannels)
+        try
         {
-            if (!_adapters.TryGetValue(info.channel_type, out var adapter))
-                continue;
+            var connectedChannels = await _channelRepository.GetConnectedChannelsForSession(sessionId);
 
-            try
+            foreach (var info in connectedChannels)
             {
-                var rawMessages = await _chatRepository.LoadRawMessages(sessionId);
+                if (!_adapters.TryGetValue(info.channel_type, out var adapter))
+                    continue;
 
-                // Find messages with a sequence number beyond this channel's cursor
-                var newMessages = rawMessages
-                    .Where(m =>
-                    {
-                        var seq = m.Response.AdditionalProperties?[Constants.SequenceIdKey] as long?;
-                        return seq.HasValue && seq.Value > info.last_broadcast_sequence;
-                    })
-                    .ToList();
-
-                foreach (var raw in newMessages)
+                try
                 {
-                    foreach (var message in raw.Response.Messages)
-                    {
-                        // Only broadcast assistant responses — never echo user messages
-                        if (message.Role != ChatRole.Assistant)
-                            continue;
+                    var rawMessages = await _chatRepository.LoadRawMessages(sessionId);
 
-                        if (!string.IsNullOrWhiteSpace(message.Text))
+                    // Find messages with a sequence number beyond this channel's cursor
+                    var newMessages = rawMessages
+                        .Where(m =>
                         {
-                            await adapter.SendMessageAsync(
-                                new Channel
-                                {
-                                    Id = info.channel_id,
-                                    Type = info.channel_type,
-                                    Config = info.channel_config,
-                                    AgentId = info.agent_id,
-                                },
-                                info.identity_id,
-                                message.Text);
+                            var seq = m.Response.AdditionalProperties?[Constants.SequenceIdKey] as long?;
+                            return seq.HasValue && seq.Value > info.last_broadcast_sequence;
+                        })
+                        .ToList();
+
+                    foreach (var raw in newMessages)
+                    {
+                        foreach (var message in raw.Response.Messages)
+                        {
+                            // Only broadcast assistant responses — never echo user messages
+                            if (message.Role != ChatRole.Assistant)
+                                continue;
+
+                            if (!string.IsNullOrWhiteSpace(message.Text))
+                            {
+                                await adapter.SendMessageAsync(
+                                    new Channel
+                                    {
+                                        Id = info.channel_id,
+                                        Type = info.channel_type,
+                                        Config = info.channel_config,
+                                        AgentId = info.agent_id,
+                                    },
+                                    info.identity_id,
+                                    message.Text);
+                            }
                         }
                     }
+
+                    // Advance the broadcast cursor to the latest sequence we've seen
+                    var latestSeq = rawMessages
+                        .Select(m => m.Response.AdditionalProperties?[Constants.SequenceIdKey] as long?)
+                        .Where(s => s.HasValue)
+                        .Select(s => s!.Value)
+                        .DefaultIfEmpty(info.last_broadcast_sequence)
+                        .Max();
+
+                    if (latestSeq > info.last_broadcast_sequence)
+                    {
+                        await _channelRepository.UpdateBroadcastCursor(
+                            info.channel_id, info.identity_id, latestSeq);
+                    }
                 }
-
-                // Advance the broadcast cursor to the latest sequence we've seen
-                var latestSeq = rawMessages
-                    .Select(m => m.Response.AdditionalProperties?[Constants.SequenceIdKey] as long?)
-                    .Where(s => s.HasValue)
-                    .Select(s => s!.Value)
-                    .DefaultIfEmpty(info.last_broadcast_sequence)
-                    .Max();
-
-                if (latestSeq > info.last_broadcast_sequence)
+                catch (Exception ex)
                 {
-                    await _channelRepository.UpdateBroadcastCursor(
-                        info.channel_id, info.identity_id, latestSeq);
+                    _logger.LogError(ex, "Error broadcasting to channel {ChannelId} identity {IdentityId}",
+                        info.channel_id, info.identity_id);
                 }
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error broadcasting to channel {ChannelId} identity {IdentityId}",
-                    info.channel_id, info.identity_id);
-            }
+        } catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error broadcasting new messages");
         }
     }
 }
