@@ -122,6 +122,21 @@ public class StringReplacerTests
     }
 
     [Fact]
+    public void LineEndingMismatch_SingleMatchAtEof_Lf()
+    {
+        var (file, error) = StringReplacer.Replace(LfContent,
+            "  456\r\n  123\r\n  456", "  abc\r\n  def", false);
+
+        Assert.Null(error);
+        Assert.Equal(
+            "  123\n" +
+            "  456\n" +
+            "  789\n" +
+            "  abc\n" +
+            "  def", file);
+    }
+
+    [Fact]
     public void LineEndingMismatch_SingleMatch_CrLf()
     {
         var (file, error) = StringReplacer.Replace(CrLfContent,
@@ -135,6 +150,23 @@ public class StringReplacerTests
             "  456\r\n" +
             "  123\r\n" +
             "  456", file);
+    }
+
+    [Fact]
+    public void LineEndingMismatch_SingleMatchAtEof_CrLf()
+    {
+        var (file, error) = StringReplacer.Replace(CrLfContent,
+            "  456\n  123\n  456", "  abc\n  def\n  ghi\n  jkl", false);
+
+        Assert.Null(error);
+        Assert.Equal(
+            "  123\r\n" +
+            "  456\r\n" +
+            "  789\r\n" +
+            "  abc\r\n" +
+            "  def\r\n" +
+            "  ghi\r\n" +
+            "  jkl", file);
     }
 
     [Fact]
@@ -194,7 +226,6 @@ public class StringReplacerTests
                        lastSeenAt: string | null;
                        createdAt: string;
                      }
-                     
                      """;
 
         var argsStr = """
@@ -248,7 +279,6 @@ public class StringReplacerTests
               createdAt: string
               updatedAt: string
             }
-            
             """, file);
     }
 }

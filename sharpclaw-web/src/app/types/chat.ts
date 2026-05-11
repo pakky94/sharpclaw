@@ -180,3 +180,15 @@ export type ScheduledJob = {
   createdAt: string
   updatedAt: string
 }
+
+export type Channel = {
+  id: number
+  name: string
+  type: string
+  agentId: number
+  routingMode: string
+  config: string
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+}

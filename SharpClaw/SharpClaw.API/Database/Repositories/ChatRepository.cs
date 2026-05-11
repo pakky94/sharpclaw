@@ -502,6 +502,7 @@ public class ChatRepository(IConfiguration configuration)
         }).ToArray();
     }
 
+    // TODO: limit load to last N messages
     public async Task<IReadOnlyList<PersistedRawMessage>> LoadRawMessages(Guid sessionId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);

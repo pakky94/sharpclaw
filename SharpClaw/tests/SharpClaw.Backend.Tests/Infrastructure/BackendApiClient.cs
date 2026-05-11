@@ -20,6 +20,8 @@ public sealed class BackendApiClient(HttpClient client)
                 workspace_approval_events,
                 lcm_files,
                 session_active_workspaces,
+                channel_sessions,
+                channels,
                 scheduled_jobs,
                 sessions
             restart identity cascade;
@@ -270,6 +272,65 @@ public sealed class BackendApiClient(HttpClient client)
     public async Task<JsonDocument> DeleteScheduledJobAsync(long id, CancellationToken cancellationToken = default)
     {
         var response = await client.DeleteAsync($"/jobs/{id}", cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> ListChannelsAsync(CancellationToken cancellationToken = default)
+    {
+        var response = await client.GetAsync("/channels", cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> CreateChannelAsync(
+        string name,
+        string type,
+        long agentId,
+        string? routingMode = null,
+        string? config = null,
+        bool? enabled = null,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsJsonAsync("/channels", new
+        {
+            name,
+            type,
+            agentId,
+            routingMode,
+            config,
+            enabled,
+        }, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> UpdateChannelAsync(
+        long id,
+        string? name = null,
+        string? type = null,
+        long? agentId = null,
+        string? routingMode = null,
+        string? config = null,
+        bool? enabled = null,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Patch, $"/channels/{id}")
+        {
+            Content = JsonContent.Create(new
+            {
+                name,
+                type,
+                agentId,
+                routingMode,
+                config,
+                enabled,
+            }),
+        };
+        var response = await client.SendAsync(request, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> DeleteChannelAsync(long id, CancellationToken cancellationToken = default)
+    {
+        var response = await client.DeleteAsync($"/channels/{id}", cancellationToken);
         return await ReadDocumentAsync(response, cancellationToken);
     }
 

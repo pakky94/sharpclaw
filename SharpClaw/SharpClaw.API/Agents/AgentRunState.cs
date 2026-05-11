@@ -44,6 +44,7 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
         _stopRequested = false;
         _currentMessageId = messageId;
         StartedAt = DateTimeOffset.UtcNow;
+        CompletedAt = null;
         StartMessageId = messageId;
         Status = AgentRunStatus.Running;
         AddEvent(messageId, "started", null);

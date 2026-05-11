@@ -366,6 +366,32 @@ public partial class DatabaseSeeder(IConfiguration configuration)
 
                 create index if not exists idx_scheduled_jobs_enabled_next_run
                     on scheduled_jobs(enabled, next_run_at);
+
+                create table if not exists channels(
+                    id bigserial primary key,
+                    name text not null,
+                    type text not null check (type in ('discord', 'telegram')),
+                    agent_id bigint not null references agents(id),
+                    routing_mode text not null default 'shared'
+                        check (routing_mode in ('shared', 'per_user')),
+                    config jsonb not null default '{}'::jsonb,
+                    enabled boolean not null default true,
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
+                );
+
+                create table if not exists channel_sessions(
+                    id bigserial primary key,
+                    channel_id bigint not null references channels(id) on delete cascade,
+                    identity_id text not null,
+                    session_id uuid not null references sessions(id),
+                    last_broadcast_sequence bigint not null default 0,
+                    created_at timestamptz not null default now(),
+                    unique(channel_id, identity_id)
+                );
+
+                create index if not exists idx_channel_sessions_session
+                    on channel_sessions(session_id);
                 """);
 
             if (await connection.ExecuteScalarAsync<int>("select count(*) from agents where name = 'Main'") == 0)
