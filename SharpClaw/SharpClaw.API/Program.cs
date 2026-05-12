@@ -4,6 +4,7 @@ using SharpClaw.API.Agents;
 using SharpClaw.API.Agents.Channels;
 using SharpClaw.API.Agents.Channels.Discord;
 using SharpClaw.API.Agents.ScheduledJobs;
+using SharpClaw.API.Agents.Secrets;
 using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database;
 using SharpClaw.API.Database.Repositories;
@@ -30,6 +31,8 @@ builder.Services.AddSingleton<FragmentEmbeddingService>();
 builder.Services.AddHostedService<FragmentEmbeddingBackgroundService>();
 builder.Services.AddSingleton<ScheduledJobRepository>();
 builder.Services.AddSingleton<ChannelRepository>();
+builder.Services.AddSingleton<SecretRepository>();
+builder.Services.AddSingleton<SecretService>();
 builder.Services.AddSingleton<ChannelRouter>();
 builder.Services.AddSingleton<DiscordAdapter>();
 builder.Services.AddHostedService<CronScheduler>();
@@ -115,6 +118,10 @@ var app = builder.Build();
 var seeder = app.Services.GetRequiredService<DatabaseSeeder>();
 await seeder.Seed();
 
+// Initialize secrets (decrypt and write to /run/secrets/)
+var secretService = app.Services.GetRequiredService<SecretService>();
+await secretService.InitializeAsync();
+
 // Start channel adapters (Discord, etc.)
 var channelRouter = app.Services.GetRequiredService<ChannelRouter>();
 var discordAdapter = app.Services.GetRequiredService<DiscordAdapter>();
@@ -141,6 +148,7 @@ WorkspaceEndpoints.Register(app);
 BridgeEndpoints.Register(app);
 ScheduledJobEndpoints.Register(app);
 ChannelEndpoints.Register(app);
+SecretEndpoints.Register(app);
 if (debuggingEndpointsEnabled)
     DebuggingEndpoints.Register(app);
 app.MapFallbackToFile("{*path:nonfile}", "index.html");

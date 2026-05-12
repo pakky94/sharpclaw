@@ -3,6 +3,7 @@ using SharpClaw.API.Agents.Tools;
 using SharpClaw.API.Agents.Tools.Fragments;
 using SharpClaw.API.Agents.Tools.Lcm;
 using SharpClaw.API.Agents.Tools.ScheduledJobs;
+using SharpClaw.API.Agents.Tools.Secrets;
 using SharpClaw.API.Agents.Tools.Tasks;
 using SharpClaw.API.Agents.Tools.Web;
 using SharpClaw.API.Agents.Tools.Workspace;
@@ -20,6 +21,7 @@ public static class ToolCatalog
         ..SessionWorkspaceTools.Functions,
         ..WebTools.Functions,
         ..ScheduledJobTools.Functions,
+        ..SecretTools.Functions,
         SendMessageTool.Function,
         TasksTools.TaskTool([("Main", "the main agent")]), // TODO: get these agents from where?
     ];

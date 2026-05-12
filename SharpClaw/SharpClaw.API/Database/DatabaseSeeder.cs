@@ -400,6 +400,17 @@ public partial class DatabaseSeeder(IConfiguration configuration)
 
                 create index if not exists idx_channel_sessions_session
                     on channel_sessions(session_id);
+
+                create table if not exists secrets(
+                    id bigserial primary key,
+                    name text not null unique,
+                    encrypted_value text not null,
+                    scope text not null default 'global'
+                        check (scope in ('global', 'user', 'agent')),
+                    owner_id bigint null,
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
+                );
                 """);
 
             if (await connection.ExecuteScalarAsync<int>("select count(*) from agents where name = 'Main'") == 0)
