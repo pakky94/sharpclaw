@@ -632,6 +632,42 @@ public sealed class ToolInvocationTests(SharpClawAppFixture fixture)
         Assert.DoesNotContain(jobList, j => j.GetProperty("id").GetInt64() == jobId);
     }
 
+    [Fact]
+    public async Task SendMessageTool_DeliversMessageToTargetSession()
+    {
+        await fixture.ResetStateAsync();
+
+        // Create the target session tagged "main"
+        var targetSessionId = await fixture.Api.CreateSessionAsync(agentId: 1);
+        await fixture.Api.SetSessionTagAsync(targetSessionId, "main");
+
+        // Create the source session where the agent runs
+        var sourceSessionId = await fixture.Api.CreateSessionAsync(agentId: 1);
+
+        // Mock LLM to call send_message
+        fixture.LlmServer?.ToolCallSse("send_message",
+            """{"session_ref":"session:Main:main","text":"Hello from the test!"}""",
+            c => c.Messages.Last().Role == "user"
+                 && c.Messages.Last().Content == "Send a message to main");
+
+        fixture.LlmServer?.TextSse("I'll send that message now.",
+            c => c.Messages.Last().Role == "tool");
+
+        // Trigger the run
+        await fixture.Api.EnqueueMessageAsync(sourceSessionId, "Send a message to main");
+
+        // Wait for completion
+        await fixture.Api.WaitForStreamCompleted(sourceSessionId, 1, TimeSpan.FromSeconds(15));
+
+        // Verify the message appeared in the target session
+        using var history = await fixture.Api.GetHistoryAsync(targetSessionId);
+        var messages = history.RootElement.GetProperty("messages").EnumerateArray().ToArray();
+
+        Assert.Contains(messages, m =>
+            m.GetProperty("role").GetString() == "assistant" &&
+            m.GetProperty("text").GetString()!.Contains("Hello from the test!"));
+    }
+
     private static (string Status, string? Output)? TryReadTaskResultPayload(StreamEvent ev)
     {
         if (string.IsNullOrWhiteSpace(ev.Payload) || !ev.Payload.StartsWith("data: ", StringComparison.Ordinal))

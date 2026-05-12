@@ -19,7 +19,8 @@ public static class ChatEndpoints
 
             var sessionId = await agent.CreateSession(
                 request?.AgentId ?? 1,
-                name: name);
+                name: name,
+                tag: request?.Tag);
             return Results.Ok(new { sessionId });
         });
 
@@ -30,13 +31,26 @@ public static class ChatEndpoints
         ) =>
         {
             var name = request?.Name?.Trim();
-            if (string.IsNullOrWhiteSpace(name))
-                return Results.BadRequest(new { error = "Session name is required." });
+            var tag = request?.Tag?.Trim();
+
+            if (string.IsNullOrWhiteSpace(name) && tag is null)
+                return Results.BadRequest(new { error = "Session name or tag is required." });
 
             try
             {
-                var updatedName = await agent.RenameSession(sessionId, name);
-                return Results.Ok(new { sessionId, name = updatedName });
+                string? updatedName = null;
+                if (!string.IsNullOrWhiteSpace(name))
+                    updatedName = await agent.RenameSession(sessionId, name);
+
+                if (tag is not null)
+                {
+                    if (tag.Length == 0)
+                        await agent.UnlinkSessionTag(sessionId);
+                    else
+                        await agent.SetSessionTag(sessionId, tag);
+                }
+
+                return Results.Ok(new { sessionId, name = updatedName, tag });
             }
             catch (KeyNotFoundException ex)
             {
@@ -251,11 +265,13 @@ public class CreateSessionRequest
 {
     public long? AgentId { get; set; }
     public string? Name { get; set; }
+    public string? Tag { get; set; }
 }
 
 public class RenameSessionRequest
 {
-    public string Name { get; set; } = string.Empty;
+    public string? Name { get; set; }
+    public string? Tag { get; set; }
 }
 
 public class MessageRequest

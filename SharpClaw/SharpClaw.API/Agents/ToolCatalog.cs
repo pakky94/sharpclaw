@@ -1,4 +1,5 @@
 using Microsoft.Extensions.AI;
+using SharpClaw.API.Agents.Tools;
 using SharpClaw.API.Agents.Tools.Fragments;
 using SharpClaw.API.Agents.Tools.Lcm;
 using SharpClaw.API.Agents.Tools.ScheduledJobs;
@@ -19,6 +20,7 @@ public static class ToolCatalog
         ..SessionWorkspaceTools.Functions,
         ..WebTools.Functions,
         ..ScheduledJobTools.Functions,
+        SendMessageTool.Function,
         TasksTools.TaskTool([("Main", "the main agent")]), // TODO: get these agents from where?
     ];
 }

@@ -426,16 +426,17 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
 
   async function renameSession(sessionId: string) {
     const current = sessions.find((s) => s.sessionId === sessionId)
-    const nextName = window.prompt('Rename session:', current?.name ?? '')?.trim()
-    if (!nextName) {
-      return
-    }
+    const nextName = window.prompt('Rename session (name):', current?.name ?? '')?.trim()
+    if (nextName === undefined) return // cancelled
+
+    const nextTag = window.prompt('Session tag (leave empty to clear):', current?.tag ?? '')?.trim()
+    if (nextTag === undefined) return // cancelled
 
     try {
       setError(null)
-      await fetchJson<{ sessionId: string; name: string }>(`${API_BASE_URL}/sessions/${sessionId}`, {
+      await fetchJson<{ sessionId: string; name: string; tag: string }>(`${API_BASE_URL}/sessions/${sessionId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ name: nextName }),
+        body: JSON.stringify({ name: nextName || undefined, tag: nextTag || '' }),
       })
       if (selectedAgentId !== null) {
         await refreshSessions(selectedAgentId, sessionId)

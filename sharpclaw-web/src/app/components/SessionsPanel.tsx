@@ -85,7 +85,10 @@ export function SessionsPanel({
                 className="session-card-selected"
                 onClick={() => onSelectSession(session.sessionId)}
               >
-                <div className="session-id">{displayName}</div>
+                <div className="session-id">
+                  {displayName}
+                  {session.tag && <span className="session-tag">#{session.tag}</span>}
+                </div>
               </button>
               <div className="session-meta">
                 <span>{new Date(session.updatedAt).toLocaleString()}</span>

@@ -30,7 +30,8 @@ public class Agent(
         Guid? parentSessionId = null,
         string[]? workspaces = null,
         string? name = null,
-        bool visibleInSidebar = true)
+        bool visibleInSidebar = true,
+        string? tag = null)
     {
         var agentConfig = await agentsRepository.GetAgent(agentId)
                           ?? throw new KeyNotFoundException($"Agent {agentId} was not found.");
@@ -55,6 +56,8 @@ public class Agent(
         };
 
         await chatRepository.CreateSession(sessionId, agentId, parentSessionId, name, visibleInSidebar);
+        if (tag is not null)
+            await chatRepository.SetSessionTag(sessionId, tag);
         if (workspaces is not null)
             await workspaceRepository.SetActiveWorkspacesForSession(sessionId, agentId, workspaces);
         await sessionStore.Add(new AgentSessionState(sessionId, context, parentSessionId: parentSessionId));
@@ -446,6 +449,7 @@ public class Agent(
                 Name: s.Name,
                 VisibleInSidebar: s.VisibleInSidebar,
                 ParentSessionId: s.ParentSessionId,
+                Tag: s.Tag,
                 CreatedAt: new DateTimeOffset(DateTime.SpecifyKind(s.CreatedAt, DateTimeKind.Utc)),
                 UpdatedAt: new DateTimeOffset(DateTime.SpecifyKind(s.UpdatedAt, DateTimeKind.Utc)),
                 MessagesCount: checked((int)s.MessagesCount)))
@@ -457,6 +461,54 @@ public class Agent(
         var session = await chatRepository.RenameSession(sessionId, name)
                       ?? throw new KeyNotFoundException($"Session {sessionId} was not found.");
         return session.Name;
+    }
+
+    public async Task SetSessionTag(Guid sessionId, string tag)
+    {
+        await chatRepository.SetSessionTag(sessionId, tag);
+    }
+
+    public async Task UnlinkSessionTag(Guid sessionId)
+    {
+        await chatRepository.UnlinkSessionTag(sessionId);
+    }
+
+    public async Task<Guid?> GetSessionByTag(long agentId, string tag)
+    {
+        var session = await chatRepository.GetSessionByTag(agentId, tag);
+        return session?.SessionId;
+    }
+
+    public async Task<IReadOnlyList<AgentSessionDto>> GetTaggedSessions(long agentId)
+    {
+        var sessions = await chatRepository.GetTaggedSessions(agentId);
+        return sessions
+            .Select(s => new AgentSessionDto(
+                SessionId: s.SessionId,
+                AgentId: s.AgentId,
+                Name: s.Name,
+                VisibleInSidebar: s.VisibleInSidebar,
+                ParentSessionId: s.ParentSessionId,
+                Tag: s.Tag,
+                CreatedAt: new DateTimeOffset(DateTime.SpecifyKind(s.CreatedAt, DateTimeKind.Utc)),
+                UpdatedAt: new DateTimeOffset(DateTime.SpecifyKind(s.UpdatedAt, DateTimeKind.Utc)),
+                MessagesCount: 0))
+            .ToArray();
+    }
+
+    public async Task PostNotification(Guid sessionId, string text)
+    {
+        var notificationMessage = new ChatResponse(
+            new ChatMessage(ChatRole.Assistant, text)
+            {
+                MessageId = Guid.NewGuid().ToString().Replace("-", ""),
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    ["lcm_type"] = "notification",
+                },
+            });
+
+        await chatRepository.PersistMessage(sessionId, notificationMessage);
     }
 
     private static List<AIFunction> BuildTools() => ToolCatalog.BuildTools();

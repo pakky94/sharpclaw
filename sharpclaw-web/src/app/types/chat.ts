@@ -2,6 +2,7 @@ export type SessionSummary = {
   sessionId: string
   agentId: number
   name: string | null
+  tag: string | null
   visibleInSidebar: boolean
   parentSessionId: string | null
   createdAt: string

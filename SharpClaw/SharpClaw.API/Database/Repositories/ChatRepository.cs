@@ -39,10 +39,23 @@ public class ChatRepository(IConfiguration configuration)
                    visible_in_sidebar as VisibleInSidebar,
                    status as Status,
                    parent_session_id as ParentSessionId,
+                   tag as Tag,
                    created_at as CreatedAt,
                    updated_at as UpdatedAt
             from sessions
             where id = @sessionId;
+            """,
+            new { sessionId });
+    }
+
+    public async Task<long> GetMaxSequence(Guid sessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        return await connection.ExecuteScalarAsync<long>(
+            """
+            select coalesce(max(sequence), 0)
+            from conversation_history
+            where session_id = @sessionId and is_active;
             """,
             new { sessionId });
     }
@@ -79,6 +92,7 @@ public class ChatRepository(IConfiguration configuration)
                       visible_in_sidebar as VisibleInSidebar,
                       status as Status,
                       parent_session_id as ParentSessionId,
+                      tag as Tag,
                       created_at as CreatedAt,
                       updated_at as UpdatedAt;
             """,
@@ -154,6 +168,7 @@ public class ChatRepository(IConfiguration configuration)
                    s.name as Name,
                    s.visible_in_sidebar as VisibleInSidebar,
                    s.parent_session_id as ParentSessionId,
+                   s.tag as Tag,
                    s.created_at as CreatedAt,
                    s.updated_at as UpdatedAt,
                    coalesce((
@@ -995,10 +1010,97 @@ public class ChatRepository(IConfiguration configuration)
         public string? CoveringSummaryId { get; init; }
         public int? CoveringSummaryLevel { get; init; }
     }
+
+    public async Task SetSessionTag(Guid sessionId, string tag)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        // First, get the agent_id for this session
+        var agentId = await connection.QuerySingleOrDefaultAsync<long?>(
+            "select agent_id from sessions where id = @sessionId",
+            new { sessionId });
+
+        if (agentId is null)
+            throw new KeyNotFoundException($"Session {sessionId} not found.");
+
+        // Unlink any existing session with this tag for this agent
+        await connection.ExecuteAsync(
+            """
+            update sessions
+            set tag = null,
+                updated_at = now()
+            where agent_id = @agentId and tag = @tag and id != @sessionId
+            """,
+            new { agentId, tag, sessionId });
+
+        // Set the tag on this session
+        await connection.ExecuteAsync(
+            """
+            update sessions
+            set tag = @tag,
+                updated_at = now()
+            where id = @sessionId
+            """,
+            new { sessionId, tag });
+    }
+
+    public async Task<PersistedSession?> GetSessionByTag(long agentId, string tag)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        return await connection.QueryFirstOrDefaultAsync<PersistedSession>(
+            """
+            select id as SessionId,
+                   agent_id as AgentId,
+                   name as Name,
+                   visible_in_sidebar as VisibleInSidebar,
+                   status as Status,
+                   parent_session_id as ParentSessionId,
+                   tag as Tag,
+                   created_at as CreatedAt,
+                   updated_at as UpdatedAt
+            from sessions
+            where agent_id = @agentId and tag = @tag
+            """,
+            new { agentId, tag });
+    }
+
+    public async Task<IReadOnlyList<PersistedSession>> GetTaggedSessions(long agentId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<PersistedSession>(
+            """
+            select id as SessionId,
+                   agent_id as AgentId,
+                   name as Name,
+                   visible_in_sidebar as VisibleInSidebar,
+                   status as Status,
+                   parent_session_id as ParentSessionId,
+                   tag as Tag,
+                   created_at as CreatedAt,
+                   updated_at as UpdatedAt
+            from sessions
+            where agent_id = @agentId and tag is not null
+            order by tag
+            """,
+            new { agentId });
+        return rows.ToArray();
+    }
+
+    public async Task UnlinkSessionTag(Guid sessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.ExecuteAsync(
+            """
+            update sessions
+            set tag = null,
+                updated_at = now()
+            where id = @sessionId
+            """,
+            new { sessionId });
+    }
 }
 
-public record PersistedSession(Guid SessionId, long AgentId, string? Name, bool VisibleInSidebar, string Status, Guid? ParentSessionId, DateTime CreatedAt, DateTime UpdatedAt);
-public record PersistedSessionSummary(Guid SessionId, long AgentId, string? Name, bool VisibleInSidebar, Guid? ParentSessionId, DateTime CreatedAt, DateTime UpdatedAt, long MessagesCount);
+public record PersistedSession(Guid SessionId, long AgentId, string? Name, bool VisibleInSidebar, string Status, Guid? ParentSessionId, string? Tag, DateTime CreatedAt, DateTime UpdatedAt);
+public record PersistedSessionSummary(Guid SessionId, long AgentId, string? Name, bool VisibleInSidebar, Guid? ParentSessionId, string? Tag, DateTime CreatedAt, DateTime UpdatedAt, long MessagesCount);
 public record SessionTaskLink(string CallId, Guid ChildSessionId, bool Completed);
 public record PersistedRawMessage(long MessageId, DateTime CreatedAt, ChatResponse Response);
 public record LcmSummaryRecord(

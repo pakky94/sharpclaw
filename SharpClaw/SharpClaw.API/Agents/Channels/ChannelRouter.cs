@@ -68,18 +68,31 @@ public class ChannelRouter
     {
         try
         {
+            // Intercept commands
+            if (text.StartsWith('/'))
+            {
+                await HandleCommand(channel, identityId, text);
+                return;
+            }
+
             // 1. Resolve or create session
             var sessionId = await ResolveSession(channel, identityId);
 
             // 2. Enqueue the message — this starts the agent run
             _ = await _agent.EnqueueMessage(sessionId, text);
+            // var run = await _agent.EnqueueMessage(sessionId, text);
+            //
+            // // 3. Wait for the run to complete
+            // await WaitForRunCompletion(sessionId, run);
+            //
+            // // 4. Broadcast new messages to all connected channels
+            // await BroadcastNewMessages(sessionId);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing channel message from {ChannelType}:{ChannelId} identity={IdentityId}",
                 channel.Type, channel.Id, identityId);
 
-            // Try to send error back to the user
             try
             {
                 if (_adapters.TryGetValue(channel.Type, out var adapter))
@@ -101,6 +114,14 @@ public class ChannelRouter
         var existingMapping = await _channelRepository.GetChannelSession(channel.Id, identityId);
         if (existingMapping is not null)
             return existingMapping.session_id;
+
+        // Default binding: try to find a "main" tagged session for this agent
+        var mainSessionId = await _agent.GetSessionByTag(channel.AgentId, "main");
+        if (mainSessionId is not null)
+        {
+            await _channelRepository.CreateChannelSession(channel.Id, identityId, mainSessionId.Value);
+            return mainSessionId.Value;
+        }
 
         if (channel.RoutingMode == "shared")
         {
@@ -129,7 +150,161 @@ public class ChannelRouter
         return sessionId;
     }
 
-    private async Task BroadcastNewMessages(Guid sessionId)
+    private async Task HandleCommand(Channel channel, string identityId, string text)
+    {
+        var parts = text.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        var command = parts.Length > 0 ? parts[0].ToLowerInvariant() : "";
+        var args = parts.Length > 1 ? parts[1] : "";
+
+        if (!_adapters.TryGetValue(channel.Type, out var adapter))
+            return;
+
+        switch (command)
+        {
+            case "/select":
+                await HandleSelect(channel, identityId, args, adapter);
+                break;
+            case "/new":
+                await HandleNew(channel, identityId, args, adapter);
+                break;
+            case "/sessions":
+                await HandleSessions(channel, identityId, adapter);
+                break;
+            case "/help":
+                await adapter.SendMessageAsync(channel, identityId,
+                    "**Available commands:**\n" +
+                    "`/select {tag}` — Switch to a tagged session\n" +
+                    "`/new [{tag}] [{name}]` — Create a new session (optionally tagged)\n" +
+                    "`/sessions` — List tagged sessions\n" +
+                    "`/help` — Show this help");
+                break;
+            default:
+                await adapter.SendMessageAsync(channel, identityId,
+                    $"Unknown command: `{command}`. Type `/help` for available commands.");
+                break;
+        }
+    }
+
+    private async Task HandleSelect(Channel channel, string identityId, string args, IChannelAdapter adapter)
+    {
+        var tag = args.Trim();
+        if (string.IsNullOrWhiteSpace(tag))
+        {
+            await adapter.SendMessageAsync(channel, identityId,
+                "Usage: `/select {tag}` — e.g. `/select main`");
+            return;
+        }
+
+        var sessionId = await _agent.GetSessionByTag(channel.AgentId, tag);
+        if (sessionId is null)
+        {
+            await adapter.SendMessageAsync(channel, identityId,
+                $"No session found with tag `{tag}`. Use `/sessions` to see available sessions.");
+            return;
+        }
+
+        // Get the current max sequence of the target session so we only
+        // broadcast messages generated after the switch, not historical ones
+        var maxSeq = await _chatRepository.GetMaxSequence(sessionId.Value);
+
+        // Update the channel_sessions mapping to point to the new session
+        var existing = await _channelRepository.GetChannelSession(channel.Id, identityId);
+        if (existing is not null)
+        {
+            await _channelRepository.UpdateChannelSessionSession(channel.Id, identityId, sessionId.Value, maxSeq);
+        }
+        else
+        {
+            await _channelRepository.CreateChannelSession(channel.Id, identityId, sessionId.Value);
+        }
+
+        await adapter.SendMessageAsync(channel, identityId,
+            $"Switched to session `{tag}`.");
+    }
+
+    private async Task HandleNew(Channel channel, string identityId, string args, IChannelAdapter adapter)
+    {
+        var argParts = args.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+
+        string? tag = null;
+        string? name = null;
+
+        // Get the current session to inherit its tag
+        var existing = await _channelRepository.GetChannelSession(channel.Id, identityId);
+        PersistedSession? currentSession = null;
+        if (existing is not null)
+            currentSession = await _chatRepository.GetSession(existing.session_id);
+
+        if (argParts.Length == 0)
+        {
+            // /new — inherit current tag, old tag cleared
+            tag = currentSession?.Tag;
+        }
+        else if (argParts.Length == 1)
+        {
+            // /new {name} — inherit current tag, use arg as name
+            name = argParts[0];
+            tag = currentSession?.Tag;
+        }
+        else
+        {
+            // /new {tag} {name} — explicit tag
+            tag = argParts[0];
+            name = argParts[1];
+        }
+
+        // Unlink the current session's tag so it can be reused
+        if (existing is not null)
+            await _agent.UnlinkSessionTag(existing.session_id);
+
+        var sessionId = await _agent.CreateSession(
+            agentId: channel.AgentId,
+            name: name,
+            visibleInSidebar: true,
+            tag: tag);
+
+        // Update or create the channel_sessions mapping
+        // New session has no messages, so cursor starts at 0
+        if (existing is not null)
+            await _channelRepository.UpdateChannelSessionSession(channel.Id, identityId, sessionId, lastBroadcastSequence: 0);
+        else
+            await _channelRepository.CreateChannelSession(channel.Id, identityId, sessionId);
+
+        var displayName = tag ?? "untitled";
+        await adapter.SendMessageAsync(channel, identityId,
+            $"Created new session `{displayName}`{(name is not null ? $" ({name})" : "")}.");
+    }
+
+    private async Task HandleSessions(Channel channel, string identityId, IChannelAdapter adapter)
+    {
+        var sessions = await _agent.GetTaggedSessions(channel.AgentId);
+
+        if (sessions.Count == 0)
+        {
+            await adapter.SendMessageAsync(channel, identityId,
+                "No tagged sessions. Use `/new {tag}` to create one.");
+            return;
+        }
+
+        var lines = new List<string> { "**Tagged sessions:**" };
+        foreach (var s in sessions)
+        {
+            var displayName = s.Name ?? "—";
+            lines.Add($"• `{s.Tag}` — {displayName}");
+        }
+
+        await adapter.SendMessageAsync(channel, identityId, string.Join('\n', lines));
+    }
+
+    private static async Task WaitForRunCompletion(Guid sessionId, AgentRunState run)
+    {
+        while (run.Status is AgentRunStatus.Pending or AgentRunStatus.Running or AgentRunStatus.Waiting)
+        {
+            await Task.Delay(200);
+        }
+    }
+
+    public async Task BroadcastNewMessages(Guid sessionId)
     {
         try
         {

@@ -189,6 +189,7 @@ public record AgentSessionDto(
     string? Name,
     bool VisibleInSidebar,
     Guid? ParentSessionId,
+    string? Tag,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     int MessagesCount);

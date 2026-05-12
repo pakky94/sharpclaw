@@ -119,6 +119,19 @@ public class ChannelRepository(IConfiguration configuration)
             new { ChannelId = channelId, IdentityId = identityId, SessionId = sessionId });
     }
 
+    public async Task UpdateChannelSessionSession(long channelId, string identityId, Guid sessionId, long lastBroadcastSequence = 0)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.ExecuteAsync(
+            """
+            update channel_sessions
+            set session_id = @SessionId,
+                last_broadcast_sequence = @LastBroadcastSequence
+            where channel_id = @ChannelId and identity_id = @IdentityId
+            """,
+            new { ChannelId = channelId, IdentityId = identityId, SessionId = sessionId, LastBroadcastSequence = lastBroadcastSequence });
+    }
+
     public async Task UpdateBroadcastCursor(long channelId, string identityId, long lastBroadcastSequence)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);

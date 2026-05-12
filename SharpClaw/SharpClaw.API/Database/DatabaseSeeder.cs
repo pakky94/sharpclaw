@@ -55,6 +55,7 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     status varchar(32) not null default 'completed'
                         check (status in ('waiting', 'pending', 'running', 'completed', 'failed')),
                     parent_session_id uuid null references sessions(id),
+                    tag varchar(255) null,
                     created_at timestamptz not null default now(),
                     updated_at timestamptz not null default now()
                 );
@@ -146,6 +147,13 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     add column if not exists name varchar(255) null;
                 alter table sessions
                     add column if not exists visible_in_sidebar boolean not null default true;
+
+                alter table sessions
+                    add column if not exists tag varchar(255) null;
+
+                create unique index if not exists idx_sessions_agent_tag
+                    on sessions(agent_id, tag)
+                    where tag is not null;
 
                 alter table agents
                     add column if not exists soft_compact_threshold bigint not null default 76800;
