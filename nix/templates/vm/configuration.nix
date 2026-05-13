@@ -25,6 +25,23 @@
     # braveApiKeyFile = "/run/secrets/brave-api-key";
   };
 
+  # ── Ollama acceleration ────────────────────────────────────
+  # Pick the GPU backend: "cuda" (NVIDIA), "rocm" (AMD), "vulkan", or "cpu"
+  services.sharpclaw-ollama.acceleration = "cuda";
+
+  # ── Filesystems ────────────────────────────────────────────
+  # You MUST configure your root filesystem. Example:
+  # fileSystems."/" = {
+  #   device = "/dev/disk/by-uuid/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx";
+  #   fsType = "ext4";
+  # };
+  #
+  # If you have a boot partition:
+  # fileSystems."/boot" = {
+  #   device = "/dev/disk/by-uuid/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx";
+  #   fsType = "vfat";
+  # };
+
   # ── System packages ────────────────────────────────────────
   environment.systemPackages = with pkgs; [
     git
