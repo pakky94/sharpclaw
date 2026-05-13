@@ -1,7 +1,4 @@
-{ self, system }:
-let
-  pkgs = self.inputs.nixpkgs.legacyPackages.${system};
-in
+{ pkgs }:
 pkgs.mkShell {
   name = "sharpclaw-dev";
   buildInputs = with pkgs; [

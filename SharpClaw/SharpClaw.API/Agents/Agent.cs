@@ -323,6 +323,7 @@ public class Agent(
     {
         return async () =>
         {
+            logger.LogInformation("Compacting history for session {SessionId}", session.SessionId);
             var split = Summarizer.SplitMessages(session.Context.Messages, session.Context.FreshMessagesCount);
 
             if (split.Depth < 0) return; // TODO: handle failure case for split message
@@ -336,6 +337,7 @@ public class Agent(
                     && split.ToSummarize.All(m => session.Context.Messages.Contains(m))
                     && split.PostSummary.All(m => session.Context.Messages.Contains(m)))
                 {
+                    logger.LogInformation("Compacted history for session {SessionId}", session.SessionId);
                     await chatRepository.PersistSummaryAndCompactHistory(
                         session.SessionId,
                         summary,
@@ -343,6 +345,15 @@ public class Agent(
 
                     session.Context.Messages = [..split.PreSummary, summary, ..split.PostSummary];
                 }
+                else
+                {
+                    logger.LogWarning("Skipping history compaction for session {SessionId} due to missing messages", session.SessionId);
+                }
+            }
+            catch(Exception ex)
+            {
+                logger.LogError(ex, "Failed to compact history for session {SessionId}", session.SessionId);
+                throw;
             }
             finally
             {

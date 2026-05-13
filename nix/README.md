@@ -5,7 +5,7 @@ Nix flake for deploying SharpClaw on NixOS, plus a dev shell for working on Shar
 ## Structure
 
 ```
-flake.nix                  — Thin entry point (~50 lines)
+flake.nix                  — Thin entry point
 nix/
 ├── modules/               — NixOS modules (one per service)
 │   ├── default.nix        — Aggregates all modules
@@ -14,7 +14,10 @@ nix/
 │   ├── searxng.nix        — SearXNG private search
 │   ├── ollama.nix         — Ollama LLM inference
 │   └── docker.nix         — Docker for devcontainers
-├── vm-config.nix          — VM configuration template
+├── templates/vm/          — Starter template for `nix flake init`
+│   ├── flake.nix
+│   └── configuration.nix
+├── vm-config.nix          — Reference VM config (used by CI)
 ├── devshell.nix           — Dev shell definition
 ├── packages.nix           — Package definitions
 ├── deps.nix               — NuGet dependency hashes (placeholder)
@@ -23,30 +26,50 @@ nix/
 
 ## Usage
 
+### Deploy to a NixOS VM
+
+You don't need to copy any `.nix` files from this repo. Just scaffold a new flake:
+
+```bash
+mkdir sharpclaw-vm && cd sharpclaw-vm
+nix flake init -t github:pakky94/sharpclaw#vm
+```
+
+This creates two files:
+- `flake.nix` — imports SharpClaw from GitHub
+- `configuration.nix` — your VM configuration
+
+Edit `configuration.nix` (set your SSH key, adjust the LLM model, etc.), then:
+
+```bash
+nixos-rebuild switch --flake .#sharpclaw
+```
+
 ### Dev shell
+
 ```bash
 nix develop
 # Gives you: .NET SDK 10, Node.js 22, TypeScript, git, gh, Docker, PostgreSQL
 ```
 
-### Deploy to VM
-```bash
-# Copy this flake to the VM, customize nix/vm-config.nix, then:
-nixos-rebuild switch --flake .#sharpclaw-vm
-```
-
 ### Use individual modules
+
+If you want to pick and choose modules instead of importing `default`:
+
 ```nix
-# In your own flake:
 {
-  inputs.sharpclaw.url = "github:your/sharpclaw";
-  outputs = { sharpclaw, ... }: {
+  inputs.sharpclaw.url = "github:pakky94/sharpclaw";
+  outputs = { nixpkgs, sharpclaw, ... }: {
     nixosConfigurations.my-vm = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
       modules = [
+        { nixpkgs.overlays = [ sharpclaw.overlays.default ]; }
         sharpclaw.nixosModules.sharpclaw
         sharpclaw.nixosModules.postgresql
-        # ... or just:
-        sharpclaw.nixosModules.default
+        sharpclaw.nixosModules.searxng
+        sharpclaw.nixosModules.ollama
+        sharpclaw.nixosModules.docker
+        ./my-config.nix
       ];
     };
   };
@@ -54,6 +77,7 @@ nixos-rebuild switch --flake .#sharpclaw-vm
 ```
 
 ### Regenerate NuGet deps
+
 ```bash
 cd SharpClaw/SharpClaw.API && dotnet restore
 nix run nixpkgs#nuget-to-nix -- deps.nix > ../../nix/deps.nix
@@ -61,7 +85,8 @@ nix run nixpkgs#nuget-to-nix -- deps.nix > ../../nix/deps.nix
 
 ## Design
 
+- **Remote-first** — users import the flake from GitHub, no file copying needed
+- **Overlay** — `sharpclaw-api` is available as `pkgs.sharpclaw-api` via the overlay
 - **One file per service** — easy for the agent to edit safely
 - **Thin flake.nix** — just wires things together, no logic
-- **Template vs. live** — this repo has the template; the VM has the live config
-- **Agent edits the VM's flake** directly when new system tools are needed (rare)
+- **Template** — `nix flake init -t` scaffolds a working VM config in seconds
