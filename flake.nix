@@ -23,8 +23,8 @@
 
       # ── Overlay (puts sharpclaw-api in pkgs) ───────────────
       overlays.default = final: prev: {
-        sharpclaw-api = self.packages.${final.system}.sharpclaw-api or
-          (throw "sharpclaw-api is not available for ${final.system}");
+        sharpclaw-api = self.packages.${final.stdenv.hostPlatform.system}.sharpclaw-api or
+          (throw "sharpclaw-api is not available for ${final.stdenv.hostPlatform.system}");
       };
 
       # ── Reference VM configuration ─────────────────────────
