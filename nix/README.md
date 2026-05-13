@@ -79,8 +79,9 @@ If you want to pick and choose modules instead of importing `default`:
 ### Regenerate NuGet deps
 
 ```bash
-cd SharpClaw/SharpClaw.API && dotnet restore
-nix run nixpkgs#nuget-to-json -- deps.json > ../../nix/deps.json
+cd SharpClaw/SharpClaw.API && dotnet restore --packages=packageDir
+nix run nixpkgs#nuget-to-json -- packageDir > ../../nix/deps.json
+rm -r packageDir
 ```
 
 ## Design
