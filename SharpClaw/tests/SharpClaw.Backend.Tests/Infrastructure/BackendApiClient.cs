@@ -23,6 +23,7 @@ public sealed class BackendApiClient(HttpClient client)
                 channel_sessions,
                 channels,
                 scheduled_jobs,
+                secrets,
                 sessions
             restart identity cascade;
             """;
@@ -341,6 +342,55 @@ public sealed class BackendApiClient(HttpClient client)
     public async Task<JsonDocument> DeleteChannelAsync(long id, CancellationToken cancellationToken = default)
     {
         var response = await client.DeleteAsync($"/channels/{id}", cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> ListSecretsAsync(CancellationToken cancellationToken = default)
+    {
+        var response = await client.GetAsync("/secrets", cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> CreateSecretAsync(
+        string name,
+        string value,
+        string scope = "global",
+        long? ownerId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsJsonAsync("/secrets", new
+        {
+            name,
+            value,
+            scope,
+            ownerId,
+        }, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> UpdateSecretAsync(
+        long id,
+        string? value = null,
+        string? scope = null,
+        long? ownerId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Patch, $"/secrets/{id}")
+        {
+            Content = JsonContent.Create(new
+            {
+                value,
+                scope,
+                ownerId,
+            }),
+        };
+        var response = await client.SendAsync(request, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> DeleteSecretAsync(long id, CancellationToken cancellationToken = default)
+    {
+        var response = await client.DeleteAsync($"/secrets/{id}", cancellationToken);
         return await ReadDocumentAsync(response, cancellationToken);
     }
 

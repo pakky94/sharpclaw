@@ -7,15 +7,13 @@ public static class SecretEndpoints
 {
     public static void Register(WebApplication app)
     {
-        var group = app.MapGroup("/secrets");
-
-        group.MapGet("/", async (SecretService service) =>
+        app.MapGet("/secrets", async (SecretService service) =>
         {
             var secrets = await service.ListSecrets();
-            return Results.Ok(secrets);
+            return Results.Ok(new { secrets });
         });
 
-        group.MapPost("/", async (CreateSecretRequest request, SecretService service) =>
+        app.MapPost("/secrets", async (CreateSecretRequest request, SecretService service) =>
         {
             if (string.IsNullOrWhiteSpace(request.Name))
                 return Results.BadRequest(new { error = "Name is required" });
@@ -35,7 +33,7 @@ public static class SecretEndpoints
             }
         });
 
-        group.MapPatch("/{id:long}", async (long id, UpdateSecretRequest request, SecretService service) =>
+        app.MapPatch("/secrets/{id:long}", async (long id, UpdateSecretRequest request, SecretService service) =>
         {
             try
             {
@@ -50,12 +48,12 @@ public static class SecretEndpoints
             }
         });
 
-        group.MapDelete("/{id:long}", async (long id, SecretService service) =>
+        app.MapDelete("/secrets/{id:long}", async (long id, SecretService service) =>
         {
             var deleted = await service.DeleteSecret(id);
             if (!deleted)
                 return Results.NotFound(new { error = "Secret not found" });
-            return Results.NoContent();
+            return Results.Ok(new { deleted = true });
         });
     }
 }
