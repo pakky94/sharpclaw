@@ -7,7 +7,7 @@ public static class WebTools
 {
     public static readonly AIFunction[] Functions =
     [
-        AIFunctionFactory.Create(Search, "web_search", "Search the web using Brave Search. Returns search results with titles, URLs, and descriptions."),
+        AIFunctionFactory.Create(Search, "web_search", "Search the web using the configured provider (SearXNG or Brave). Returns search results with titles, URLs, and descriptions."),
         AIFunctionFactory.Create(Fetch, "web_fetch", "Fetch and extract readable text content from a web page URL."),
     ];
 

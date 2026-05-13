@@ -49,6 +49,15 @@ public enum ApprovalRiskLevel
     Critical,
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum WorkspaceRuntimeKind
+{
+    [JsonStringEnumMemberName("local")]
+    Local,
+    [JsonStringEnumMemberName("bridge")]
+    Bridge,
+}
+
 public class Workspace
 {
     public long Id { get; set; }
@@ -56,6 +65,8 @@ public class Workspace
     public string RootPath { get; set; } = string.Empty;
     public string[] AllowlistPatterns { get; set; } = [];
     public string[] DenylistPatterns { get; set; } = [];
+    public WorkspaceRuntimeKind RuntimeKind { get; set; } = WorkspaceRuntimeKind.Local;
+    public string? RuntimeTarget { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
@@ -92,6 +103,10 @@ public class WorkspaceApprovalEvent
     public ApprovalActionType ActionType { get; set; }
     public string? TargetPath { get; set; }
     public string? CommandPreview { get; set; }
+    public string? Description { get; set; }
+    public string? CallId { get; set; }
+    public string? ToolName { get; set; }
+    public string? ToolArguments { get; set; }
     public ApprovalRiskLevel RiskLevel { get; set; }
     public ApprovalStatus Status { get; set; }
     public DateTime CreatedAt { get; set; }

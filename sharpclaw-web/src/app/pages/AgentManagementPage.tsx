@@ -5,6 +5,8 @@ import { asErrorMessage } from '../utils/chatUtils'
 import './AgentConsolePage.css'
 
 const DEFAULT_MODEL = 'openai/gpt-oss-20b'
+const DEFAULT_SOFT_COMPACT_THRESHOLD = '76800'
+const DEFAULT_HARD_COMPACT_THRESHOLD = '87040'
 const ROOT_FRAGMENT_KEY = '__root__'
 
 type AgentManagementPageProps = {
@@ -37,6 +39,8 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
   const [agentName, setAgentName] = useState('')
   const [agentModel, setAgentModel] = useState(DEFAULT_MODEL)
   const [agentTemperature, setAgentTemperature] = useState('0.1')
+  const [agentSoftCompactThreshold, setAgentSoftCompactThreshold] = useState(DEFAULT_SOFT_COMPACT_THRESHOLD)
+  const [agentHardCompactThreshold, setAgentHardCompactThreshold] = useState(DEFAULT_HARD_COMPACT_THRESHOLD)
   const [fragmentChildrenByParent, setFragmentChildrenByParent] = useState<Record<string, AgentFragmentSummary[]>>({})
   const [expandedFragmentPaths, setExpandedFragmentPaths] = useState<Set<string>>(new Set())
   const [loadingFragmentParents, setLoadingFragmentParents] = useState<Set<string>>(new Set())
@@ -91,6 +95,8 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
     setAgentName(agent.name)
     setAgentModel(agent.llmModel)
     setAgentTemperature(String(agent.temperature))
+    setAgentSoftCompactThreshold(String(agent.softCompactThreshold))
+    setAgentHardCompactThreshold(String(agent.hardCompactThreshold))
   }
 
   async function loadAgents(preferredAgentId?: number) {
@@ -104,6 +110,8 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
         setAgentName('')
         setAgentModel(DEFAULT_MODEL)
         setAgentTemperature('0.1')
+        setAgentSoftCompactThreshold(DEFAULT_SOFT_COMPACT_THRESHOLD)
+        setAgentHardCompactThreshold(DEFAULT_HARD_COMPACT_THRESHOLD)
         return
       }
 
@@ -189,6 +197,8 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
           name: 'New Agent',
           llmModel: DEFAULT_MODEL,
           temperature: 0.1,
+          softCompactThreshold: Number.parseInt(DEFAULT_SOFT_COMPACT_THRESHOLD, 10),
+          hardCompactThreshold: Number.parseInt(DEFAULT_HARD_COMPACT_THRESHOLD, 10),
         }),
       })
 
@@ -210,6 +220,20 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
       setError('Temperature must be a number.')
       return
     }
+    const softCompactThreshold = Number.parseInt(agentSoftCompactThreshold, 10)
+    if (Number.isNaN(softCompactThreshold) || softCompactThreshold <= 0) {
+      setError('Soft compact threshold must be a positive integer.')
+      return
+    }
+    const hardCompactThreshold = Number.parseInt(agentHardCompactThreshold, 10)
+    if (Number.isNaN(hardCompactThreshold) || hardCompactThreshold <= 0) {
+      setError('Hard compact threshold must be a positive integer.')
+      return
+    }
+    if (hardCompactThreshold <= softCompactThreshold) {
+      setError('Hard compact threshold must be greater than soft compact threshold.')
+      return
+    }
 
     try {
       setError(null)
@@ -219,6 +243,8 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
           name: agentName.trim(),
           llmModel: agentModel.trim() || DEFAULT_MODEL,
           temperature,
+          softCompactThreshold,
+          hardCompactThreshold,
         }),
       })
       await loadAgents(selectedAgentId)
@@ -523,6 +549,32 @@ export function AgentManagementPage({ onUnsavedChange }: AgentManagementPageProp
             max="2"
             value={agentTemperature}
             onChange={(e) => setAgentTemperature(e.target.value)}
+          />
+
+          <label className="field-label" htmlFor="agent-soft-compact-threshold-input-manager">
+            Soft Compact Threshold
+          </label>
+          <input
+            id="agent-soft-compact-threshold-input-manager"
+            className="text-input"
+            type="number"
+            step="1"
+            min="1"
+            value={agentSoftCompactThreshold}
+            onChange={(e) => setAgentSoftCompactThreshold(e.target.value)}
+          />
+
+          <label className="field-label" htmlFor="agent-hard-compact-threshold-input-manager">
+            Hard Compact Threshold
+          </label>
+          <input
+            id="agent-hard-compact-threshold-input-manager"
+            className="text-input"
+            type="number"
+            step="1"
+            min="1"
+            value={agentHardCompactThreshold}
+            onChange={(e) => setAgentHardCompactThreshold(e.target.value)}
           />
 
           <button type="button" className="button primary" onClick={() => void saveAgent()} disabled={!selectedAgentId}>

@@ -1,7 +1,8 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Memory.Lcm;
+using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database.Repositories;
 using SharpClaw.API.Helpers;
 
@@ -14,14 +15,23 @@ public class Agent(
     FragmentsRepository fragmentsRepository,
     WorkspaceRepository workspaceRepository,
     AgentsRepository agentsRepository,
+    IServiceProvider serviceProvider,
     ILogger<Agent> logger)
 {
+    public delegate Task AsyncEventHandler(object sender, TurnCompletedEventArgs e);
+    public class TurnCompletedEventArgs(Guid sessionId) : EventArgs
+    {
+        public Guid SessionId => sessionId;
+    }
+    public event AsyncEventHandler? OnTurnCompleted;
+
     public async Task<Guid> CreateSession(
         long agentId = 1,
         Guid? parentSessionId = null,
         string[]? workspaces = null,
         string? name = null,
-        bool visibleInSidebar = true)
+        bool visibleInSidebar = true,
+        string? tag = null)
     {
         var agentConfig = await agentsRepository.GetAgent(agentId)
                           ?? throw new KeyNotFoundException($"Agent {agentId} was not found.");
@@ -38,12 +48,16 @@ public class Agent(
             AgentId = agentId,
             LlmModel = agentConfig.LlmModel,
             Temperature = agentConfig.Temperature,
+            SoftCompactThreshold = agentConfig.SoftCompactThreshold,
+            HardCompactThreshold = agentConfig.HardCompactThreshold,
             Messages = [],
             Workspace = defaultWs,
             ActiveWorkspaceNames = activeWorkspaces,
         };
 
         await chatRepository.CreateSession(sessionId, agentId, parentSessionId, name, visibleInSidebar);
+        if (tag is not null)
+            await chatRepository.SetSessionTag(sessionId, tag);
         if (workspaces is not null)
             await workspaceRepository.SetActiveWorkspacesForSession(sessionId, agentId, workspaces);
         await sessionStore.Add(new AgentSessionState(sessionId, context, parentSessionId: parentSessionId));
@@ -100,6 +114,9 @@ public class Agent(
 
     private async Task<string?> GetMessageResponse(Guid sessionId, AgentSessionState session, AgentRunState run)
     {
+        if (!sessionStore.TryMarkRunExecuting(sessionId))
+            return null;
+
         await session.Mutex.WaitAsync();
 
         try
@@ -107,12 +124,14 @@ public class Agent(
             if (session.Run is null)
                 throw new InvalidOperationException($"Session {sessionId} has no Run.");
 
+            ThrowIfStopRequested(run, sessionId);
             session.Run.MarkStarted(session.Context.MaxSequenceId() + 1); // TODO: move this inside running task
 
             AgentClientResponse? response = null;
 
-            while (response is null or { ShouldContinue: true, QueuedTasks.Count: 0 })
+            while (response is null or { ShouldContinue: true, QueuedTasks.Count: 0, QueuedApprovals.Count: 0 })
             {
+                ThrowIfStopRequested(run, sessionId);
                 await TryCompactHistory(session);
 
                 var agentsMd = (await fragmentsRepository.ReadFragmentByPath(session.Context.AgentId, "AGENTS.md"))?.Content ?? string.Empty;
@@ -139,6 +158,7 @@ public class Agent(
                     ],
                     BuildTools(),
                     run);
+                ThrowIfStopRequested(run, sessionId);
 
                 // TODO: add transaction here
                 foreach (var message in response.Responses)
@@ -146,6 +166,7 @@ public class Agent(
                     await chatRepository.PersistMessage(sessionId, message);
                 }
                 session.Context.Messages = [..session.Context.Messages, ..response.Responses];
+                session.Run.AppendTokenUsage(session.Context.Messages.EstimatedTokenCount());
 
                 foreach (var queuedTask in response.QueuedTasks)
                 {
@@ -172,14 +193,16 @@ public class Agent(
                             description: queuedTask.ChildDescription);
                         if (taskResultMessage is not null)
                             await chatRepository.UpdateMessage(taskResultMessage);
+                        ThrowIfStopRequested(run, sessionId);
                         await EnqueueMessage(childSessionId, queuedTask.ChildPrompt);
                     }
                 }
 
-                if (response.QueuedTasks.Count > 0)
+                if (response.QueuedTasks.Count > 0 || response.QueuedApprovals.Count > 0)
                 {
+                    run.SetStatus(AgentRunStatus.Waiting);
                     await chatRepository.UpdateSession(sessionId, AgentRunStatus.Waiting);
-                } else if (response is not { ShouldContinue: true, QueuedTasks.Count: 0 })
+                } else if (response is not { ShouldContinue: true, QueuedTasks.Count: 0, QueuedApprovals.Count: 0 })
                 {
                     run.MarkCompleted(); // TODO: rework this
                     await chatRepository.UpdateSession(sessionId, AgentRunStatus.Completed);
@@ -199,7 +222,7 @@ public class Agent(
                             var dep = parentSession.Run?.SessionDependencies.SingleOrDefault(d => d.CallId == callId);
 
                             if (dep is null)
-                                throw new Exception("Parent content from task not found");
+                                throw new Exception($"Session dependency not found for callId {callId} in {JsonSerializer.Serialize(parentSession.Run?.SessionDependencies)}");
 
                             var message = parentSession.Context.Messages
                                 .FirstOrDefault(r => r.Messages
@@ -208,7 +231,7 @@ public class Agent(
                                               && trc.CallId == callId));
 
                             if (message is null)
-                                throw new Exception("Parent content from task not found");
+                                throw new Exception($"Message containing task result not found for callId {callId} in {JsonSerializer.Serialize(parentSession.Context.Messages)}");
 
                             var content = message.Messages
                                 .SelectMany(m => m.Contents)
@@ -216,7 +239,7 @@ public class Agent(
                                                      && trc.CallId == callId) as FunctionResultContent;
 
                             if (content is null)
-                                throw new Exception("Parent content from task not found");
+                                throw new Exception($"Task result content not found for callId {callId} in {JsonSerializer.Serialize(message.Messages)}");
 
                             var description = content.Result is IDictionary<string, object?> d
                                               && d.TryGetValue("description", out var desc)
@@ -234,7 +257,7 @@ public class Agent(
 
                             parentSession.Run!.SessionDependencies.Remove(dep);
 
-                            if (parentSession.Run.SessionDependencies.Count == 0)
+                            if (!parentSession.Run.IsStopRequested && parentSession.Run.SessionDependencies.Count == 0)
                                 _ = Task.Run(() => GetMessageResponse(parentSession.SessionId, parentSession, parentSession.Run));
                         }
                         finally
@@ -244,6 +267,10 @@ public class Agent(
                     }
                 }
 
+                if (OnTurnCompleted is not null)
+                {
+                    await OnTurnCompleted(this, new TurnCompletedEventArgs(sessionId));
+                }
                 // TODO: transaction ends here
                 await TryCompactHistory(session, true);
             }
@@ -252,12 +279,15 @@ public class Agent(
         }
         catch (Exception ex)
         {
-            run.MarkFailed(ex.Message);
+            if (run.Status is not AgentRunStatus.Failed)
+                run.MarkFailed(ex.Message);
+            await chatRepository.UpdateSession(sessionId, AgentRunStatus.Failed);
             logger.LogWarning(ex, "Exception processing session {SessionId}", sessionId);
         }
         finally
         {
             session.Mutex.Release();
+            sessionStore.ClearRunExecuting(sessionId);
         }
 
         return null; // TODO: return error from here? possibly yes
@@ -358,6 +388,57 @@ public class Agent(
         );
     }
 
+    public async Task<PaginatedSessionHistoryDto> GetHistoryPaginated(
+        Guid sessionId,
+        int limit = 100,
+        long? beforeSequence = null,
+        int childLimit = 50,
+        int childOffset = 0)
+    {
+        var session = await sessionStore.GetOrLoadSession(sessionId);
+
+        var (rawMessages, hasMoreMessages) = await chatRepository.LoadRawMessagesPaginated(
+            sessionId, limit, beforeSequence);
+
+        var (childLinks, hasMoreChildSessions) = await chatRepository.GetSessionTaskLinksPaginated(
+            sessionId, childLimit, childOffset);
+
+        var totalMessageCount = await chatRepository.GetMessageCount(sessionId);
+
+        var messages = new List<SessionMessageDto>(rawMessages.Count);
+        foreach (var raw in rawMessages)
+        {
+            foreach (var message in raw.Response.Messages)
+            {
+                var sequenceId = raw.Response.AdditionalProperties?[Constants.SequenceIdKey] as long?
+                                 ?? throw new UnreachableException("all messages should have a sequenceId");
+
+                messages.Add(new SessionMessageDto(
+                    Role: message.Role.Value,
+                    Text: message.Text,
+                    Contents: GetMessageContents(message),
+                    AuthorName: message.AuthorName,
+                    MessageId: sequenceId
+                ));
+            }
+        }
+
+        return new PaginatedSessionHistoryDto(
+            SessionId: sessionId,
+            ParentSessionId: session.ParentSessionId,
+            LatestSequenceId: session.Context.Messages.LastOrDefault()?.AdditionalProperties?[Constants.SequenceIdKey] as long? ?? 0,
+            RunStatus: session.Run?.Status.ToString().ToLowerInvariant(),
+            Messages: messages,
+            ChildSessions: childLinks
+                .Select(link => new SessionChildLinkDto(link.CallId, link.ChildSessionId, link.Completed))
+                .ToArray(),
+            HasMoreMessages: hasMoreMessages,
+            HasMoreChildSessions: hasMoreChildSessions,
+            TotalMessageCount: totalMessageCount,
+            EstimatedTokenCount: session.Context.Messages.EstimatedTokenCount()
+        );
+    }
+
     public async Task<IReadOnlyList<AgentSessionDto>> GetSessions(long agentId)
     {
         var sessions = await chatRepository.GetSessions(agentId);
@@ -368,6 +449,7 @@ public class Agent(
                 Name: s.Name,
                 VisibleInSidebar: s.VisibleInSidebar,
                 ParentSessionId: s.ParentSessionId,
+                Tag: s.Tag,
                 CreatedAt: new DateTimeOffset(DateTime.SpecifyKind(s.CreatedAt, DateTimeKind.Utc)),
                 UpdatedAt: new DateTimeOffset(DateTime.SpecifyKind(s.UpdatedAt, DateTimeKind.Utc)),
                 MessagesCount: checked((int)s.MessagesCount)))
@@ -379,6 +461,54 @@ public class Agent(
         var session = await chatRepository.RenameSession(sessionId, name)
                       ?? throw new KeyNotFoundException($"Session {sessionId} was not found.");
         return session.Name;
+    }
+
+    public async Task SetSessionTag(Guid sessionId, string tag)
+    {
+        await chatRepository.SetSessionTag(sessionId, tag);
+    }
+
+    public async Task UnlinkSessionTag(Guid sessionId)
+    {
+        await chatRepository.UnlinkSessionTag(sessionId);
+    }
+
+    public async Task<Guid?> GetSessionByTag(long agentId, string tag)
+    {
+        var session = await chatRepository.GetSessionByTag(agentId, tag);
+        return session?.SessionId;
+    }
+
+    public async Task<IReadOnlyList<AgentSessionDto>> GetTaggedSessions(long agentId)
+    {
+        var sessions = await chatRepository.GetTaggedSessions(agentId);
+        return sessions
+            .Select(s => new AgentSessionDto(
+                SessionId: s.SessionId,
+                AgentId: s.AgentId,
+                Name: s.Name,
+                VisibleInSidebar: s.VisibleInSidebar,
+                ParentSessionId: s.ParentSessionId,
+                Tag: s.Tag,
+                CreatedAt: new DateTimeOffset(DateTime.SpecifyKind(s.CreatedAt, DateTimeKind.Utc)),
+                UpdatedAt: new DateTimeOffset(DateTime.SpecifyKind(s.UpdatedAt, DateTimeKind.Utc)),
+                MessagesCount: 0))
+            .ToArray();
+    }
+
+    public async Task PostNotification(Guid sessionId, string text)
+    {
+        var notificationMessage = new ChatResponse(
+            new ChatMessage(ChatRole.Assistant, text)
+            {
+                MessageId = Guid.NewGuid().ToString().Replace("-", ""),
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    ["lcm_type"] = "notification",
+                },
+            });
+
+        await chatRepository.PersistMessage(sessionId, notificationMessage);
     }
 
     private static List<AIFunction> BuildTools() => ToolCatalog.BuildTools();
@@ -479,12 +609,249 @@ public class Agent(
         ["output"] = output,
     };
 
+    public async Task<ApprovalResolutionResult> ResolveWorkspaceApproval(Guid sessionId, string token, bool approved)
+    {
+        var approval = await workspaceRepository.GetApprovalEventByToken(token);
+        if (approval is null || approval.Status != ApprovalStatus.Pending)
+            return ApprovalResolutionResult.InvalidToken;
+
+        var allowed = await chatRepository.IsAncestorOrSelf(sessionId, approval.SessionId);
+        if (!allowed)
+            return ApprovalResolutionResult.WrongSession;
+
+        var resolved = await workspaceRepository.ResolveApprovalEvent(
+            token,
+            approved ? ApprovalStatus.Approved : ApprovalStatus.Rejected);
+        if (!resolved)
+            return ApprovalResolutionResult.FailedToResolve;
+
+        await ApplyApprovalOutcomeAndMaybeResume(approval, approved);
+        return ApprovalResolutionResult.Resolved;
+    }
+
+    private async Task ApplyApprovalOutcomeAndMaybeResume(WorkspaceApprovalEvent approval, bool approved)
+    {
+        if (string.IsNullOrWhiteSpace(approval.CallId))
+            return;
+
+        var session = await sessionStore.GetOrLoadSession(approval.SessionId);
+        var shouldResume = false;
+
+        await session.Mutex.WaitAsync();
+        try
+        {
+            var message = session.Context.Messages
+                .FirstOrDefault(r => r.Messages
+                    .SelectMany(m => m.Contents)
+                    .Any(m => m is FunctionResultContent trc
+                              && trc.CallId == approval.CallId));
+
+            if (message is null)
+                return;
+
+            var content = message.Messages
+                .SelectMany(m => m.Contents)
+                .FirstOrDefault(m => m is FunctionResultContent trc
+                                     && trc.CallId == approval.CallId) as FunctionResultContent;
+            if (content is null)
+                return;
+
+            object toolResult;
+            if (!approved)
+            {
+                toolResult = new
+                {
+                    error = $"Action was rejected by user: {approval.Description ?? approval.ActionType.ToString()}",
+                };
+            }
+            else
+            {
+                toolResult = await ReplayApprovedToolCall(session, approval);
+            }
+
+            content.Result = toolResult;
+            await chatRepository.UpdateMessage(message);
+            session.Run.AppendToolResultForCall(approval.CallId, Serialization.SerializeToolPayload(toolResult));
+
+            var pendingApprovals = await workspaceRepository.GetPendingApprovalsForSession(approval.SessionId);
+            if (!session.Run.IsStopRequested
+                && session.Run.Status == AgentRunStatus.Waiting
+                && pendingApprovals.Count == 0
+                && session.Run.SessionDependencies.Count == 0)
+                shouldResume = true;
+        }
+        finally
+        {
+            session.Mutex.Release();
+        }
+
+        if (shouldResume)
+            _ = Task.Run(() => GetMessageResponse(approval.SessionId, session, session.Run));
+    }
+
+    private async Task<object> ReplayApprovedToolCall(AgentSessionState session, WorkspaceApprovalEvent approval)
+    {
+        if (string.IsNullOrWhiteSpace(approval.ToolName))
+        {
+            return new { error = "Cannot replay approved tool call: missing tool name." };
+        }
+
+        var tools = BuildTools();
+        var tool = tools.FirstOrDefault(t => string.Equals(t.Name, approval.ToolName, StringComparison.Ordinal));
+        if (tool is null)
+            return new { error = $"Cannot replay approved tool call: tool '{approval.ToolName}' is not registered." };
+
+        Dictionary<string, object?> args;
+        try
+        {
+            args = string.IsNullOrWhiteSpace(approval.ToolArguments)
+                ? new Dictionary<string, object?>(StringComparer.Ordinal)
+                : JsonSerializer.Deserialize<Dictionary<string, object?>>(approval.ToolArguments)
+                  ?? new Dictionary<string, object?>(StringComparer.Ordinal);
+        }
+        catch (Exception ex)
+        {
+            return new { error = $"Cannot replay approved tool call: invalid stored tool arguments ({ex.Message})." };
+        }
+
+        args["approval_token"] = approval.ApprovalToken;
+
+        var functionArguments = new AIFunctionArguments(args)
+        {
+            Services = new AgentClientServiceProvider(serviceProvider, session.Context, session.Run),
+            Context = new Dictionary<object, object?>
+            {
+                ["CallId"] = approval.CallId,
+            },
+        };
+
+        try
+        {
+            return await tool.InvokeAsync(functionArguments) ?? new { };
+        }
+        catch (Exception ex)
+        {
+            return new { error = $"Approved tool replay failed: {ex.Message}" };
+        }
+    }
+
     public async Task Resume(Guid sessionId)
     {
         var session = await sessionStore.GetOrLoadSession(sessionId);
         _ = Task.Run(() => GetMessageResponse(sessionId, session, session.Run));
     }
+
+    public async Task<ResumeSessionsResult> ResumeIfPossible(Guid sessionId, bool includeDescendants = true)
+    {
+        var targetSessionIds = includeDescendants
+            ? await chatRepository.GetSessionAndDescendantIds(sessionId)
+            : [sessionId];
+
+        var sessionsById = new Dictionary<Guid, AgentSessionState>();
+        foreach (var id in targetSessionIds)
+            sessionsById[id] = await sessionStore.GetOrLoadSession(id);
+
+        var resumed = 0;
+        var blockedByApprovals = 0;
+        var blockedByDependencies = 0;
+        var alreadyActive = 0;
+        var notWaiting = 0;
+
+        foreach (var id in targetSessionIds.Reverse())
+        {
+            var session = sessionsById[id];
+            var run = session.Run;
+
+            if (run.IsStopRequested)
+            {
+                run.ClearStopRequest();
+                // User explicitly asked to resume — skip all guards
+                run.SetStatus(AgentRunStatus.Pending);
+                await chatRepository.UpdateSession(id, AgentRunStatus.Pending);
+                _ = Task.Run(() => GetMessageResponse(id, session, run));
+                resumed++;
+                continue;
+            }
+
+            if (sessionStore.IsRunExecuting(id))
+            {
+                alreadyActive++;
+                continue;
+            }
+
+            if (run.Status is AgentRunStatus.Completed or AgentRunStatus.Failed)
+            {
+                notWaiting++;
+                continue;
+            }
+
+            var pendingApprovals = await workspaceRepository.GetPendingApprovalsForSession(id);
+            if (pendingApprovals.Count > 0)
+            {
+                blockedByApprovals++;
+                continue;
+            }
+
+            if (run.SessionDependencies.Count > 0)
+            {
+                blockedByDependencies++;
+                continue;
+            }
+
+            run.SetStatus(AgentRunStatus.Pending);
+            await chatRepository.UpdateSession(id, AgentRunStatus.Pending);
+            _ = Task.Run(() => GetMessageResponse(id, session, run));
+            resumed++;
+        }
+
+        return new ResumeSessionsResult(resumed, blockedByApprovals, blockedByDependencies, alreadyActive, notWaiting);
+    }
+
+    public async Task<StopSessionsResult> StopSession(Guid sessionId, bool includeDescendants = true)
+    {
+        var targetSessionIds = includeDescendants
+            ? await chatRepository.GetSessionAndDescendantIds(sessionId)
+            : [sessionId];
+
+        var stopped = 0;
+        foreach (var id in targetSessionIds)
+        {
+            var session = await sessionStore.GetOrLoadSession(id);
+            session.Run.RequestStop("Session stopped by user.");
+            session.Run.SetStatus(AgentRunStatus.Failed);
+            await chatRepository.UpdateSession(id, AgentRunStatus.Failed);
+            stopped++;
+        }
+
+        return new StopSessionsResult(stopped);
+    }
+
+    private static void ThrowIfStopRequested(AgentRunState run, Guid sessionId)
+    {
+        if (!run.IsStopRequested)
+            return;
+
+        throw new OperationCanceledException($"Session {sessionId} was stopped by user.");
+    }
 }
+
+public enum ApprovalResolutionResult
+{
+    Resolved,
+    InvalidToken,
+    WrongSession,
+    FailedToResolve,
+}
+
+public record ResumeSessionsResult(
+    int Resumed,
+    int BlockedByApprovals,
+    int BlockedByDependencies,
+    int AlreadyActive,
+    int NotWaiting);
+
+public record StopSessionsResult(
+    int Stopped);
 
 public class AgentSessionState(Guid sessionId, AgentExecutionContext context,
     Guid? parentSessionId = null,

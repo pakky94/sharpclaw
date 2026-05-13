@@ -37,11 +37,25 @@ public class ChatRepository(IConfiguration configuration)
                    agent_id as AgentId,
                    name as Name,
                    visible_in_sidebar as VisibleInSidebar,
+                   status as Status,
                    parent_session_id as ParentSessionId,
+                   tag as Tag,
                    created_at as CreatedAt,
                    updated_at as UpdatedAt
             from sessions
             where id = @sessionId;
+            """,
+            new { sessionId });
+    }
+
+    public async Task<long> GetMaxSequence(Guid sessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        return await connection.ExecuteScalarAsync<long>(
+            """
+            select coalesce(max(sequence), 0)
+            from conversation_history
+            where session_id = @sessionId and is_active;
             """,
             new { sessionId });
     }
@@ -76,7 +90,9 @@ public class ChatRepository(IConfiguration configuration)
                       agent_id as AgentId,
                       name as Name,
                       visible_in_sidebar as VisibleInSidebar,
+                      status as Status,
                       parent_session_id as ParentSessionId,
+                      tag as Tag,
                       created_at as CreatedAt,
                       updated_at as UpdatedAt;
             """,
@@ -152,6 +168,7 @@ public class ChatRepository(IConfiguration configuration)
                    s.name as Name,
                    s.visible_in_sidebar as VisibleInSidebar,
                    s.parent_session_id as ParentSessionId,
+                   s.tag as Tag,
                    s.created_at as CreatedAt,
                    s.updated_at as UpdatedAt,
                    coalesce((
@@ -184,6 +201,99 @@ public class ChatRepository(IConfiguration configuration)
             new { sessionId });
 
         return rows.ToArray();
+    }
+
+    public async Task<(IReadOnlyList<SessionTaskLink> Links, bool HasMore)> GetSessionTaskLinksPaginated(
+        Guid sessionId, int limit, int offset)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<SessionTaskLink>(
+            """
+            select call_id as CallId,
+                   child_session_id as ChildSessionId,
+                   completed as Completed
+            from session_tasks
+            where session_id = @sessionId
+              and child_session_id is not null
+            order by created_at, id
+            limit @limit + 1
+            offset @offset;
+            """,
+            new { sessionId, limit, offset });
+
+        var hasMore = rows.Count() > limit;
+        return (rows.Take(limit).ToArray(), hasMore);
+    }
+
+    public async Task<IReadOnlyList<Guid>> GetSessionAncestors(Guid sessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<Guid>(
+            """
+            with recursive chain as (
+                select s.parent_session_id as id
+                from sessions s
+                where s.id = @sessionId
+
+                union all
+
+                select p.parent_session_id as id
+                from sessions p
+                join chain c on p.id = c.id
+                where c.id is not null
+            )
+            select id
+            from chain
+            where id is not null;
+            """,
+            new { sessionId });
+        return rows.ToArray();
+    }
+
+    public async Task<IReadOnlyList<Guid>> GetSessionAndDescendantIds(Guid sessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<Guid>(
+            """
+            with recursive descendants as (
+                select s.id
+                from sessions s
+                where s.id = @sessionId
+
+                union all
+
+                select child.id
+                from sessions child
+                join descendants d on child.parent_session_id = d.id
+            )
+            select id from descendants;
+            """,
+            new { sessionId });
+        return rows.ToArray();
+    }
+
+    public async Task<bool> IsAncestorOrSelf(Guid ancestorSessionId, Guid descendantSessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var exists = await connection.ExecuteScalarAsync<bool>(
+            """
+            with recursive chain as (
+                select s.id, s.parent_session_id
+                from sessions s
+                where s.id = @descendantSessionId
+
+                union all
+
+                select p.id, p.parent_session_id
+                from sessions p
+                join chain c on c.parent_session_id = p.id
+            )
+            select exists(
+                select 1 from chain where id = @ancestorSessionId
+            );
+            """,
+            new { ancestorSessionId, descendantSessionId });
+        return exists;
     }
 
     public async Task<long> PersistMessage(Guid sessionId, ChatResponse response)
@@ -407,6 +517,7 @@ public class ChatRepository(IConfiguration configuration)
         }).ToArray();
     }
 
+    // TODO: limit load to last N messages
     public async Task<IReadOnlyList<PersistedRawMessage>> LoadRawMessages(Guid sessionId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
@@ -432,6 +543,49 @@ public class ChatRepository(IConfiguration configuration)
                 return new PersistedRawMessage(r.MessageId, r.CreatedAt, response);
             })
             .ToArray();
+    }
+
+    public async Task<(IReadOnlyList<PersistedRawMessage> Messages, bool HasMore)> LoadRawMessagesPaginated(
+        Guid sessionId, int limit, long? beforeSequence)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<RawMessageRow>(
+            """
+            select m.id as MessageId,
+                   m.created_at as CreatedAt,
+                   m.payload::text as Payload,
+                   m.parent_summary_id as ParentSummaryId,
+                   ch.sequence as SequenceId
+            from messages m
+            join conversation_history ch on m.id = ch.message_id
+            where m.session_id = @sessionId
+              and (@beforeSequence is null or ch.sequence < @beforeSequence)
+            order by ch.sequence desc
+            limit @limit + 1;
+            """,
+            new { sessionId, limit, beforeSequence });
+
+        var hasMore = rows.Count() > limit;
+        var page = rows.Take(limit).Reverse().Select(r =>
+        {
+            var response = DeserializeResponse(r.Payload);
+            SetDbReference(response, "message", r.MessageId, r.SequenceId, r.ParentSummaryId);
+            return new PersistedRawMessage(r.MessageId, r.CreatedAt, response);
+        }).ToArray();
+
+        return (page, hasMore);
+    }
+
+    public async Task<long> GetMessageCount(Guid sessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        return await connection.QuerySingleAsync<long>(
+            """
+            select count(*)
+            from conversation_history
+            where session_id = @sessionId and is_active;
+            """,
+            new { sessionId });
     }
 
     public async Task<LcmSummaryRecord?> GetLcmSummary(Guid sessionId, string lcmSummaryId)
@@ -856,10 +1010,97 @@ public class ChatRepository(IConfiguration configuration)
         public string? CoveringSummaryId { get; init; }
         public int? CoveringSummaryLevel { get; init; }
     }
+
+    public async Task SetSessionTag(Guid sessionId, string tag)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        // First, get the agent_id for this session
+        var agentId = await connection.QuerySingleOrDefaultAsync<long?>(
+            "select agent_id from sessions where id = @sessionId",
+            new { sessionId });
+
+        if (agentId is null)
+            throw new KeyNotFoundException($"Session {sessionId} not found.");
+
+        // Unlink any existing session with this tag for this agent
+        await connection.ExecuteAsync(
+            """
+            update sessions
+            set tag = null,
+                updated_at = now()
+            where agent_id = @agentId and tag = @tag and id != @sessionId
+            """,
+            new { agentId, tag, sessionId });
+
+        // Set the tag on this session
+        await connection.ExecuteAsync(
+            """
+            update sessions
+            set tag = @tag,
+                updated_at = now()
+            where id = @sessionId
+            """,
+            new { sessionId, tag });
+    }
+
+    public async Task<PersistedSession?> GetSessionByTag(long agentId, string tag)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        return await connection.QueryFirstOrDefaultAsync<PersistedSession>(
+            """
+            select id as SessionId,
+                   agent_id as AgentId,
+                   name as Name,
+                   visible_in_sidebar as VisibleInSidebar,
+                   status as Status,
+                   parent_session_id as ParentSessionId,
+                   tag as Tag,
+                   created_at as CreatedAt,
+                   updated_at as UpdatedAt
+            from sessions
+            where agent_id = @agentId and tag = @tag
+            """,
+            new { agentId, tag });
+    }
+
+    public async Task<IReadOnlyList<PersistedSession>> GetTaggedSessions(long agentId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var rows = await connection.QueryAsync<PersistedSession>(
+            """
+            select id as SessionId,
+                   agent_id as AgentId,
+                   name as Name,
+                   visible_in_sidebar as VisibleInSidebar,
+                   status as Status,
+                   parent_session_id as ParentSessionId,
+                   tag as Tag,
+                   created_at as CreatedAt,
+                   updated_at as UpdatedAt
+            from sessions
+            where agent_id = @agentId and tag is not null
+            order by tag
+            """,
+            new { agentId });
+        return rows.ToArray();
+    }
+
+    public async Task UnlinkSessionTag(Guid sessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.ExecuteAsync(
+            """
+            update sessions
+            set tag = null,
+                updated_at = now()
+            where id = @sessionId
+            """,
+            new { sessionId });
+    }
 }
 
-public record PersistedSession(Guid SessionId, long AgentId, string? Name, bool VisibleInSidebar, Guid? ParentSessionId, DateTime CreatedAt, DateTime UpdatedAt);
-public record PersistedSessionSummary(Guid SessionId, long AgentId, string? Name, bool VisibleInSidebar, Guid? ParentSessionId, DateTime CreatedAt, DateTime UpdatedAt, long MessagesCount);
+public record PersistedSession(Guid SessionId, long AgentId, string? Name, bool VisibleInSidebar, string Status, Guid? ParentSessionId, string? Tag, DateTime CreatedAt, DateTime UpdatedAt);
+public record PersistedSessionSummary(Guid SessionId, long AgentId, string? Name, bool VisibleInSidebar, Guid? ParentSessionId, string? Tag, DateTime CreatedAt, DateTime UpdatedAt, long MessagesCount);
 public record SessionTaskLink(string CallId, Guid ChildSessionId, bool Completed);
 public record PersistedRawMessage(long MessageId, DateTime CreatedAt, ChatResponse Response);
 public record LcmSummaryRecord(

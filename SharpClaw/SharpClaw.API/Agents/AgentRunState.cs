@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.AI;
+using Microsoft.Extensions.AI;
 using SharpClaw.API.Helpers;
 
 namespace SharpClaw.API.Agents;
@@ -17,9 +17,9 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
 {
     private readonly object _eventsLock = new();
     private readonly List<AgentRunEvent> _events = [];
-    private readonly Dictionary<string, TaskCompletionSource<bool>> _pendingApprovals = [];
     private long _currentMessageId = 0;
     private long _sequence = 0;
+    private volatile bool _stopRequested = false;
 
     public Guid SessionId => sessionId;
     public DateTimeOffset? StartedAt { get; private set; }
@@ -27,6 +27,7 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
     public DateTimeOffset? CompletedAt { get; private set; }
     public AgentRunStatus Status { get; private set; } = AgentRunStatus.Completed;
     public string? Error { get; private set; }
+    public bool IsStopRequested => _stopRequested;
     public List<SessionDependency> SessionDependencies { get; private set; } = sessionDependencies;
     public Task? CompactionTask { get; set; } = null;
 
@@ -40,11 +41,18 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
 
     public void MarkStarted(long messageId)
     {
+        _stopRequested = false;
         _currentMessageId = messageId;
         StartedAt = DateTimeOffset.UtcNow;
+        CompletedAt = null;
         StartMessageId = messageId;
         Status = AgentRunStatus.Running;
         AddEvent(messageId, "started", null);
+    }
+
+    public void SetStatus(AgentRunStatus status)
+    {
+        Status = status;
     }
 
     public void NextMessage()
@@ -95,6 +103,12 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
     public void AppendToolResultForCall(string callId, string? result) =>
         AppendToolResult(callId, result);
 
+    public void AppendTokenUsage(long estimatedTokenCount) =>
+        AddEvent(_currentMessageId, "token_usage", null, new
+        {
+            estimatedTokenCount,
+        });
+
     public void AppendChildSessionSpawned(string callId, Guid childSessionId, string? description) =>
         AddEvent(_currentMessageId, "child_session_spawned", null, new
         {
@@ -105,6 +119,9 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
 
     public void MarkCompleted()
     {
+        if (Status is AgentRunStatus.Completed or AgentRunStatus.Failed)
+            return;
+
         Console.WriteLine($"completing session {sessionId}");
         CompletedAt = DateTimeOffset.UtcNow;
         Status = AgentRunStatus.Completed;
@@ -113,18 +130,31 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
 
     public void MarkFailed(string error)
     {
+        if (Status is AgentRunStatus.Completed or AgentRunStatus.Failed)
+            return;
+
         CompletedAt = DateTimeOffset.UtcNow;
         Status = AgentRunStatus.Failed;
         Error = error;
         AddEvent(_currentMessageId, "failed", error);
     }
 
-    public TaskCompletionSource<bool> CreateApprovalRequest(string token, string action, string? target, string? commandPreview, string risk, string description)
+    public void RequestStop(string? reason = null)
     {
-        var tcs = new TaskCompletionSource<bool>();
+        _stopRequested = true;
+        if (!string.IsNullOrWhiteSpace(reason))
+            Error = reason;
+    }
+
+    public void ClearStopRequest()
+    {
+        _stopRequested = false;
+    }
+
+    public void AppendApprovalRequired(string token, string action, string? target, string? commandPreview, string risk, string description, Guid? sourceSessionId = null)
+    {
         lock (_eventsLock)
         {
-            _pendingApprovals[token] = tcs;
             AddEvent(_currentMessageId, "approval_required", null, new
             {
                 approval_token = token,
@@ -133,34 +163,8 @@ public class AgentRunState(Guid sessionId, List<SessionDependency> sessionDepend
                 command_preview = commandPreview,
                 risk,
                 description,
+                source_session_id = sourceSessionId,
             });
-        }
-        return tcs;
-    }
-
-    public bool ResolveApproval(string token, bool approved)
-    {
-        lock (_eventsLock)
-        {
-            if (_pendingApprovals.TryGetValue(token, out var tcs))
-            {
-                _pendingApprovals.Remove(token);
-                return tcs.TrySetResult(approved);
-            }
-        }
-        return false;
-    }
-
-    // TODO: what is this method for?
-    public void ExpireApproval(string token)
-    {
-        lock (_eventsLock)
-        {
-            if (_pendingApprovals.TryGetValue(token, out var tcs))
-            {
-                _pendingApprovals.Remove(token);
-                tcs.TrySetCanceled();
-            }
         }
     }
 
@@ -185,6 +189,7 @@ public record AgentSessionDto(
     string? Name,
     bool VisibleInSidebar,
     Guid? ParentSessionId,
+    string? Tag,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     int MessagesCount);
@@ -195,6 +200,19 @@ public record SessionHistoryDto(
     string? RunStatus,
     IReadOnlyList<SessionMessageDto> Messages,
     IReadOnlyList<SessionChildLinkDto> ChildSessions
+);
+
+public record PaginatedSessionHistoryDto(
+    Guid SessionId,
+    Guid? ParentSessionId,
+    long LatestSequenceId,
+    string? RunStatus,
+    IReadOnlyList<SessionMessageDto> Messages,
+    IReadOnlyList<SessionChildLinkDto> ChildSessions,
+    bool HasMoreMessages,
+    bool HasMoreChildSessions,
+    long TotalMessageCount,
+    long EstimatedTokenCount
 );
 
 public record SessionMessageDto(

@@ -5,7 +5,20 @@ info:
 
 http:
   method: POST
-  url: "{{baseUrl}}/sessions/{{sessionId}}/resume"
+  url: "{{baseUrl}}/debugging/tool-call"
+  body:
+    type: json
+    data: |-
+      {
+        "toolName": "web_search",
+        "arguments": {
+          "query": "Terminal.GUI"
+        }
+        //"toolName": "web_fetch",
+        //"arguments": {
+        //  "url": "https://github.com/gui-cs/Terminal.Gui"
+        //}
+      }
   auth: inherit
 
 runtime:

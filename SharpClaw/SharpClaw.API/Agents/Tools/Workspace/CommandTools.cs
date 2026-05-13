@@ -1,7 +1,5 @@
-using System.Diagnostics;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database.Repositories;
@@ -12,25 +10,6 @@ public static partial class CommandTools
 {
     private const int DefaultTimeoutMs = 30_000;
     private const int MaxOutputBytes = 50_000;
-
-    private static readonly string[] DestructivePatterns = [
-        @"rm\s+(-rf?|--recursive|--force)",
-        @"rd\s+/s",
-        @"del\s+(/f|/s|/q)",
-        @"format\s+",
-        @"diskpart",
-        @"shutdown\s+(/r|/s)",
-        @"rmdir\s+/s",
-        @":\s*:\s*>\s*",
-        @">\s*NUL",
-        @"mkfs",
-        @"dd\s+",
-        @"chmod\s+777",
-        @"chown\s+root",
-        @"net\s+user",
-        @"net\s+localgroup",
-        @"reg\s+(delete|add)",
-    ];
 
     [GeneratedRegex(@"(?i)rm\s+(-rf?|--recursive|--force)", RegexOptions.Compiled)]
     private static partial Regex RmRfRegex();
@@ -63,9 +42,15 @@ public static partial class CommandTools
 
         if (!string.IsNullOrWhiteSpace(workspaceName))
         {
+            if (ctx.ActiveWorkspaceNames.Count > 0 && !ctx.ActiveWorkspaceNames.Contains(workspaceName, StringComparer.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Workspace '{workspaceName}' is not active for this session. Use ws_list_active_workspaces to see available workspaces, or ws_set_active_workspaces to activate it.");
+
             var ws = repo.ResolveWorkspaceByName(ctx.AgentId, workspaceName).Result;
             if (ws is not null)
+            {
+                ctx.Workspace = ws;
                 return ws;
+            }
             throw new InvalidOperationException($"Workspace '{workspaceName}' not found for agent {ctx.AgentId}.");
         }
 
@@ -138,6 +123,7 @@ public static partial class CommandTools
 
     public static async Task<object> RunCommand(
         IServiceProvider sp,
+        AIFunctionArguments args,
         string command,
         string? cwd = null,
         int? timeout_ms = null,
@@ -154,117 +140,37 @@ public static partial class CommandTools
 
         var riskLevel = ClassifyRisk(command);
         var actionType = ClassifyActionType(command);
-
-        var ctx = sp.GetRequiredService<AgentExecutionContext>();
-
-        if (ws.PolicyMode is not WorkspacePolicyMode.TrueUnrestricted)
+        var replayArgs = JsonSerializer.Serialize(new Dictionary<string, object?>
         {
-            if (riskLevel >= ApprovalRiskLevel.Critical ||
-                (ws.PolicyMode is WorkspacePolicyMode.Unrestricted && riskLevel >= ApprovalRiskLevel.High) ||
-                (ws.PolicyMode is WorkspacePolicyMode.ConfirmWritesAndExec or WorkspacePolicyMode.ConfirmExecOnly))
-            {
-                if (string.IsNullOrWhiteSpace(approval_token))
-                {
-                    var approvalRepo = sp.GetRequiredService<WorkspaceRepository>();
-                    var token = GenerateApprovalToken();
-                    await approvalRepo.CreateApprovalEvent(
-                        ctx.SessionId,
-                        ctx.AgentId,
-                        token,
-                        actionType,
-                        null,
-                        command,
-                        riskLevel);
+            ["command"] = command,
+            ["cwd"] = cwd,
+            ["timeout_ms"] = timeout_ms,
+            ["workspace"] = workspace,
+        });
+        var approvalCheck = await WorkspaceTools.CheckApprovalIfNeeded(
+            sp,
+            actionType,
+            null,
+            command,
+            riskLevel,
+            $"Run command: {command}",
+            approval_token,
+            workspace,
+            WorkspaceTools.GetContextValue(args, "CallId"),
+            "ws_run_command",
+            replayArgs);
 
-                    return new
-                    {
-                        approval_required = true,
-                        approval_token = token,
-                        action = "execute",
-                        command_preview = command.Length > 200 ? command[..200] + "..." : command,
-                        risk = riskLevel.ToString().ToLowerInvariant(),
-                        description = $"Run command: {command}",
-                    };
-                }
-
-                var repo = sp.GetRequiredService<WorkspaceRepository>();
-                var approval = await repo.GetApprovalEventByToken(approval_token);
-                if (approval is null || approval.Status != ApprovalStatus.Approved)
-                    return new { error = $"Invalid or unused approval token: {approval_token}" };
-            }
-        }
-
-        var resolvedCwd = string.IsNullOrWhiteSpace(cwd) || cwd == "."
-            ? ws.RootPath
-            : PathContainment.NormalizePath(ws.RootPath, cwd);
+        if (approvalCheck is not null)
+            return approvalCheck;
 
         var timeout = timeout_ms ?? DefaultTimeoutMs;
         timeout = Math.Min(timeout, 120_000);
 
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/bash",
-                Arguments = OperatingSystem.IsWindows() ? $"/c \"{command}\"" : $"-c \"{command}\"",
-                WorkingDirectory = resolvedCwd,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
+        // Get the execution router and execute the command
+        var routerFactory = sp.GetRequiredService<IWorkspaceExecutionRouterFactory>();
+        var router = routerFactory.GetRouter(ws);
 
-            using var process = new Process { StartInfo = psi };
-            process.Start();
-
-            var outputTask = process.StandardOutput.ReadToEndAsync();
-            var errorTask = process.StandardError.ReadToEndAsync();
-
-            if (!process.WaitForExit(timeout))
-            {
-                try { process.Kill(); } catch { }
-                return new
-                {
-                    title = $"Command timed out: {command}",
-                    command,
-                    timeout_ms = timeout,
-                    error = $"Command exceeded {timeout}ms timeout and was terminated.",
-                    killed = true,
-                };
-            }
-
-            var stdout = await outputTask;
-            var stderr = await errorTask;
-
-            var stdoutBytes = Encoding.UTF8.GetByteCount(stdout);
-            var stderrBytes = Encoding.UTF8.GetByteCount(stderr);
-
-            if (stdoutBytes > MaxOutputBytes)
-                stdout = stdout[..Math.Min(stdout.Length, MaxOutputBytes)] + "\n...[truncated]";
-
-            if (stderrBytes > MaxOutputBytes)
-                stderr = stderr[..Math.Min(stderr.Length, MaxOutputBytes)] + "\n...[truncated]";
-
-            return new
-            {
-                title = $"Command executed: {command}",
-                command,
-                cwd = resolvedCwd,
-                exit_code = process.ExitCode,
-                @stdout = string.IsNullOrWhiteSpace(stdout) ? null : stdout,
-                @stderr = string.IsNullOrWhiteSpace(stderr) ? null : stderr,
-                duration_ms = (int)(process.ExitTime - process.StartTime).TotalMilliseconds,
-            };
-        }
-        catch (Exception ex)
-        {
-            return new { error = $"Command execution failed: {ex.Message}" };
-        }
+        return await router.RunCommand(ws, command, timeout, MaxOutputBytes);
     }
 
-    private static string GenerateApprovalToken()
-    {
-        var bytes = RandomNumberGenerator.GetBytes(24);
-        return Convert.ToBase64String(bytes).Replace("+", "").Replace("/", "").Replace("=", "");
-    }
 }

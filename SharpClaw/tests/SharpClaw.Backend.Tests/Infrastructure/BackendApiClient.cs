@@ -20,6 +20,10 @@ public sealed class BackendApiClient(HttpClient client)
                 workspace_approval_events,
                 lcm_files,
                 session_active_workspaces,
+                channel_sessions,
+                channels,
+                scheduled_jobs,
+                secrets,
                 sessions
             restart identity cascade;
             """;
@@ -54,9 +58,54 @@ public sealed class BackendApiClient(HttpClient client)
         return await ReadDocumentAsync(response, cancellationToken);
     }
 
-    public async Task<Guid> CreateSessionAsync(long? agentId = null, string? name = null, CancellationToken cancellationToken = default)
+    public async Task<JsonDocument> GetAgentAsync(long agentId, CancellationToken cancellationToken = default)
     {
-        var response = await client.PostAsJsonAsync("/sessions", new { agentId, name }, cancellationToken);
+        var response = await client.GetAsync($"/agents/{agentId}", cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> CreateAgentAsync(
+        string name,
+        string? llmModel = null,
+        float? temperature = null,
+        long? softCompactThreshold = null,
+        long? hardCompactThreshold = null,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsJsonAsync("/agents", new
+        {
+            name,
+            llmModel,
+            temperature,
+            softCompactThreshold,
+            hardCompactThreshold,
+        }, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> UpdateAgentAsync(
+        long agentId,
+        string name,
+        string? llmModel = null,
+        float? temperature = null,
+        long? softCompactThreshold = null,
+        long? hardCompactThreshold = null,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await client.PutAsJsonAsync($"/agents/{agentId}", new
+        {
+            name,
+            llmModel,
+            temperature,
+            softCompactThreshold,
+            hardCompactThreshold,
+        }, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<Guid> CreateSessionAsync(long? agentId = null, string? name = null, string? tag = null, CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsJsonAsync("/sessions", new { agentId, name, tag }, cancellationToken);
         using var payload = await ReadDocumentAsync(response, cancellationToken);
         return payload.RootElement.GetProperty("sessionId").GetGuid();
     }
@@ -66,6 +115,16 @@ public sealed class BackendApiClient(HttpClient client)
         var request = new HttpRequestMessage(HttpMethod.Patch, $"/sessions/{sessionId}")
         {
             Content = JsonContent.Create(new { name }),
+        };
+        var response = await client.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task SetSessionTagAsync(Guid sessionId, string? tag, CancellationToken cancellationToken = default)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Patch, $"/sessions/{sessionId}")
+        {
+            Content = JsonContent.Create(new { tag }),
         };
         var response = await client.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -148,6 +207,191 @@ public sealed class BackendApiClient(HttpClient client)
     {
         var response = await client.PostAsync($"/sessions/{sessionId}/approvals/{token}/approve", content: null, cancellationToken);
         response.EnsureSuccessStatusCode();
+    }
+
+    public async Task RejectAsync(Guid sessionId, string token, CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsync($"/sessions/{sessionId}/approvals/{token}/reject", content: null, cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task<JsonDocument> ResumeIfPossibleAsync(Guid sessionId, bool includeDescendants = true, CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsync($"/sessions/{sessionId}/resume-if-possible?includeDescendants={includeDescendants.ToString().ToLowerInvariant()}", content: null, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> StopSessionAsync(Guid sessionId, bool includeDescendants = true, CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsync($"/sessions/{sessionId}/stop?includeDescendants={includeDescendants.ToString().ToLowerInvariant()}", content: null, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> ListScheduledJobsAsync(CancellationToken cancellationToken = default)
+    {
+        var response = await client.GetAsync("/jobs", cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> CreateScheduledJobAsync(
+        string name,
+        string cronExpression,
+        string prompt,
+        long agentId,
+        string? timezone = null,
+        bool? enabled = null,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsJsonAsync("/jobs", new
+        {
+            name,
+            cronExpression,
+            prompt,
+            agentId,
+            timezone,
+            enabled,
+        }, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> UpdateScheduledJobAsync(
+        long id,
+        string? name = null,
+        string? cronExpression = null,
+        string? prompt = null,
+        long? agentId = null,
+        string? timezone = null,
+        bool? enabled = null,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Patch, $"/jobs/{id}")
+        {
+            Content = JsonContent.Create(new
+            {
+                name,
+                cronExpression,
+                prompt,
+                agentId,
+                timezone,
+                enabled,
+            }),
+        };
+        var response = await client.SendAsync(request, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> DeleteScheduledJobAsync(long id, CancellationToken cancellationToken = default)
+    {
+        var response = await client.DeleteAsync($"/jobs/{id}", cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> ListChannelsAsync(CancellationToken cancellationToken = default)
+    {
+        var response = await client.GetAsync("/channels", cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> CreateChannelAsync(
+        string name,
+        string type,
+        long agentId,
+        string? routingMode = null,
+        string? config = null,
+        bool? enabled = null,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsJsonAsync("/channels", new
+        {
+            name,
+            type,
+            agentId,
+            routingMode,
+            config,
+            enabled,
+        }, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> UpdateChannelAsync(
+        long id,
+        string? name = null,
+        string? type = null,
+        long? agentId = null,
+        string? routingMode = null,
+        string? config = null,
+        bool? enabled = null,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Patch, $"/channels/{id}")
+        {
+            Content = JsonContent.Create(new
+            {
+                name,
+                type,
+                agentId,
+                routingMode,
+                config,
+                enabled,
+            }),
+        };
+        var response = await client.SendAsync(request, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> DeleteChannelAsync(long id, CancellationToken cancellationToken = default)
+    {
+        var response = await client.DeleteAsync($"/channels/{id}", cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> ListSecretsAsync(CancellationToken cancellationToken = default)
+    {
+        var response = await client.GetAsync("/secrets", cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> CreateSecretAsync(
+        string name,
+        string value,
+        string scope = "global",
+        long? ownerId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsJsonAsync("/secrets", new
+        {
+            name,
+            value,
+            scope,
+            ownerId,
+        }, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> UpdateSecretAsync(
+        long id,
+        string? value = null,
+        string? scope = null,
+        long? ownerId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Patch, $"/secrets/{id}")
+        {
+            Content = JsonContent.Create(new
+            {
+                value,
+                scope,
+                ownerId,
+            }),
+        };
+        var response = await client.SendAsync(request, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> DeleteSecretAsync(long id, CancellationToken cancellationToken = default)
+    {
+        var response = await client.DeleteAsync($"/secrets/{id}", cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
     }
 
     public Task<IReadOnlyList<StreamEvent>> WaitForStreamCompleted(

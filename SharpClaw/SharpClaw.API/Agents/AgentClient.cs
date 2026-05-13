@@ -1,9 +1,6 @@
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI.Chat;
-using SharpClaw.API.Agents.Workspace;
-using SharpClaw.API.Database;
-using SharpClaw.API.Database.Repositories;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace SharpClaw.API.Agents;
@@ -22,25 +19,11 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
         Func<ChatResponseUpdate, ValueTask>? onUpdate = null,
         Func<ValueTask>? onMessageFlushed = null)
     {
-        var configuration = serviceProvider.GetRequiredService<IConfiguration>();
-
-        var services = new ServiceCollection()
-            .Configure<LmStudioConfiguration>(configuration)
-            .AddSingleton(context)
-            .AddSingleton(configuration)
-            .AddSingleton<ChatRepository>()
-            .AddSingleton<AgentsRepository>()
-            .AddSingleton<FragmentsRepository>()
-            .AddSingleton<FragmentEmbeddingService>()
-            .AddSingleton<WorkspaceRepository>()
-            .AddSingleton<ApprovalService>();
-
-        if (runState is not null)
-            services.AddSingleton(runState);
+        var services = new AgentClientServiceProvider(serviceProvider, context, runState);
 
         var agent = chatClient.AsAIAgent(
                 tools: [..tools],
-                services: services.BuildServiceProvider()
+                services: services
             )
             .AsBuilder()
             .Use(Callback)
@@ -91,12 +74,15 @@ public class AgentClient(ChatClient chatClient, AgentExecutionContext context, I
 
         var queuedTasks = context.QueuedTasks;
         context.QueuedTasks = [];
+        var queuedApprovals = context.QueuedApprovals;
+        context.QueuedApprovals = [];
 
         return new AgentClientResponse
         {
             Responses = response,
             ShouldContinue = _shouldContinue,
             QueuedTasks = queuedTasks,
+            QueuedApprovals = queuedApprovals,
         };
 
         async Task FlushMessageUpdates()
@@ -140,6 +126,7 @@ public class AgentClientResponse
     public required List<ChatResponse> Responses { get; init; }
     public required bool ShouldContinue { get; init; }
     public List<AgentClientTask> QueuedTasks { get; init; } = [];
+    public List<AgentClientApproval> QueuedApprovals { get; init; } = [];
 }
 
 public class AgentClientTask
@@ -156,4 +143,11 @@ public class AgentClientTask
     {
         ChildSession,
     }
+}
+
+public class AgentClientApproval
+{
+    public required string ApprovalToken { get; init; }
+    public required string CallId { get; init; }
+    public required string ToolName { get; init; }
 }

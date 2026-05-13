@@ -2,6 +2,7 @@ export type SessionSummary = {
   sessionId: string
   agentId: number
   name: string | null
+  tag: string | null
   visibleInSidebar: boolean
   parentSessionId: string | null
   createdAt: string
@@ -14,6 +15,8 @@ export type AgentConfig = {
   name: string
   llmModel: string
   temperature: number
+  softCompactThreshold: number
+  hardCompactThreshold: number
   createdAt: string
   updatedAt: string
 }
@@ -59,6 +62,10 @@ export type SessionHistoryResponse = {
   latestSequenceId: number
   messages: SessionHistoryMessage[]
   childSessions: SessionChildLink[]
+  hasMoreMessages: boolean
+  hasMoreChildSessions: boolean
+  totalMessageCount: number
+  estimatedTokenCount: number
 }
 
 export type SessionChildLink = {
@@ -73,7 +80,7 @@ export type StreamEvent = {
   messageId: number
   sessionId: string
   sequence: number
-  type: 'started' | 'delta' | 'completed' | 'failed' | 'tool_call' | 'tool_result' | 'approval_required' | 'child_session_spawned'
+  type: 'started' | 'delta' | 'completed' | 'failed' | 'tool_call' | 'tool_result' | 'approval_required' | 'child_session_spawned' | 'token_usage'
   text: string | null
   data?: unknown
   timestamp: string
@@ -116,13 +123,15 @@ export type ChildSessionSpawnedEventData = {
 }
 
 export type WorkspaceConfig = {
-  id: number
-  name: string
-  rootPath: string
-  allowlistPatterns: string[]
-  denylistPatterns: string[]
-  createdAt: string
-  updatedAt: string
+  id: number;
+  name: string;
+  rootPath: string;
+  allowlistPatterns: string[];
+  denylistPatterns: string[];
+  runtimeKind: 'local' | 'bridge';
+  runtimeTarget: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type WorkspaceAssignment = {
@@ -137,15 +146,50 @@ export type AgentWorkspaceEntry = {
 }
 
 export type ApprovalEvent = {
+  id: number;
+  sessionId: string;
+  agentId: number;
+  approvalToken: string;
+  actionType: string;
+  targetPath: string | null;
+  commandPreview: string | null;
+  riskLevel: string;
+  status: string;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export type BridgeStatus = {
+  bridgeId: string;
+  displayName: string;
+  status: string;
+  lastSeenAt: string | null;
+  createdAt: string;
+}
+
+export type ScheduledJob = {
   id: number
-  sessionId: string
+  name: string
+  cronExpression: string
+  timezone: string
+  prompt: string
   agentId: number
-  approvalToken: string
-  actionType: string
-  targetPath: string | null
-  commandPreview: string | null
-  riskLevel: string
-  status: string
+  enabled: boolean
+  lastRunAt: string | null
+  lastSessionId: string | null
+  nextRunAt: string
   createdAt: string
-  resolvedAt: string | null
+  updatedAt: string
+}
+
+export type Channel = {
+  id: number
+  name: string
+  type: string
+  agentId: number
+  routingMode: string
+  config: string
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
 }

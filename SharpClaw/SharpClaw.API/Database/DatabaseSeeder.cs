@@ -1,4 +1,4 @@
-﻿using Dapper;
+using Dapper;
 using Npgsql;
 
 namespace SharpClaw.API.Database;
@@ -41,6 +41,8 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     name varchar(511) not null,
                     llm_model varchar(255) not null default 'openai/gpt-oss-20b',
                     temperature real not null default 0.1,
+                    soft_compact_threshold bigint not null default 76800,
+                    hard_compact_threshold bigint not null default 87040,
                     created_at timestamptz not null default now(),
                     updated_at timestamptz not null default now()
                 );
@@ -53,6 +55,7 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     status varchar(32) not null default 'completed'
                         check (status in ('waiting', 'pending', 'running', 'completed', 'failed')),
                     parent_session_id uuid null references sessions(id),
+                    tag varchar(255) null,
                     created_at timestamptz not null default now(),
                     updated_at timestamptz not null default now()
                 );
@@ -145,6 +148,18 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                 alter table sessions
                     add column if not exists visible_in_sidebar boolean not null default true;
 
+                alter table sessions
+                    add column if not exists tag varchar(255) null;
+
+                create unique index if not exists idx_sessions_agent_tag
+                    on sessions(agent_id, tag)
+                    where tag is not null;
+
+                alter table agents
+                    add column if not exists soft_compact_threshold bigint not null default 76800;
+                alter table agents
+                    add column if not exists hard_compact_threshold bigint not null default 87040;
+
                 update sessions
                 set visible_in_sidebar = false
                 where parent_session_id is not null
@@ -184,10 +199,20 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     root_path text not null,
                     allowlist_patterns jsonb not null default '[]'::jsonb,
                     denylist_patterns jsonb not null default '[]'::jsonb,
+                    runtime_kind varchar(32) not null default 'local'
+                        check (runtime_kind in ('local', 'bridge')),
+                    runtime_target varchar(255) null,
                     created_at timestamptz not null default now(),
                     updated_at timestamptz not null default now(),
                     unique(name)
                 );
+
+                alter table workspaces
+                    add column if not exists runtime_kind varchar(32) not null default 'local'
+                        check (runtime_kind in ('local', 'bridge'));
+
+                alter table workspaces
+                    add column if not exists runtime_target varchar(255) null;
 
                 create table if not exists agent_workspace_assignments(
                     id bigserial primary key,
@@ -209,12 +234,28 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     action_type varchar(32) not null,
                     target_path text null,
                     command_preview text null,
+                    description text null,
+                    call_id varchar(255) null,
+                    tool_name varchar(255) null,
+                    tool_arguments jsonb null,
                     risk_level varchar(16) not null,
                     status varchar(16) not null default 'pending'
                         check (status in ('pending', 'approved', 'rejected', 'expired')),
                     created_at timestamptz not null default now(),
                     resolved_at timestamptz null
                 );
+
+                alter table workspace_approval_events
+                    add column if not exists description text null;
+
+                alter table workspace_approval_events
+                    add column if not exists call_id varchar(255) null;
+
+                alter table workspace_approval_events
+                    add column if not exists tool_name varchar(255) null;
+
+                alter table workspace_approval_events
+                    add column if not exists tool_arguments jsonb null;
 
                 create table if not exists lcm_files(
                     id bigserial primary key,
@@ -268,13 +309,115 @@ public partial class DatabaseSeeder(IConfiguration configuration)
 
                 create index if not exists idx_lcm_files_file_id
                     on lcm_files(file_id);
+
+                create table if not exists bridge_clients(
+                    bridge_id varchar(128) primary key,
+                    display_name varchar(255) not null,
+                    status varchar(32) not null default 'offline'
+                        check (status in ('online', 'offline')),
+                    last_seen_at timestamptz null,
+                    capabilities jsonb not null default '{}'::jsonb,
+                    auth_fingerprint varchar(255) null,
+                    is_devcontainer boolean not null default false,
+                    container_id varchar(255) null,
+                    workspace_path_in_container text null,
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
+                );
+
+                alter table bridge_clients
+                    add column if not exists is_devcontainer boolean not null default false;
+
+                alter table bridge_clients
+                    add column if not exists container_id varchar(255) null;
+
+                alter table bridge_clients
+                    add column if not exists workspace_path_in_container text null;
+
+                create table if not exists bridge_execution_events(
+                    id bigserial primary key,
+                    request_id varchar(128) not null unique,
+                    bridge_id varchar(128) not null references bridge_clients(bridge_id),
+                    session_id uuid not null references sessions(id) on delete cascade,
+                    agent_id bigint not null references agents(id),
+                    workspace_id bigint not null references workspaces(id),
+                    operation varchar(64) not null,
+                    status varchar(32) not null default 'pending',
+                    error_message text null,
+                    started_at timestamptz not null default now(),
+                    completed_at timestamptz null
+                );
+
+                create index if not exists idx_bridge_clients_status
+                    on bridge_clients(status);
+
+                create index if not exists idx_bridge_execution_events_bridge
+                    on bridge_execution_events(bridge_id, started_at desc);
+
+                create index if not exists idx_bridge_execution_events_session
+                    on bridge_execution_events(session_id, started_at desc);
+
+                create table if not exists scheduled_jobs(
+                    id bigserial primary key,
+                    name text not null,
+                    cron_expression text not null,
+                    timezone text not null default 'Europe/Rome',
+                    prompt text not null,
+                    agent_id bigint not null references agents(id),
+                    enabled boolean not null default true,
+                    last_run_at timestamptz,
+                    last_session_id uuid,
+                    next_run_at timestamptz not null,
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
+                );
+
+                create index if not exists idx_scheduled_jobs_enabled_next_run
+                    on scheduled_jobs(enabled, next_run_at);
+
+                create table if not exists channels(
+                    id bigserial primary key,
+                    name text not null,
+                    type text not null check (type in ('discord', 'telegram')),
+                    agent_id bigint not null references agents(id),
+                    routing_mode text not null default 'shared'
+                        check (routing_mode in ('shared', 'per_user')),
+                    config jsonb not null default '{}'::jsonb,
+                    enabled boolean not null default true,
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
+                );
+
+                create table if not exists channel_sessions(
+                    id bigserial primary key,
+                    channel_id bigint not null references channels(id) on delete cascade,
+                    identity_id text not null,
+                    session_id uuid not null references sessions(id),
+                    last_broadcast_sequence bigint not null default 0,
+                    created_at timestamptz not null default now(),
+                    unique(channel_id, identity_id)
+                );
+
+                create index if not exists idx_channel_sessions_session
+                    on channel_sessions(session_id);
+
+                create table if not exists secrets(
+                    id bigserial primary key,
+                    name text not null unique,
+                    encrypted_value text not null,
+                    scope text not null default 'global'
+                        check (scope in ('global', 'user', 'agent')),
+                    owner_id bigint null,
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
+                );
                 """);
 
             if (await connection.ExecuteScalarAsync<int>("select count(*) from agents where name = 'Main'") == 0)
                 await connection.ExecuteAsync(
                     """
-                    insert into agents (name, llm_model, temperature)
-                    values ('Main', 'qwen/qwen3.5-35b-a3b', 0.1);
+                    insert into agents (name, llm_model, temperature, soft_compact_threshold, hard_compact_threshold)
+                    values ('Main', 'qwen/qwen3.5-35b-a3b', 0.1, 76800, 87040);
                     """);
 
             await connection.ExecuteAsync(

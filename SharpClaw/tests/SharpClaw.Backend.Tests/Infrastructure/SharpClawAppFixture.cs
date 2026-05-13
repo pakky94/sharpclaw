@@ -66,6 +66,12 @@ public sealed class SharpClawAppFixture : IAsyncLifetime
         SetEnvironment("LmStudio__EmbeddingApiKey", "test-api-key");
         SetEnvironment("LmStudio__EmbeddingModel", "test-embedding-model");
         SetEnvironment("SHARPCLAW_DEBUGGING_ENDPOINTS_ENABLED", "true");
+
+        // Create a temp key file for SecretService
+        var key = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var keyPath = Path.GetTempFileName();
+        File.WriteAllText(keyPath, key);
+        SetEnvironment("SHARPCLAW_SECRET_KEY_FILE", keyPath);
     }
 
     private void SetEnvironment(string key, string value)

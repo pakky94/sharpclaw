@@ -3,7 +3,7 @@ using SharpClaw.API.Database.Repositories;
 
 namespace SharpClaw.API.Agents.Workspace;
 
-public class ApprovalService(WorkspaceRepository repository)
+public class ApprovalService(WorkspaceRepository repository, ChatRepository chatRepository)
 {
     public string GenerateApprovalToken()
     {
@@ -34,6 +34,7 @@ public class ApprovalService(WorkspaceRepository repository)
 
     public async Task<IReadOnlyList<WorkspaceApprovalEvent>> GetPendingApprovalsForSession(Guid sessionId)
     {
-        return await repository.GetPendingApprovalsForSession(sessionId);
+        var visibleSessionIds = await chatRepository.GetSessionAndDescendantIds(sessionId);
+        return await repository.GetPendingApprovalsForSessions([..visibleSessionIds]);
     }
 }

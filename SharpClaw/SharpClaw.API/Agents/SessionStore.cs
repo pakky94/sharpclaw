@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using SharpClaw.API.Database.Repositories;
 
 namespace SharpClaw.API.Agents;
@@ -10,6 +10,7 @@ public class SessionStore(
 )
 {
     private readonly ConcurrentDictionary<Guid, AgentSessionState> _sessions = new();
+    private readonly ConcurrentDictionary<Guid, byte> _executingRuns = new();
     private readonly SemaphoreSlim _sessionsMutex = new(1, 1);
 
     public async Task<AgentSessionState> GetOrLoadSession(Guid sessionId)
@@ -44,6 +45,8 @@ public class SessionStore(
                 AgentId = persistedSession.AgentId,
                 LlmModel = agentConfig.LlmModel,
                 Temperature = agentConfig.Temperature,
+                SoftCompactThreshold = agentConfig.SoftCompactThreshold,
+                HardCompactThreshold = agentConfig.HardCompactThreshold,
                 Messages = [..await chatRepository.LoadActiveConversation(sessionId)],
                 Workspace = defaultWs,
                 ActiveWorkspaceNames = activeWsNames,
@@ -59,6 +62,14 @@ public class SessionStore(
                     .Select(sd => new SessionDependency(sd.ChildSessionId, sd.CallId))
                     .ToList()
             );
+            loadedSession.Run.SetStatus(persistedSession.Status.ToLowerInvariant() switch
+            {
+                "pending" => AgentRunStatus.Pending,
+                "running" => AgentRunStatus.Running,
+                "waiting" => AgentRunStatus.Waiting,
+                "failed" => AgentRunStatus.Failed,
+                _ => AgentRunStatus.Completed,
+            });
             _sessions[sessionId] = loadedSession;
             return loadedSession;
         }
@@ -78,6 +89,16 @@ public class SessionStore(
             : null;
     }
 
+    public AgentRunState? GetLiveRunForSession(Guid sessionId)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var session))
+            return null;
+
+        return session.Run is { Status: AgentRunStatus.Pending or AgentRunStatus.Running or AgentRunStatus.Waiting }
+            ? session.Run
+            : null;
+    }
+
     public bool TryUpdateSessionActiveWorkspaces(Guid sessionId, string[] workspaceNames)
     {
         if (!_sessions.TryGetValue(sessionId, out var session))
@@ -91,5 +112,44 @@ public class SessionStore(
     {
         _sessions.TryAdd(session.SessionId, session);
         return Task.CompletedTask;
+    }
+
+    public bool TryMarkRunExecuting(Guid sessionId)
+    {
+        return _executingRuns.TryAdd(sessionId, 0);
+    }
+
+    public void ClearRunExecuting(Guid sessionId)
+    {
+        _executingRuns.TryRemove(sessionId, out _);
+    }
+
+    public bool IsRunExecuting(Guid sessionId)
+    {
+        return _executingRuns.ContainsKey(sessionId);
+    }
+
+    /// <summary>
+    /// Refreshes the agent-level configuration (LlmModel, Temperature, compaction thresholds)
+    /// for all in-memory sessions belonging to the given agent. This ensures that changes made
+    /// via the agent update endpoint take effect immediately without requiring a restart.
+    /// </summary>
+    public async Task RefreshAgentConfigForSessions(long agentId)
+    {
+        var agentConfig = await agentsRepository.GetAgent(agentId);
+        if (agentConfig is null)
+            return;
+
+        foreach (var kvp in _sessions)
+        {
+            var session = kvp.Value;
+            if (session.Context.AgentId != agentId)
+                continue;
+
+            session.Context.LlmModel = agentConfig.LlmModel;
+            session.Context.Temperature = agentConfig.Temperature;
+            session.Context.SoftCompactThreshold = agentConfig.SoftCompactThreshold;
+            session.Context.HardCompactThreshold = agentConfig.HardCompactThreshold;
+        }
     }
 }

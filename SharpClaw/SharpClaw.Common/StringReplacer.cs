@@ -1,6 +1,6 @@
 ﻿using System.Text;
 
-namespace SharpClaw.API.Helpers;
+namespace SharpClaw.Common;
 
 public static class StringReplacer
 {
@@ -100,10 +100,9 @@ public static class StringReplacer
             if (matchIdx >= matches.Count)
                 continue;
 
-            var length = matches[matchIdx].End - matches[matchIdx].Start;
-            for (var j = 0; j <= length; j++)
+            foreach (var nl in newLines)
             {
-                sb.Append(newLines[j].TrimEnd('\r'));
+                sb.Append(nl.TrimEnd('\r'));
                 sb.Append(newLineSeparator);
             }
 

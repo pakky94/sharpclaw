@@ -39,21 +39,28 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const [showToolSessions, setShowToolSessions] = useState(false)
   const [messages, setMessages] = useState<ChatBubble[]>([])
+  const [hasMoreMessages, setHasMoreMessages] = useState(false)
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const [estimatedTokenCount, setEstimatedTokenCount] = useState(0)
   const [draftsBySessionKey, setDraftsBySessionKey] = useState<Record<string, string>>({})
   const [sendingSessionIds, setSendingSessionIds] = useState<Set<string>>(new Set())
   const [showToolEvents, setShowToolEvents] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeRun, setActiveRun] = useState<{ sessionId: string; status: RunStatus } | null>(null)
+  const [runControlBusy, setRunControlBusy] = useState(false)
   const [currentParentSessionId, setCurrentParentSessionId] = useState<string | null>(null)
-  const [pendingApproval, setPendingApproval] = useState<{
+  const [pendingApprovals, setPendingApprovals] = useState<Array<{
     token: string
     action: string
     target: string | null
     commandPreview: string | null
     risk: string
     description: string
-  } | null>(null)
+    sourceSessionId?: string | null
+  }>>([])
   const streamRef = useRef<{ sessionId: string; latestMessageId: number; source: EventSource } | null>(null)
+  const selectedSessionRef = useRef(selectedSessionId)
+  const resolvingTokensRef = useRef<Set<string>>(new Set())
   const draftSessionKey = selectedSessionId ?? (selectedAgentId !== null ? `__new__:${selectedAgentId}` : '__new__:none')
   const prompt = draftsBySessionKey[draftSessionKey] ?? ''
   const unsavedSessionIds = useMemo(() => {
@@ -109,6 +116,59 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
       closeStream()
     }
   }, [])
+
+  useEffect(() => {
+    selectedSessionRef.current = selectedSessionId
+  }, [selectedSessionId])
+
+  useEffect(() => {
+    setPendingApprovals([])
+
+    if (!selectedSessionId) {
+      return
+    }
+
+    let cancelled = false
+    const sync = async () => {
+      try {
+        const data = await fetchJson<{ sessionId: string; approvals: Array<{
+          approvalToken: string
+          actionType: string
+          targetPath: string | null
+          commandPreview: string | null
+          riskLevel: string
+          description: string | null
+          sessionId: string
+        }> }>(`${API_BASE_URL}/sessions/${selectedSessionId}/approvals/pending`)
+
+        if (cancelled) return
+        const mapped = data.approvals
+          .filter((a) => !resolvingTokensRef.current.has(a.approvalToken))
+          .map((a) => ({
+          token: a.approvalToken,
+          action: a.actionType,
+          target: a.targetPath,
+          commandPreview: a.commandPreview,
+          risk: a.riskLevel,
+          description: a.description ?? 'Action requires approval',
+          sourceSessionId: a.sessionId,
+        }))
+        setPendingApprovals(mapped)
+      } catch {
+        // Keep existing queue when polling fails.
+      }
+    }
+
+    void sync()
+    const interval = window.setInterval(() => {
+      void sync()
+    }, 2000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [selectedSessionId])
 
   useEffect(() => {
     onUnsavedChange?.(hasUnsavedDrafts)
@@ -190,6 +250,8 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
       closeStream()
       const data = await fetchJson<SessionHistoryResponse>(`${API_BASE_URL}/sessions/${sessionId}/history`)
       setCurrentParentSessionId(data.parentSessionId ?? null)
+      setHasMoreMessages(data.hasMoreMessages)
+      setEstimatedTokenCount(data.estimatedTokenCount)
 
       const mapped: ChatBubble[] = data.messages.flatMap((message) =>
         mapHistoryMessageToBubbles(sessionId, message),
@@ -242,6 +304,36 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
       }
     } catch (e) {
       setError(asErrorMessage(e))
+    }
+  }
+
+  async function loadOlderMessages() {
+    if (!selectedSessionId || !hasMoreMessages || loadingOlder) return
+
+    const oldestMessage = messages[0]
+    if (!oldestMessage) return
+
+    try {
+      setLoadingOlder(true)
+      const data = await fetchJson<SessionHistoryResponse>(
+        `${API_BASE_URL}/sessions/${selectedSessionId}/history?before=${oldestMessage.messageId}`
+      )
+      setHasMoreMessages(data.hasMoreMessages)
+      setEstimatedTokenCount(data.estimatedTokenCount)
+
+      const mapped: ChatBubble[] = data.messages.flatMap((message) =>
+        mapHistoryMessageToBubbles(selectedSessionId, message),
+      )
+      const mergedMapped = attachChildSessionsToBubbles(
+        mergeToolResultBubbles(mapped),
+        data.childSessions ?? [],
+      )
+
+      setMessages((prev) => [...mergedMapped, ...prev])
+    } catch (e) {
+      setError(asErrorMessage(e))
+    } finally {
+      setLoadingOlder(false)
     }
   }
 
@@ -334,22 +426,63 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
 
   async function renameSession(sessionId: string) {
     const current = sessions.find((s) => s.sessionId === sessionId)
-    const nextName = window.prompt('Rename session:', current?.name ?? '')?.trim()
-    if (!nextName) {
-      return
-    }
+    const nextName = window.prompt('Rename session (name):', current?.name ?? '')?.trim()
+    if (nextName === undefined) return // cancelled
+
+    const nextTag = window.prompt('Session tag (leave empty to clear):', current?.tag ?? '')?.trim()
+    if (nextTag === undefined) return // cancelled
 
     try {
       setError(null)
-      await fetchJson<{ sessionId: string; name: string }>(`${API_BASE_URL}/sessions/${sessionId}`, {
+      await fetchJson<{ sessionId: string; name: string; tag: string }>(`${API_BASE_URL}/sessions/${sessionId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ name: nextName }),
+        body: JSON.stringify({ name: nextName || undefined, tag: nextTag || '' }),
       })
       if (selectedAgentId !== null) {
         await refreshSessions(selectedAgentId, sessionId)
       }
     } catch (e) {
       setError(asErrorMessage(e))
+    }
+  }
+
+  async function resumeSessionIfPossible() {
+    if (!selectedSessionId) return
+    try {
+      setRunControlBusy(true)
+      setError(null)
+      await fetchJson(`${API_BASE_URL}/sessions/${selectedSessionId}/resume-if-possible`, {
+        method: 'POST',
+      })
+      await loadHistory(selectedSessionId)
+      if (selectedAgentId !== null) {
+        await refreshSessions(selectedAgentId, selectedSessionId)
+      }
+    } catch (e) {
+      setError(asErrorMessage(e))
+    } finally {
+      setRunControlBusy(false)
+    }
+  }
+
+  async function stopSession() {
+    if (!selectedSessionId) return
+    try {
+      setRunControlBusy(true)
+      setError(null)
+      await fetchJson(`${API_BASE_URL}/sessions/${selectedSessionId}/stop`, {
+        method: 'POST',
+      })
+      closeStream()
+      setActiveRun(null)
+      await loadHistory(selectedSessionId)
+      if (selectedAgentId !== null) {
+        await refreshSessions(selectedAgentId, selectedSessionId)
+      }
+    } catch (e) {
+      setError(asErrorMessage(e))
+    } finally {
+      setRunControlBusy(false)
     }
   }
 
@@ -486,6 +619,14 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         )
       })
 
+      source.addEventListener('token_usage', (event) => {
+        const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
+        const data = payload.data as { estimatedTokenCount?: number } | undefined
+        if (data?.estimatedTokenCount !== undefined) {
+          setEstimatedTokenCount(data.estimatedTokenCount)
+        }
+      })
+
       source.addEventListener('completed', () => {
         close()
         setActiveRun(null)
@@ -511,15 +652,31 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
 
       source.addEventListener('approval_required', (event) => {
         const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
-        const data = payload.data as { approval_token: string; action: string; target: string | null; command_preview: string | null; risk: string; description: string } | undefined
+        if (payload.sessionId !== selectedSessionRef.current) return
+        const data = payload.data as {
+          approval_token: string
+          action: string
+          target: string | null
+          command_preview: string | null
+          risk: string
+          description: string
+          source_session_id?: string | null
+        } | undefined
         if (data) {
-          setPendingApproval({
-            token: data.approval_token,
-            action: data.action,
-            target: data.target,
-            commandPreview: data.command_preview,
-            risk: data.risk,
-            description: data.description,
+          setPendingApprovals((prev) => {
+            if (prev.some((p) => p.token === data.approval_token)) return prev
+            return [
+              ...prev,
+              {
+                token: data.approval_token,
+                action: data.action,
+                target: data.target,
+                commandPreview: data.command_preview,
+                risk: data.risk,
+                description: data.description,
+                sourceSessionId: data.source_session_id ?? payload.sessionId,
+              },
+            ]
           })
         }
       })
@@ -527,17 +684,22 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   }
 
   async function resolveApproval(approved: boolean) {
-    if (!pendingApproval || !selectedSessionId) return
+    if (pendingApprovals.length === 0 || !selectedSessionId) return
+    const pendingApproval = pendingApprovals[0]
+    const token = pendingApproval.token
+    resolvingTokensRef.current.add(token)
     try {
       setError(null)
       const method = approved ? 'approve' : 'reject'
       await fetchJson(
-        `${API_BASE_URL}/sessions/${selectedSessionId}/approvals/${pendingApproval.token}/${method}`,
+        `${API_BASE_URL}/sessions/${selectedSessionId}/approvals/${token}/${method}`,
         { method: 'POST' },
       )
-      setPendingApproval(null)
+      setPendingApprovals((prev) => prev.filter((x) => x.token !== token))
     } catch (e) {
       setError(asErrorMessage(e))
+    } finally {
+      resolvingTokensRef.current.delete(token)
     }
   }
 
@@ -611,7 +773,12 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
           hasUnsavedDraft={prompt.trim().length > 0}
           showToolEvents={showToolEvents}
           apiBaseUrl={API_BASE_URL}
+          runStatus={activeRun?.sessionId === selectedSessionId ? activeRun.status : null}
+          runControlBusy={runControlBusy}
+          estimatedTokenCount={estimatedTokenCount}
           onShowToolEventsChange={setShowToolEvents}
+          onResumeIfPossible={() => void resumeSessionIfPossible()}
+          onStop={() => void stopSession()}
           onGoToSession={(sessionId) => {
             setSelectedSessionId(sessionId)
             void loadHistory(sessionId)
@@ -621,6 +788,9 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         <MessagesView
           messages={visibleMessages}
           showToolEvents={showToolEvents}
+          hasMoreMessages={hasMoreMessages}
+          loadingOlder={loadingOlder}
+          onLoadOlder={() => void loadOlderMessages()}
           onToggleToolExpanded={toggleToolExpanded}
           onToggleToolResultExpanded={toggleToolResultExpanded}
           onOpenSession={(sessionId) => {
@@ -648,31 +818,38 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         />
       </main>
 
-      {pendingApproval && (
+      {pendingApprovals.length > 0 && (
         <div className="approval-overlay">
           <div className="approval-dialog">
             <div className="approval-dialog-header">
               <h3>Action Requires Approval</h3>
-              <span className={`approval-risk-badge ${pendingApproval.risk}`}>{pendingApproval.risk}</span>
+              <span className={`approval-risk-badge ${pendingApprovals[0].risk}`}>{pendingApprovals[0].risk}</span>
             </div>
             <div className="approval-dialog-body">
-              <p className="approval-description">{pendingApproval.description}</p>
-              {pendingApproval.target && (
+              <p className="approval-description">{pendingApprovals[0].description}</p>
+              {pendingApprovals[0].sourceSessionId && (
                 <div className="approval-detail">
-                  <span>Path:</span>
-                  <code>{pendingApproval.target}</code>
+                  <span>Source session:</span>
+                  <code>{pendingApprovals[0].sourceSessionId}</code>
                 </div>
               )}
-              {pendingApproval.commandPreview && (
+              {pendingApprovals[0].target && (
+                <div className="approval-detail">
+                  <span>Path:</span>
+                  <code>{pendingApprovals[0].target}</code>
+                </div>
+              )}
+              {pendingApprovals[0].commandPreview && (
                 <div className="approval-detail">
                   <span>Command:</span>
-                  <code>{pendingApproval.commandPreview}</code>
+                  <code>{pendingApprovals[0].commandPreview}</code>
                 </div>
               )}
               <div className="approval-detail">
                 <span>Action:</span>
-                <span className="approval-action-type">{pendingApproval.action}</span>
+                <span className="approval-action-type">{pendingApprovals[0].action}</span>
               </div>
+              {pendingApprovals.length > 1 && <div className="approval-detail"><span>Queued:</span><span>{pendingApprovals.length - 1} more approvals</span></div>}
             </div>
             <div className="approval-dialog-footer">
               <button

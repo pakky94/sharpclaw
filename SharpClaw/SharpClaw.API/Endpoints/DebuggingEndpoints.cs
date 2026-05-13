@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.API.Agents;
 using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database;
@@ -45,6 +44,8 @@ public static class DebuggingEndpoints
                 AgentId = agentId,
                 LlmModel = agent.LlmModel,
                 Temperature = agent.Temperature,
+                SoftCompactThreshold = agent.SoftCompactThreshold,
+                HardCompactThreshold = agent.HardCompactThreshold,
                 Messages = [],
                 Workspace = resolvedWorkspace,
                 ActiveWorkspaceNames = resolvedWorkspace is null
@@ -122,7 +123,9 @@ public static class DebuggingEndpoints
             .AddSingleton(rootServices.GetRequiredService<WorkspaceRepository>())
             .AddSingleton(rootServices.GetRequiredService<ApprovalService>())
             .AddSingleton(rootServices.GetRequiredService<ISearchService>())
-            .AddSingleton(rootServices.GetRequiredService<IWebFetchService>());
+            .AddSingleton(rootServices.GetRequiredService<IWebFetchService>())
+            .AddSingleton(rootServices.GetRequiredService<LocalWorkspaceExecutor>())
+            .AddSingleton(rootServices.GetRequiredService<IWorkspaceExecutionRouterFactory>());
 
         return services.BuildServiceProvider();
     }

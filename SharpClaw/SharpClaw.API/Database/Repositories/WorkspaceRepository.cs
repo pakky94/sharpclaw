@@ -58,6 +58,70 @@ public class WorkspaceRepository(IConfiguration configuration)
         return deleted > 0;
     }
 
+    public async Task<bool> UpdateWorkspaceRuntime(long id, WorkspaceRuntimeKind runtimeKind, string? runtimeTarget)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var updated = await connection.ExecuteAsync(
+            """
+            update workspaces
+            set runtime_kind = @runtimeKind, runtime_target = @runtimeTarget, updated_at = now()
+            where id = @id
+            """,
+            new
+            {
+                id,
+                runtimeKind = runtimeKind.ToString().ToLowerInvariant(),
+                runtimeTarget,
+            });
+        return updated > 0;
+    }
+
+    public async Task UpsertBridgeClient(string bridgeId, string displayName, string status, bool isDevContainer = false, string? containerId = null, string? workspacePathInContainer = null)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.ExecuteAsync(
+            """
+            insert into bridge_clients (bridge_id, display_name, status, last_seen_at, is_devcontainer, container_id, workspace_path_in_container)
+            values (@bridgeId, @displayName, @status, now(), @isDevContainer, @containerId, @workspacePathInContainer)
+            on conflict (bridge_id) do update set
+                display_name = excluded.display_name,
+                status = excluded.status,
+                last_seen_at = now(),
+                updated_at = now(),
+                is_devcontainer = excluded.is_devcontainer,
+                container_id = excluded.container_id,
+                workspace_path_in_container = excluded.workspace_path_in_container
+            """,
+            new { bridgeId, displayName, status, isDevContainer, containerId, workspacePathInContainer });
+    }
+
+    public async Task UpdateBridgeStatus(string bridgeId, string status)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.ExecuteAsync(
+            """
+            update bridge_clients
+            set status = @status, last_seen_at = now(), updated_at = now()
+            where bridge_id = @bridgeId
+            """,
+            new { bridgeId, status });
+    }
+
+    public async Task<IReadOnlyList<BridgeClientInfo>> GetBridgeClients()
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var results = await connection.QueryAsync(
+            "select bridge_id, display_name, status, last_seen_at, created_at from bridge_clients order by created_at desc");
+        return results.Select(r => new BridgeClientInfo
+        {
+            BridgeId = r.bridge_id,
+            DisplayName = r.display_name,
+            Status = r.status,
+            LastSeenAt = r.last_seen_at,
+            CreatedAt = r.created_at,
+        }).ToArray();
+    }
+
     public async Task<AgentWorkspaceAssignment?> GetAssignment(long agentId, long workspaceId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
@@ -152,13 +216,24 @@ public class WorkspaceRepository(IConfiguration configuration)
         return deleted > 0;
     }
 
-    public async Task<WorkspaceApprovalEvent?> CreateApprovalEvent(Guid sessionId, long agentId, string approvalToken, ApprovalActionType actionType, string? targetPath, string? commandPreview, ApprovalRiskLevel riskLevel)
+    public async Task<WorkspaceApprovalEvent?> CreateApprovalEvent(
+        Guid sessionId,
+        long agentId,
+        string approvalToken,
+        ApprovalActionType actionType,
+        string? targetPath,
+        string? commandPreview,
+        ApprovalRiskLevel riskLevel,
+        string? description = null,
+        string? callId = null,
+        string? toolName = null,
+        string? toolArguments = null)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         var result = await connection.QuerySingleAsync<WorkspaceApprovalEventRow>(
             """
-            insert into workspace_approval_events (session_id, agent_id, approval_token, action_type, target_path, command_preview, risk_level)
-            values (@sessionId, @agentId, @approvalToken, @actionType, @targetPath, @commandPreview, @riskLevel)
+            insert into workspace_approval_events (session_id, agent_id, approval_token, action_type, target_path, command_preview, description, call_id, tool_name, tool_arguments, risk_level)
+            values (@sessionId, @agentId, @approvalToken, @actionType, @targetPath, @commandPreview, @description, @callId, @toolName, cast(@toolArguments as jsonb), @riskLevel)
             returning *;
             """,
             new
@@ -169,6 +244,10 @@ public class WorkspaceRepository(IConfiguration configuration)
                 actionType = ActionTypeToDbString(actionType),
                 targetPath,
                 commandPreview,
+                description,
+                callId,
+                toolName,
+                toolArguments,
                 riskLevel = riskLevel.ToString().ToLowerInvariant(),
             });
         return result.ToModel();
@@ -206,6 +285,24 @@ public class WorkspaceRepository(IConfiguration configuration)
         var results = await connection.QueryAsync<WorkspaceApprovalEventRow>(
             "select * from workspace_approval_events where session_id = @sessionId and status = 'pending' order by created_at desc",
             new { sessionId });
+        return results.Select(r => r.ToModel()).ToArray();
+    }
+
+    public async Task<IReadOnlyList<WorkspaceApprovalEvent>> GetPendingApprovalsForSessions(Guid[] sessionIds)
+    {
+        if (sessionIds.Length == 0)
+            return [];
+
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        var results = await connection.QueryAsync<WorkspaceApprovalEventRow>(
+            """
+            select *
+            from workspace_approval_events
+            where session_id = any(@sessionIds)
+              and status = 'pending'
+            order by created_at desc
+            """,
+            new { sessionIds });
         return results.Select(r => r.ToModel()).ToArray();
     }
 
@@ -337,6 +434,8 @@ public class WorkspaceRepository(IConfiguration configuration)
         public string root_path { get; set; } = string.Empty;
         public string allowlist_patterns { get; set; } = "[]";
         public string denylist_patterns { get; set; } = "[]";
+        public string runtime_kind { get; set; } = "local";
+        public string? runtime_target { get; set; }
         public DateTime created_at { get; set; }
         public DateTime updated_at { get; set; }
 
@@ -347,6 +446,12 @@ public class WorkspaceRepository(IConfiguration configuration)
             RootPath = root_path,
             AllowlistPatterns = System.Text.Json.JsonSerializer.Deserialize<string[]>(allowlist_patterns) ?? [],
             DenylistPatterns = System.Text.Json.JsonSerializer.Deserialize<string[]>(denylist_patterns) ?? [],
+            RuntimeKind = runtime_kind.ToLowerInvariant() switch
+            {
+                "bridge" => WorkspaceRuntimeKind.Bridge,
+                _ => WorkspaceRuntimeKind.Local,
+            },
+            RuntimeTarget = runtime_target,
             CreatedAt = created_at,
             UpdatedAt = updated_at,
         };
@@ -389,6 +494,8 @@ public class WorkspaceRepository(IConfiguration configuration)
         public string root_path { get; set; } = string.Empty;
         public string allowlist_patterns { get; set; } = "[]";
         public string denylist_patterns { get; set; } = "[]";
+        public string runtime_kind { get; set; } = "local";
+        public string? runtime_target { get; set; }
         public DateTime created_at { get; set; }
         public DateTime updated_at { get; set; }
         public string policy_mode { get; set; } = string.Empty;
@@ -403,6 +510,12 @@ public class WorkspaceRepository(IConfiguration configuration)
                 RootPath = root_path,
                 AllowlistPatterns = System.Text.Json.JsonSerializer.Deserialize<string[]>(allowlist_patterns) ?? [],
                 DenylistPatterns = System.Text.Json.JsonSerializer.Deserialize<string[]>(denylist_patterns) ?? [],
+                RuntimeKind = runtime_kind.ToLowerInvariant() switch
+                {
+                    "bridge" => WorkspaceRuntimeKind.Bridge,
+                    _ => WorkspaceRuntimeKind.Local,
+                },
+                RuntimeTarget = runtime_target,
                 CreatedAt = created_at,
                 UpdatedAt = updated_at,
             },
@@ -428,6 +541,10 @@ public class WorkspaceRepository(IConfiguration configuration)
         public string action_type { get; set; } = string.Empty;
         public string? target_path { get; set; }
         public string? command_preview { get; set; }
+        public string? description { get; set; }
+        public string? call_id { get; set; }
+        public string? tool_name { get; set; }
+        public string? tool_arguments { get; set; }
         public string risk_level { get; set; } = string.Empty;
         public string status { get; set; } = string.Empty;
         public DateTime created_at { get; set; }
@@ -449,6 +566,10 @@ public class WorkspaceRepository(IConfiguration configuration)
             },
             TargetPath = target_path,
             CommandPreview = command_preview,
+            Description = description,
+            CallId = call_id,
+            ToolName = tool_name,
+            ToolArguments = tool_arguments,
             RiskLevel = risk_level.ToLowerInvariant() switch
             {
                 "medium" => ApprovalRiskLevel.Medium,
@@ -519,4 +640,13 @@ public class WorkspaceRepository(IConfiguration configuration)
             CreatedAt = created_at,
         };
     }
+}
+
+public record BridgeClientInfo
+{
+    public string BridgeId { get; init; } = string.Empty;
+    public string DisplayName { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+    public DateTime? LastSeenAt { get; init; }
+    public DateTime CreatedAt { get; init; }
 }

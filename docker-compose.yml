@@ -26,6 +26,18 @@ services:
     volumes:
       - sharpclaw-ollama-data:/root/.ollama
 
+  searxng:
+    image: docker.io/searxng/searxng:${SEARXNG_VERSION:-latest}
+    container_name: sharpclaw-searxng
+    restart: always
+    ports:
+#      - ${SEARXNG_HOST:+${SEARXNG_HOST}:}${SEARXNG_PORT:-8080}:${SEARXNG_PORT:-8080}
+      - "8080:8080"
+    env_file: ./.env
+    volumes:
+      - ./searxng-config/:/etc/searxng/:Z
+      - searxng-data:/var/cache/searxng/
+
   app:
     build:
       context: .
@@ -45,6 +57,8 @@ services:
 #      LmStudio__EmbeddingModel: 'embeddinggemma:300m'
       LmStudio__EmbeddingProvider: 'LocalOllama'
       LmStudio__EmbeddingTimeout: 60
+      WebSearch__ActiveProvider: 'Searxng'
+      WebSearch__Searxng__BaseUrl: 'http://searxng:8080'
     depends_on:
       db:
         condition: service_healthy
@@ -57,3 +71,4 @@ services:
 volumes:
   sharpclaw-pg-data:
   sharpclaw-ollama-data:
+  searxng-data:

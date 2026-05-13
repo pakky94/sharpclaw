@@ -1,7 +1,7 @@
 using Microsoft.Extensions.AI;
 using SharpClaw.API.Database;
 using SharpClaw.API.Database.Repositories;
-using SharpClaw.API.Helpers;
+using SharpClaw.Common;
 
 namespace SharpClaw.API.Agents.Tools.Fragments;
 
