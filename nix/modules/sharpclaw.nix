@@ -8,6 +8,8 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
+      default = pkgs.sharpclaw-api;
+      defaultText = lib.literalExpression "pkgs.sharpclaw-api";
       description = "The SharpClaw API package to use";
     };
 

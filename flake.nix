@@ -21,10 +21,25 @@
         default    = import ./nix/modules;
       };
 
-      # ── VM configuration ───────────────────────────────────
+      # ── Overlay (puts sharpclaw-api in pkgs) ───────────────
+      overlays.default = final: prev: {
+        sharpclaw-api = self.packages.${final.stdenv.hostPlatform.system}.sharpclaw-api or
+          (throw "sharpclaw-api is not available for ${final.stdenv.hostPlatform.system}");
+      };
+
+      # ── Reference VM configuration ─────────────────────────
       nixosConfigurations.sharpclaw-vm = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
-        modules = [ ./nix/vm-config.nix ];
+        modules = [
+          { nixpkgs.overlays = [ self.overlays.default ]; }
+          ./nix/vm-config.nix
+        ];
+      };
+
+      # ── Templates ──────────────────────────────────────────
+      templates.vm = {
+        path = ./nix/templates/vm;
+        description = "SharpClaw VM — starter flake for deploying on NixOS";
       };
 
     } // flake-utils.lib.eachSystem systems (system:

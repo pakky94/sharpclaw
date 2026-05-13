@@ -10,7 +10,7 @@ in
     src = ../SharpClaw;
 
     projectFile = "SharpClaw.API/SharpClaw.API.csproj";
-    nugetDeps = ./deps.nix; # Generate with: nix run nixpkgs#nuget-to-nix -- deps.nix
+    nugetDeps = ./deps.json; # Generate with: nix run nixpkgs#nuget-to-json -- deps.json
 
     dotnet-sdk = pkgs.dotnet-sdk_10;
     dotnet-runtime = pkgs.dotnetCorePackages.aspnetcore_10_0-bin;
