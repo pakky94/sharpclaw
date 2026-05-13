@@ -20,7 +20,7 @@ nix/
 ├── vm-config.nix          — Reference VM config (used by CI)
 ├── devshell.nix           — Dev shell definition
 ├── packages.nix           — Package definitions
-├── deps.nix               — NuGet dependency hashes (placeholder)
+├── deps.json              — NuGet dependency hashes (placeholder)
 └── README.md              — This file
 ```
 
@@ -80,7 +80,7 @@ If you want to pick and choose modules instead of importing `default`:
 
 ```bash
 cd SharpClaw/SharpClaw.API && dotnet restore
-nix run nixpkgs#nuget-to-nix -- deps.nix > ../../nix/deps.nix
+nix run nixpkgs#nuget-to-json -- deps.json > ../../nix/deps.json
 ```
 
 ## Design
