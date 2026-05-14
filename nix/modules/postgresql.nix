@@ -11,7 +11,7 @@
         }
       ];
       #extensions = ps: with ps; [ pg_trgm pgcrypto vector ];
-      extensions = ps: with ps; [ pgcrypto pgtrgm pgvector ];
+      extensions = ps: with ps; [ pgvector ];
       authentication = ''
         local all all trust
         host all all 127.0.0.1/32 trust
