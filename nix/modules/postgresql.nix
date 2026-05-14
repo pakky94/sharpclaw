@@ -10,6 +10,9 @@
           ensureDBOwnership = true;
         }
       ];
+      extensions = [
+        pgvector
+      ];
       authentication = ''
         local all all trust
         host all all 127.0.0.1/32 trust
