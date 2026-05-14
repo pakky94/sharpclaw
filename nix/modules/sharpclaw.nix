@@ -103,6 +103,7 @@ in
 
       environment = {
         ASPNETCORE_URLS = "http://*:${toString cfg.port}";
+        ASPNETCORE_CONTENTROOT = "${cfg.package}/lib/SharpClaw.API";
         ConnectionStrings__sharpclaw = cfg.connectionString;
         LmStudio__Endpoint = cfg.llmEndpoint;
         LmStudio__Model = cfg.llmModel;

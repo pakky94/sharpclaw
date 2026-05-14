@@ -84,6 +84,20 @@ nix run nixpkgs#nuget-to-json -- packageDir > ../../nix/deps.json
 rm -r packageDir
 ```
 
+### Update npm dependency hash
+
+The `npmDepsHash` in `packages.nix` must match the lockfile. On first build, or whenever
+frontend dependencies change (`package.json` / `package-lock.json`), Nix will reject the
+placeholder hash and tell you the correct one:
+
+```bash
+nix build .#sharpclaw-web 2>&1 | grep -oP 'sha256-\S+'
+```
+
+Copy the reported hash into `nix/packages.nix` replacing the placeholder. This is only
+needed when the frontend's `node_modules` change — NuGet deps have their own separate
+hash in `deps.json`.
+
 ## Design
 
 - **Remote-first** — users import the flake from GitHub, no file copying needed
