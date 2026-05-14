@@ -10,7 +10,7 @@ let
 
     # Replace with the hash Nix reports on first build attempt:
     #   nix build .#sharpclaw-web 2>&1 | grep -oP 'sha256-\S+'
-    npmDepsHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    npmDepsHash = "sha256-J7Jc1TVCk8wZvtP9ja1hZl/V6FESMlmS78vtUbkA45E=";
 
     # Empty base URL → all API calls use relative paths, hitting the same origin
     VITE_API_BASE_URL = "";
