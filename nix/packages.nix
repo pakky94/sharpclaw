@@ -12,6 +12,9 @@ let
     #   nix build .#sharpclaw-web 2>&1 | grep -oP 'sha256-\S+'
     npmDepsHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
+    # Empty base URL → all API calls use relative paths, hitting the same origin
+    VITE_API_BASE_URL = "";
+
     installPhase = ''
       runHook preInstall
       cp -r dist $out
