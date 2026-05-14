@@ -10,7 +10,7 @@
           ensureDBOwnership = true;
         }
       ];
-      extensions = [
+      extensions = with ps; [
         pg_trgm
         pgcrypto
         vector
