@@ -11,6 +11,11 @@
 { config, pkgs, ... }:
 
 {
+  imports =
+    [
+       ./hardware-configuration.nix
+    ];
+
   # ── SharpClaw service ──────────────────────────────────────
   services.sharpclaw = {
     enable = true;
@@ -50,6 +55,7 @@
     jq
     curl
     tmux
+    neovim
   ];
 
   # ── Boot ───────────────────────────────────────────────────
