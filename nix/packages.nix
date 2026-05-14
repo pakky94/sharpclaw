@@ -1,8 +1,7 @@
 { self, system }:
 let
   pkgs = self.inputs.nixpkgs.legacyPackages.${system};
-in
-{
+
   sharpclaw-web = pkgs.buildNpmPackage {
     pname = "sharpclaw-web";
     version = "0.1.0";
@@ -19,6 +18,9 @@ in
       runHook postInstall
     '';
   };
+in
+{
+  inherit sharpclaw-web;
 
   sharpclaw-api = pkgs.buildDotnetModule {
     pname = "sharpclaw-api";
