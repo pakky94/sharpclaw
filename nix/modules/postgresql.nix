@@ -10,6 +10,8 @@
           ensureDBOwnership = true;
         }
       ];
+      package = pkgs.postgresql_18; # Or 15, etc.
+      extraPlugins = with pkgs.postgresql_18.pkgs; [ pgvector ];
       #extensions = ps: with ps; [ pg_trgm pgcrypto vector ];
       extensions = ps: with ps; [ pgvector ];
       authentication = ''
