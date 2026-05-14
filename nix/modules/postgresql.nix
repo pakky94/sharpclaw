@@ -11,7 +11,9 @@
         }
       ];
       extensions = [
-        pgvector
+        pg_trgm
+        pgcrypto
+        vector
       ];
       authentication = ''
         local all all trust
