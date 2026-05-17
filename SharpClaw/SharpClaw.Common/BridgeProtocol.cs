@@ -16,6 +16,7 @@ public class BridgeRequest
     public Dictionary<string, object?> Args { get; set; } = [];
     public BridgePolicyContext PolicyContext { get; set; } = new();
     public BridgeLimits Limits { get; set; } = new();
+    public Dictionary<string, string> Secrets { get; set; } = [];
 
     public string? TryGetStringArg(string name)
     {

@@ -4,8 +4,8 @@ using SharpClaw.API.Database.Repositories;
 namespace SharpClaw.API.Agents.Secrets;
 
 /// <summary>
-/// Manages secrets: encrypts on write, decrypts on startup,
-/// writes decrypted values to /run/secrets/ for CLI tools and env vars.
+/// Manages secrets: encrypts on write, decrypts on demand for command execution.
+/// Secrets are injected as environment variables into commands (local and bridge).
 /// </summary>
 public class SecretService
 {
@@ -20,7 +20,6 @@ public class SecretService
         _repository = repository;
         _logger = logger;
 
-        // Read the VM-local encryption key
         var keyPath = System.Environment.GetEnvironmentVariable("SHARPCLAW_SECRET_KEY_FILE")
                       ?? "/run/keys/sharpclaw-secret-key";
 
@@ -37,89 +36,78 @@ public class SecretService
     }
 
     /// <summary>
-    /// Decrypt all secrets and write them to /run/secrets/ for CLI tools.
-    /// Called once on startup.
+    /// Get decrypted environment variables for an agent's commands.
+    /// Returns name→value pairs for all secrets accessible to the agent.
     /// </summary>
-    public async Task InitializeAsync()
+    public async Task<Dictionary<string, string>> GetAgentEnv(long agentId)
     {
-        if (_key.Length == 0)
-        {
-            _logger.LogWarning("No secret key available, skipping secret initialization");
-            return;
-        }
+        var env = new Dictionary<string, string>();
 
-        var secretsDir = "/run/secrets";
-        Directory.CreateDirectory(secretsDir);
+        if (_key.Length == 0) return env;
 
-        var rows = await _repository.GetAllEncrypted();
+        var rows = await _repository.GetSecretsForAgent(agentId);
 
         foreach (var row in rows)
         {
             try
             {
-                var plaintext = Decrypt(row.encrypted_value);
-                var filePath = Path.Combine(secretsDir, row.name);
-                await File.WriteAllTextAsync(filePath, plaintext);
-
-                // Set restrictive permissions (Linux only)
-                if (OperatingSystem.IsLinux())
-                    File.SetUnixFileMode(filePath,
-                        UnixFileMode.UserRead | UnixFileMode.UserWrite);
-
-                _logger.LogInformation("Decrypted secret '{Name}' to {Path}", row.name, filePath);
+                env[row.name] = Decrypt(row.encrypted_value);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to decrypt secret '{Name}'", row.name);
             }
         }
+
+        return env;
     }
 
     /// <summary>
-    /// Get a decrypted secret value by name. Returns null if not found or key unavailable.
+    /// Get decrypted environment variables safe for bridge transmission.
+    /// Only includes secrets with allow_bridge = true.
     /// </summary>
-    public async Task<string?> GetSecretValue(string name)
+    public async Task<Dictionary<string, string>> GetBridgeEnv(long agentId)
     {
-        if (_key.Length == 0) return null;
+        var env = new Dictionary<string, string>();
 
-        var row = await _repository.GetByName(name);
-        if (row is null) return null;
+        if (_key.Length == 0) return env;
 
-        try
+        var rows = await _repository.GetSecretsForAgent(agentId);
+
+        foreach (var row in rows)
         {
-            return Decrypt(row.encrypted_value);
+            if (!row.allow_bridge) continue;
+
+            try
+            {
+                env[row.name] = Decrypt(row.encrypted_value);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to decrypt secret '{Name}'", row.name);
+            }
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to decrypt secret '{Name}'", name);
-            return null;
-        }
+
+        return env;
     }
 
     /// <summary>
     /// Encrypt a value and store it. Returns the created secret metadata (never the value).
     /// </summary>
-    public async Task<SecretDto> AddSecret(string name, string value, string scope = "global", long? ownerId = null)
+    public async Task<SecretDto> AddSecret(string name, string value, string scope = "global", long? ownerId = null, bool allowBridge = false)
     {
         if (_key.Length == 0)
             throw new InvalidOperationException("Cannot add secret: encryption key not available");
 
         var encrypted = Encrypt(value);
-        var row = await _repository.Create(name, encrypted, scope, ownerId);
-
-        // Also write to /run/secrets/ immediately so it's available without restart
-        var filePath = Path.Combine("/run/secrets", name);
-        await File.WriteAllTextAsync(filePath, value);
-        if (OperatingSystem.IsLinux())
-            File.SetUnixFileMode(filePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-
+        var row = await _repository.Create(name, encrypted, scope, ownerId, allowBridge);
         return Map(row);
     }
 
     /// <summary>
-    /// Update a secret's value. Returns the updated metadata.
+    /// Update a secret. Returns the updated metadata.
     /// </summary>
-    public async Task<SecretDto?> UpdateSecret(long id, string? value = null, string? scope = null, long? ownerId = null)
+    public async Task<SecretDto?> UpdateSecret(long id, string? value = null, string? scope = null, long? ownerId = null, bool? allowBridge = null)
     {
         string? encrypted = null;
         if (value is not null)
@@ -129,17 +117,8 @@ public class SecretService
             encrypted = Encrypt(value);
         }
 
-        var row = await _repository.Update(id, encrypted, scope, ownerId);
+        var row = await _repository.Update(id, encrypted, scope, ownerId, allowBridge);
         if (row is null) return null;
-
-        // If value changed, update /run/secrets/
-        if (value is not null)
-        {
-            var filePath = Path.Combine("/run/secrets", row.name);
-            await File.WriteAllTextAsync(filePath, value);
-            if (OperatingSystem.IsLinux())
-                File.SetUnixFileMode(filePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-        }
 
         return Map(row);
     }
@@ -152,15 +131,7 @@ public class SecretService
         var row = await _repository.GetById(id);
         if (row is null) return false;
 
-        var deleted = await _repository.Delete(id);
-        if (deleted)
-        {
-            var filePath = Path.Combine("/run/secrets", row.name);
-            if (File.Exists(filePath))
-                File.Delete(filePath);
-        }
-
-        return deleted;
+        return await _repository.Delete(id);
     }
 
     /// <summary>
@@ -182,7 +153,6 @@ public class SecretService
         using var encryptor = aes.CreateEncryptor();
         var cipherBytes = encryptor.TransformFinalBlock(plainBytes, 0, plainBytes.Length);
 
-        // Prepend IV to ciphertext
         var result = new byte[aes.IV.Length + cipherBytes.Length];
         Buffer.BlockCopy(aes.IV, 0, result, 0, aes.IV.Length);
         Buffer.BlockCopy(cipherBytes, 0, result, aes.IV.Length, cipherBytes.Length);
@@ -194,7 +164,6 @@ public class SecretService
     {
         var fullCipher = Convert.FromBase64String(encrypted);
 
-        // Extract IV (first 16 bytes for AES)
         var iv = new byte[16];
         Buffer.BlockCopy(fullCipher, 0, iv, 0, 16);
 
@@ -211,5 +180,5 @@ public class SecretService
     }
 
     private static SecretDto Map(SecretRepository.SecretRow row) =>
-        new(row.id, row.name, row.scope, row.owner_id, row.created_at, row.updated_at);
+        new(row.id, row.name, row.scope, row.owner_id, row.allow_bridge, row.created_at, row.updated_at);
 }

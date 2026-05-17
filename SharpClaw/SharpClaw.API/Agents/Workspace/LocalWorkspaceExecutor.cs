@@ -330,7 +330,7 @@ public class LocalWorkspaceExecutor : IWorkspaceExecutionRouter
         }
     }
 
-    public async Task<object> RunCommand(ResolvedWorkspace workspace, string command, int? timeoutMs = null, int? maxOutputBytes = null)
+    public async Task<object> RunCommand(ResolvedWorkspace workspace, string command, int? timeoutMs = null, int? maxOutputBytes = null, Dictionary<string, string>? env = null)
     {
         var resolvedCwd = workspace.RootPath;
         var timeout = timeoutMs ?? 30000;
@@ -348,6 +348,13 @@ public class LocalWorkspaceExecutor : IWorkspaceExecutionRouter
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
+
+            // Inject secrets as environment variables
+            if (env is not null)
+            {
+                foreach (var (key, value) in env)
+                    psi.Environment[key] = value;
+            }
 
             using var process = new Process { StartInfo = psi };
             var outputBuilder = new StringBuilder();

@@ -27,17 +27,18 @@ public static class SecretTools
         string name,
         string value,
         string scope = "global",
-        long? owner_id = null)
+        long? owner_id = null,
+        bool allow_bridge = false)
     {
         var service = serviceProvider.GetRequiredService<SecretService>();
 
         try
         {
-            var secret = await service.AddSecret(name, value, scope, owner_id);
+            var secret = await service.AddSecret(name, value, scope, owner_id, allow_bridge);
             return new
             {
                 created = true,
-                secret = new { secret.Id, secret.Name, secret.Scope, secret.OwnerId }
+                secret = new { secret.Id, secret.Name, secret.Scope, secret.OwnerId, secret.AllowBridge }
             };
         }
         catch (InvalidOperationException ex)

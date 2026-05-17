@@ -24,7 +24,7 @@ public static class SecretEndpoints
             try
             {
                 var secret = await service.AddSecret(
-                    request.Name, request.Value, request.Scope, request.OwnerId);
+                    request.Name, request.Value, request.Scope, request.OwnerId, request.AllowBridge);
                 return Results.Created($"/secrets/{secret.Id}", secret);
             }
             catch (InvalidOperationException ex)
@@ -37,7 +37,7 @@ public static class SecretEndpoints
         {
             try
             {
-                var secret = await service.UpdateSecret(id, request.Value, request.Scope, request.OwnerId);
+                var secret = await service.UpdateSecret(id, request.Value, request.Scope, request.OwnerId, request.AllowBridge);
                 if (secret is null)
                     return Results.NotFound(new { error = "Secret not found" });
                 return Results.Ok(secret);

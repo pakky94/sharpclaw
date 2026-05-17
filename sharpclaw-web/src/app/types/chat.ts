@@ -193,3 +193,13 @@ export type Channel = {
   createdAt: string
   updatedAt: string
 }
+
+export type Secret = {
+  id: number
+  name: string
+  scope: string
+  ownerId: number | null
+  allowBridge: boolean
+  createdAt: string
+  updatedAt: string
+}

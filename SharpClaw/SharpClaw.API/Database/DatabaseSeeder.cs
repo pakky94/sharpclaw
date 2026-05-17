@@ -408,9 +408,13 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     scope text not null default 'global'
                         check (scope in ('global', 'user', 'agent')),
                     owner_id bigint null,
+                    allow_bridge boolean not null default false,
                     created_at timestamptz not null default now(),
                     updated_at timestamptz not null default now()
                 );
+
+                -- Migration: add allow_bridge to existing databases
+                alter table secrets add column if not exists allow_bridge boolean not null default false;
                 """);
 
             if (await connection.ExecuteScalarAsync<int>("select count(*) from agents where name = 'Main'") == 0)

@@ -223,7 +223,7 @@ public class BridgeWorkspaceExecutor : IWorkspaceExecutionRouter
         return response.Result ?? new { };
     }
 
-    public async Task<object> RunCommand(ResolvedWorkspace workspace, string command, int? timeoutMs = null, int? maxOutputBytes = null)
+    public async Task<object> RunCommand(ResolvedWorkspace workspace, string command, int? timeoutMs = null, int? maxOutputBytes = null, Dictionary<string, string>? env = null)
     {
         var request = new BridgeRequest
         {
@@ -243,7 +243,8 @@ public class BridgeWorkspaceExecutor : IWorkspaceExecutionRouter
                 DenylistPatterns = workspace.DenylistPatterns,
                 PolicyMode = workspace.PolicyMode.ToString().ToLowerInvariant(),
                 RootPath = workspace.RootPath,
-            }
+            },
+            Secrets = env ?? new Dictionary<string, string>(),
         };
 
         var response = await _connectionManager.SendRequest(_bridgeId, request);

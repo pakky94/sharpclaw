@@ -186,4 +186,82 @@ public sealed class SecretEndpointsTests(SharpClawAppFixture fixture)
         Assert.DoesNotContain("super-secret-value-that-must-not-leak", json);
         Assert.DoesNotContain("encryptedValue", json);
     }
+
+    [Fact]
+    public async Task CreateSecret_WithAllowBridge_ReturnsCorrectFlag()
+    {
+        await fixture.ResetStateAsync();
+
+        using var result = await fixture.Api.CreateSecretAsync(
+            name: "bridge-token",
+            value: "bridge-value",
+            allowBridge: true);
+
+        Assert.True(result.RootElement.GetProperty("allowBridge").GetBoolean());
+    }
+
+    [Fact]
+    public async Task CreateSecret_WithoutAllowBridge_DefaultsToFalse()
+    {
+        await fixture.ResetStateAsync();
+
+        using var result = await fixture.Api.CreateSecretAsync(
+            name: "no-bridge-token",
+            value: "no-bridge-value");
+
+        Assert.False(result.RootElement.GetProperty("allowBridge").GetBoolean());
+    }
+
+    [Fact]
+    public async Task UpdateSecret_ChangesAllowBridge()
+    {
+        await fixture.ResetStateAsync();
+
+        using var created = await fixture.Api.CreateSecretAsync(
+            name: "bridge-toggle", value: "test-value");
+
+        var id = created.RootElement.GetProperty("id").GetInt64();
+        Assert.False(created.RootElement.GetProperty("allowBridge").GetBoolean());
+
+        // Toggle to true
+        using var updated = await fixture.Api.UpdateSecretAsync(
+            id, allowBridge: true);
+
+        Assert.True(updated.RootElement.GetProperty("allowBridge").GetBoolean());
+    }
+
+    [Fact]
+    public async Task CreateSecret_WithAgentScope_ReturnsCorrectOwner()
+    {
+        await fixture.ResetStateAsync();
+
+        using var result = await fixture.Api.CreateSecretAsync(
+            name: "agent-token",
+            value: "agent-value",
+            scope: "agent",
+            ownerId: 1);
+
+        Assert.Equal("agent", result.RootElement.GetProperty("scope").GetString());
+        Assert.Equal(1, result.RootElement.GetProperty("ownerId").GetInt64());
+    }
+
+    [Fact]
+    public async Task ListSecrets_ShowsAllowBridgeInListing()
+    {
+        await fixture.ResetStateAsync();
+
+        await fixture.Api.CreateSecretAsync(
+            name: "bridge-on", value: "v1", allowBridge: true);
+        await fixture.Api.CreateSecretAsync(
+            name: "bridge-off", value: "v2", allowBridge: false);
+
+        using var result = await fixture.Api.ListSecretsAsync();
+        var secrets = result.RootElement.GetProperty("secrets").EnumerateArray().ToArray();
+
+        var bridgeOn = secrets.Single(s => s.GetProperty("name").GetString() == "bridge-on");
+        Assert.True(bridgeOn.GetProperty("allowBridge").GetBoolean());
+
+        var bridgeOff = secrets.Single(s => s.GetProperty("name").GetString() == "bridge-off");
+        Assert.False(bridgeOff.GetProperty("allowBridge").GetBoolean());
+    }
 }
