@@ -408,6 +408,7 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     scope text not null default 'global'
                         check (scope in ('global', 'user', 'agent')),
                     owner_id bigint null,
+                    allow_bridge boolean not null default false,
                     created_at timestamptz not null default now(),
                     updated_at timestamptz not null default now()
                 );

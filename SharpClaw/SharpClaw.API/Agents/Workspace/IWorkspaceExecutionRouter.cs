@@ -9,5 +9,5 @@ public interface IWorkspaceExecutionRouter
     Task<object> DeleteFile(ResolvedWorkspace workspace, string path, bool recursive = false);
     Task<object> MoveFile(ResolvedWorkspace workspace, string source, string destination);
     Task<object> MakeDirectory(ResolvedWorkspace workspace, string path);
-    Task<object> RunCommand(ResolvedWorkspace workspace, string command, int? timeoutMs = null, int? maxOutputBytes = null);
+    Task<object> RunCommand(ResolvedWorkspace workspace, string command, int? timeoutMs = null, int? maxOutputBytes = null, Dictionary<string, string>? env = null);
 }

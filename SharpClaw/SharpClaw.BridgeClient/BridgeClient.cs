@@ -547,6 +547,10 @@ public class SharpClawBridgeClient
                 CreateNoWindow = true,
             };
 
+            // Apply secrets as environment variables
+            foreach (var (key, value) in request.Secrets)
+                psi.Environment[key] = value;
+
             using var process = new Process { StartInfo = psi };
             var outputBuilder = new StringBuilder();
             var errorBuilder = new StringBuilder();

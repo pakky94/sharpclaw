@@ -356,6 +356,7 @@ public sealed class BackendApiClient(HttpClient client)
         string value,
         string scope = "global",
         long? ownerId = null,
+        bool allowBridge = false,
         CancellationToken cancellationToken = default)
     {
         var response = await client.PostAsJsonAsync("/secrets", new
@@ -364,6 +365,7 @@ public sealed class BackendApiClient(HttpClient client)
             value,
             scope,
             ownerId,
+            allowBridge,
         }, cancellationToken);
         return await ReadDocumentAsync(response, cancellationToken);
     }
@@ -373,6 +375,7 @@ public sealed class BackendApiClient(HttpClient client)
         string? value = null,
         string? scope = null,
         long? ownerId = null,
+        bool? allowBridge = null,
         CancellationToken cancellationToken = default)
     {
         var request = new HttpRequestMessage(HttpMethod.Patch, $"/secrets/{id}")
@@ -382,6 +385,7 @@ public sealed class BackendApiClient(HttpClient client)
                 value,
                 scope,
                 ownerId,
+                allowBridge,
             }),
         };
         var response = await client.SendAsync(request, cancellationToken);

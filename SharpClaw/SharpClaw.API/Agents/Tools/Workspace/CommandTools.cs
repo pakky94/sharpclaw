@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
+using SharpClaw.API.Agents.Secrets;
 using SharpClaw.API.Agents.Workspace;
 using SharpClaw.API.Database.Repositories;
 
@@ -166,11 +167,17 @@ public static partial class CommandTools
         var timeout = timeout_ms ?? DefaultTimeoutMs;
         timeout = Math.Min(timeout, 120_000);
 
+        // Fetch secrets for this agent and inject as environment variables
+        var ctx = sp.GetRequiredService<AgentExecutionContext>();
+        var secretService = sp.GetRequiredService<SecretService>();
+        var env = await secretService.GetAgentEnv(ctx.AgentId);
+
         // Get the execution router and execute the command
         var routerFactory = sp.GetRequiredService<IWorkspaceExecutionRouterFactory>();
         var router = routerFactory.GetRouter(ws);
 
-        return await router.RunCommand(ws, command, timeout, MaxOutputBytes);
+        return await router.RunCommand(ws, command, timeout, MaxOutputBytes, env);
     }
 
 }
+

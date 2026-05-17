@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using Dapper;
 using Npgsql;
 
@@ -12,7 +11,7 @@ public class SecretRepository(IConfiguration configuration)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         var rows = await connection.QueryAsync<SecretRow>(
-            "select id, name, scope, owner_id, created_at, updated_at from secrets order by name");
+            "select id, name, scope, owner_id, allow_bridge, created_at, updated_at from secrets order by name");
         return rows.ToArray();
     }
 
@@ -30,19 +29,19 @@ public class SecretRepository(IConfiguration configuration)
             "select * from secrets where name = @name", new { name });
     }
 
-    public async Task<SecretRow> Create(string name, string encryptedValue, string scope, long? ownerId)
+    public async Task<SecretRow> Create(string name, string encryptedValue, string scope, long? ownerId, bool allowBridge = false)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         return await connection.QuerySingleAsync<SecretRow>(
             """
-            insert into secrets (name, encrypted_value, scope, owner_id)
-            values (@Name, @EncryptedValue, @Scope, @OwnerId)
+            insert into secrets (name, encrypted_value, scope, owner_id, allow_bridge)
+            values (@Name, @EncryptedValue, @Scope, @OwnerId, @AllowBridge)
             returning *
             """,
-            new { Name = name, EncryptedValue = encryptedValue, Scope = scope, OwnerId = ownerId });
+            new { Name = name, EncryptedValue = encryptedValue, Scope = scope, OwnerId = ownerId, AllowBridge = allowBridge });
     }
 
-    public async Task<SecretRow?> Update(long id, string? encryptedValue, string? scope, long? ownerId)
+    public async Task<SecretRow?> Update(long id, string? encryptedValue, string? scope, long? ownerId, bool? allowBridge = null)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         return await connection.QuerySingleOrDefaultAsync<SecretRow>(
@@ -51,11 +50,12 @@ public class SecretRepository(IConfiguration configuration)
             set encrypted_value = coalesce(@EncryptedValue, encrypted_value),
                 scope = coalesce(@Scope, scope),
                 owner_id = coalesce(@OwnerId, owner_id),
+                allow_bridge = coalesce(@AllowBridge, allow_bridge),
                 updated_at = now()
             where id = @Id
             returning *
             """,
-            new { Id = id, EncryptedValue = encryptedValue, Scope = scope, OwnerId = ownerId });
+            new { Id = id, EncryptedValue = encryptedValue, Scope = scope, OwnerId = ownerId, AllowBridge = allowBridge });
     }
 
     public async Task<bool> Delete(long id)
@@ -66,11 +66,20 @@ public class SecretRepository(IConfiguration configuration)
         return deleted > 0;
     }
 
-    public async Task<IReadOnlyList<SecretRow>> GetAllEncrypted()
+    /// <summary>
+    /// Get encrypted secrets accessible to an agent (global + agent-scoped).
+    /// </summary>
+    public async Task<IReadOnlyList<SecretRow>> GetSecretsForAgent(long agentId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         var rows = await connection.QueryAsync<SecretRow>(
-            "select * from secrets order by name");
+            """
+            select * from secrets
+            where scope = 'global'
+               or (scope = 'agent' and owner_id = @AgentId)
+            order by name
+            """,
+            new { AgentId = agentId });
         return rows.ToArray();
     }
 
@@ -81,6 +90,7 @@ public class SecretRepository(IConfiguration configuration)
         public string encrypted_value { get; set; } = string.Empty;
         public string scope { get; set; } = "global";
         public long? owner_id { get; set; }
+        public bool allow_bridge { get; set; }
         public DateTimeOffset created_at { get; set; }
         public DateTimeOffset updated_at { get; set; }
     }
