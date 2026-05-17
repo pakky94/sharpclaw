@@ -21,10 +21,7 @@
     webSearchProvider = "Searxng";
     openFirewall = true;
 
-    # Uncomment and set paths when secrets are configured:
-    # githubTokenFile = "/run/secrets/github-token";
-    # discordTokenFile = "/run/secrets/discord-token";
-    # braveApiKeyFile = "/run/secrets/brave-api-key";
+    # secretKeyFile = "/run/keys/sharpclaw-secret-key";
   };
 
   # ── System packages ────────────────────────────────────────

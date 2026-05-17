@@ -28,10 +28,9 @@
     webSearchProvider = "Searxng";  # or "Brave"
     openFirewall = true;
 
-    # Uncomment when you have secrets configured:
-    # githubTokenFile = "/run/secrets/github-token";
-    # discordTokenFile = "/run/secrets/discord-token";
-    # braveApiKeyFile = "/run/secrets/brave-api-key";
+    # Path to the encryption key for secrets (base64-encoded 32 bytes).
+    # Generate with: openssl rand -base64 32
+    # secretKeyFile = "/run/keys/sharpclaw-secret-key";
   };
 
   # ── Ollama acceleration ────────────────────────────────────
