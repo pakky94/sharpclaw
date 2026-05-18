@@ -49,22 +49,10 @@ in
       description = "SearXNG instance URL";
     };
 
-    braveApiKeyFile = lib.mkOption {
+    secretKeyFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
-      description = "Path to file containing Brave Search API key";
-    };
-
-    githubTokenFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      description = "Path to file containing GitHub personal access token";
-    };
-
-    discordTokenFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      description = "Path to file containing Discord bot token";
+      description = "Path to file containing the AES-256-GCM encryption key (base64-encoded 32 bytes). Defaults to /run/keys/sharpclaw-secret-key";
     };
 
     dataDir = lib.mkOption {
@@ -94,11 +82,6 @@ in
         Group = "sharpclaw";
         StateDirectory = "sharpclaw";
         WorkingDirectory = cfg.dataDir;
-        EnvironmentFile = lib.mkIf (cfg.githubTokenFile != null) cfg.githubTokenFile;
-        LoadCredential = lib.optionals (cfg.discordTokenFile != null)
-          [ "discord_token:${cfg.discordTokenFile}" ]
-          ++ lib.optionals (cfg.braveApiKeyFile != null)
-          [ "brave_api_key:${cfg.braveApiKeyFile}" ];
       };
 
       environment = {
@@ -110,6 +93,8 @@ in
         WebSearch__ActiveProvider = cfg.webSearchProvider;
         WebSearch__Searxng__BaseUrl = cfg.searxngUrl;
         SHARPCLAW_DATA_DIR = cfg.dataDir;
+      } // lib.optionalAttrs (cfg.secretKeyFile != null) {
+        SHARPCLAW_SECRET_KEY_FILE = cfg.secretKeyFile;
       };
     };
 

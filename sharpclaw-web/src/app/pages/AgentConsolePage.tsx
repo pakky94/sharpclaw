@@ -61,6 +61,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   const streamRef = useRef<{ sessionId: string; latestMessageId: number; source: EventSource } | null>(null)
   const selectedSessionRef = useRef(selectedSessionId)
   const resolvingTokensRef = useRef<Set<string>>(new Set())
+  const completedStreamCheckpointsRef = useRef<Set<string>>(new Set())
   const draftSessionKey = selectedSessionId ?? (selectedAgentId !== null ? `__new__:${selectedAgentId}` : '__new__:none')
   const prompt = draftsBySessionKey[draftSessionKey] ?? ''
   const unsavedSessionIds = useMemo(() => {
@@ -103,7 +104,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   useEffect(() => {
     if (selectedAgentId === null) {
       setSessions([])
-      setSelectedSessionId(null)
+      updateSelectedSessionId(null)
       setMessages([])
       return
     }
@@ -120,6 +121,11 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
   useEffect(() => {
     selectedSessionRef.current = selectedSessionId
   }, [selectedSessionId])
+
+  function updateSelectedSessionId(nextSessionId: string | null) {
+    selectedSessionRef.current = nextSessionId
+    setSelectedSessionId(nextSessionId)
+  }
 
   useEffect(() => {
     setPendingApprovals([])
@@ -197,24 +203,27 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
       setError(null)
       const data = await fetchJson<{ agentId: number; sessions: SessionSummary[] }>(`${API_BASE_URL}/agents/${currentAgentId}/sessions`)
       setSessions(data.sessions)
+      const currentSelectedSessionId = selectedSessionRef.current
 
       const nextSessionId =
         (preferredSessionId && data.sessions.some((session) => session.sessionId === preferredSessionId)
           ? preferredSessionId
           : null) ??
-        (selectedSessionId && data.sessions.some((session) => session.sessionId === selectedSessionId) ? selectedSessionId : null) ??
+        (currentSelectedSessionId && data.sessions.some((session) => session.sessionId === currentSelectedSessionId)
+          ? currentSelectedSessionId
+          : null) ??
         data.sessions[0]?.sessionId ??
         null
 
       if (!nextSessionId) {
-        setSelectedSessionId(null)
+        updateSelectedSessionId(null)
         setCurrentParentSessionId(null)
         setMessages([])
         return
       }
 
-      if (nextSessionId !== selectedSessionId || preferredSessionId) {
-        setSelectedSessionId(nextSessionId)
+      if (nextSessionId !== currentSelectedSessionId) {
+        updateSelectedSessionId(nextSessionId)
         await loadHistory(nextSessionId)
       }
     } catch (e) {
@@ -290,15 +299,27 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
       setMessages(mergedMapped)
 
       if (hasActiveRun && data.runStatus && assistantMessageId) {
+        const checkpointKey = `${sessionId}:${data.latestSequenceId}`
+        if (completedStreamCheckpointsRef.current.has(checkpointKey)) {
+          setActiveRun(null)
+          return
+        }
+
         setActiveRun({ sessionId, status: data.runStatus })
-        void streamRun(sessionId, data.latestSequenceId, assistantMessageId)
-          .then(async () => {
-            await loadHistory(sessionId)
-            if (selectedAgentId !== null) {
-              await refreshSessions(selectedAgentId, sessionId)
-            }
-          })
-          .catch((e) => setError(asErrorMessage(e)))
+        const streamAlreadyOpen =
+          streamRef.current?.sessionId === sessionId &&
+          streamRef.current?.latestMessageId === data.latestSequenceId
+
+        if (!streamAlreadyOpen) {
+          void streamRun(sessionId, data.latestSequenceId, assistantMessageId)
+            .then(async () => {
+              await loadHistory(sessionId)
+              if (selectedAgentId !== null) {
+                await refreshSessions(selectedAgentId)
+              }
+            })
+            .catch((e) => setError(asErrorMessage(e)))
+        }
       } else {
         setActiveRun(null)
       }
@@ -362,7 +383,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
           body: JSON.stringify({ agentId: selectedAgentId }),
         })
         sessionId = created.sessionId
-        setSelectedSessionId(sessionId)
+        updateSelectedSessionId(sessionId)
         await refreshSessions(selectedAgentId, sessionId)
       }
       if (!sessionId) {
@@ -387,7 +408,13 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
           text,
           messageId: latestMessageId + 1,
         },
-        // { id: localAssistantId, role: 'assistant', text: '', isStreaming: true },
+        {
+          id: localAssistantId,
+          role: 'assistant',
+          text: '',
+          isStreaming: true,
+          messageId: latestMessageId + 2,
+        },
       ])
 
       // TODO: errors?
@@ -403,7 +430,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
       void streamRun(currentSessionId, latestMessageId + 1, localAssistantId)
         .then(async () => {
           await loadHistory(currentSessionId)
-          await refreshSessions(selectedAgentId, currentSessionId)
+          await refreshSessions(selectedAgentId)
         })
         .catch((streamError) => {
           setError(asErrorMessage(streamError))
@@ -488,6 +515,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
 
   function streamRun(sessionId: string, latestMessageId: number, assistantMessageId: string) {
     return new Promise<void>((resolve, reject) => {
+      const checkpointKey = `${sessionId}:${latestMessageId}`
       closeStream()
 
       const streamUrl = `${API_BASE_URL}/sessions/${sessionId}/messages/${latestMessageId}/stream`
@@ -537,9 +565,10 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
             return [
               ...prev,
               {
-                id: crypto.randomUUID(),
+                id: assistantMessageId,
                 role: 'assistant',
                 text: delta,
+                isStreaming: true,
                 messageId: payload.messageId,
               }
             ]
@@ -627,12 +656,19 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         }
       })
 
-      source.addEventListener('completed', () => {
+      source.addEventListener('completed', (event) => {
+        const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
+        const isTerminal = payload.status === 'completed' || payload.status === 'failed'
+        if (!isTerminal) {
+          return
+        }
+
         close()
         setActiveRun(null)
+        completedStreamCheckpointsRef.current.add(checkpointKey)
         setMessages((prev) =>
           prev.map((message) =>
-            message.id === assistantMessageId
+            message.id === assistantMessageId || message.messageId === payload.messageId
               ? {
                   ...message,
                   isStreaming: false,
@@ -644,9 +680,14 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
       })
 
       source.addEventListener('failed', (event) => {
+        const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
+        const isTerminal = payload.status === 'failed' || payload.status === 'completed'
+        if (!isTerminal) {
+          return
+        }
+
         close()
         setActiveRun(null)
-        const payload = JSON.parse((event as MessageEvent).data) as StreamEvent
         reject(new Error(payload.text || 'Run failed.'))
       })
 
@@ -748,7 +789,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         onSelectAgent={(agentId) => {
           closeStream()
           setActiveRun(null)
-          setSelectedSessionId(null)
+          updateSelectedSessionId(null)
           setMessages([])
           setSelectedAgentId(agentId)
         }}
@@ -759,7 +800,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
           }
         }}
         onSelectSession={(sessionId) => {
-          setSelectedSessionId(sessionId)
+          updateSelectedSessionId(sessionId)
           void loadHistory(sessionId)
         }}
         onRenameSession={(sessionId) => void renameSession(sessionId)}
@@ -780,7 +821,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
           onResumeIfPossible={() => void resumeSessionIfPossible()}
           onStop={() => void stopSession()}
           onGoToSession={(sessionId) => {
-            setSelectedSessionId(sessionId)
+            updateSelectedSessionId(sessionId)
             void loadHistory(sessionId)
           }}
           onError={(msg) => setError(msg)}
@@ -794,7 +835,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
           onToggleToolExpanded={toggleToolExpanded}
           onToggleToolResultExpanded={toggleToolResultExpanded}
           onOpenSession={(sessionId) => {
-            setSelectedSessionId(sessionId)
+            updateSelectedSessionId(sessionId)
             void loadHistory(sessionId)
           }}
         />
