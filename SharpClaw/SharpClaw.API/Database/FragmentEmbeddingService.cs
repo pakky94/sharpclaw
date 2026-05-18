@@ -77,7 +77,7 @@ public sealed class FragmentEmbeddingService(
 
     public async Task LoadEmbeddingsModel(CancellationToken cancellationToken)
     {
-        logger.LogInformation("Loading embedding model from {@Configuration}", _configuration);
+        logger.LogInformation("Loading embedding model from {Configuration}", JsonSerializer.Serialize(_configuration));
 
         if (string.IsNullOrEmpty(_configuration.EmbeddingModel))
             return;
