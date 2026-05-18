@@ -22,6 +22,12 @@ Console.WriteLine("Debugging endpoints enabled: " + debuggingEndpointsEnabled);
 Console.WriteLine("pwd: " + System.Environment.CurrentDirectory);
 Console.WriteLine("EmbeddingModel: " + builder.Configuration.GetValue<string>("LmStudio:EmbeddingModel"));
 
+if (File.Exists("config.json"))
+{
+    Console.WriteLine(File.ReadAllText("config.json"));
+    builder.Configuration.AddJsonFile("config.json", optional: true, reloadOnChange: true);
+}
+
 builder.AddServiceDefaults();
 
 builder.Services.AddTransient<DatabaseSeeder>();
