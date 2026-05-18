@@ -5,10 +5,11 @@ import { WorkspaceManagementPage } from './app/pages/WorkspaceManagementPage'
 import { ScheduledJobsPage } from './app/pages/ScheduledJobsPage'
 import { ChannelsPage } from './app/pages/ChannelsPage'
 import { SecretsPage } from './app/pages/SecretsPage'
+import { BackupPage } from './app/pages/BackupPage'
 import './app/pages/AgentConsolePage.css'
 
 function App() {
-  const [page, setPage] = useState<'sessions' | 'agents' | 'workspaces' | 'jobs' | 'channels' | 'secrets'>('sessions')
+  const [page, setPage] = useState<'sessions' | 'agents' | 'workspaces' | 'jobs' | 'channels' | 'secrets' | 'backups'>('sessions')
   const [sessionsHasUnsaved, setSessionsHasUnsaved] = useState(false)
   const [agentsHasUnsaved, setAgentsHasUnsaved] = useState(false)
   const [workspacesHasUnsaved, setWorkspacesHasUnsaved] = useState(false)
@@ -34,6 +35,9 @@ function App() {
         <button type="button" className={`button ${page === 'secrets' ? 'primary' : 'ghost'}`} onClick={() => setPage('secrets')}>
           Secrets
         </button>
+        <button type="button" className={`button ${page === 'backups' ? 'primary' : 'ghost'}`} onClick={() => setPage('backups')}>
+          Backups
+        </button>
       </header>
       <div className="app-content">
         <section className={`app-content-pane ${page === 'sessions' ? 'active' : ''}`} aria-hidden={page !== 'sessions'}>
@@ -53,6 +57,9 @@ function App() {
         </section>
         <section className={`app-content-pane ${page === 'secrets' ? 'active' : ''}`} aria-hidden={page !== 'secrets'}>
           <SecretsPage />
+        </section>
+        <section className={`app-content-pane ${page === 'backups' ? 'active' : ''}`} aria-hidden={page !== 'backups'}>
+          <BackupPage />
         </section>
       </div>
     </div>

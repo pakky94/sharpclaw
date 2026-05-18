@@ -110,7 +110,8 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     search_text text not null default '',
                     lcm_summary_id varchar(128) null,
                     lcm_summary_level int null,
-                    created_at timestamptz not null default now()
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
                 );
 
                 create table if not exists messages(
@@ -120,7 +121,8 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     payload jsonb not null,
                     role varchar(32) null,
                     search_text text not null default '',
-                    created_at timestamptz not null default now()
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
                 );
 
                 create table if not exists conversation_history(
@@ -132,6 +134,7 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     summary_id bigint null references summaries(id) on delete cascade,
                     is_active boolean not null default true,
                     created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now(),
                     constraint conversation_history_target_chk check (
                         (entry_type = 'message' and message_id is not null and summary_id is null) or
                         (entry_type = 'summary' and summary_id is not null and message_id is null)
@@ -242,6 +245,7 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     status varchar(16) not null default 'pending'
                         check (status in ('pending', 'approved', 'rejected', 'expired')),
                     created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now(),
                     resolved_at timestamptz null
                 );
 
@@ -345,6 +349,7 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     status varchar(32) not null default 'pending',
                     error_message text null,
                     started_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now(),
                     completed_at timestamptz null
                 );
 
@@ -395,6 +400,7 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     session_id uuid not null references sessions(id),
                     last_broadcast_sequence bigint not null default 0,
                     created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now(),
                     unique(channel_id, identity_id)
                 );
 
@@ -413,8 +419,153 @@ public partial class DatabaseSeeder(IConfiguration configuration)
                     updated_at timestamptz not null default now()
                 );
 
+                create table if not exists backup_configs(
+                    id bigserial primary key,
+                    enabled boolean not null default true,
+                    timezone text not null default 'Europe/Rome',
+                    daily_time time not null default '03:00:00',
+                    full_every_n int not null default 7,
+                    retention_days int null,
+                    retention_full_chains int null,
+                    strict_restore_default boolean not null default true,
+                    storage_root text not null default '/data/backups',
+                    created_at timestamptz not null default now(),
+                    updated_at timestamptz not null default now()
+                );
+
+                create table if not exists backup_runs(
+                    id bigserial primary key,
+                    backup_id uuid not null unique,
+                    backup_type text not null check (backup_type in ('full', 'incremental')),
+                    status text not null check (status in ('running', 'succeeded', 'failed', 'partial')),
+                    base_full_backup_id uuid not null,
+                    previous_backup_id uuid null,
+                    window_from_utc timestamptz null,
+                    window_to_utc timestamptz not null,
+                    artifact_path text null,
+                    error_message text null,
+                    started_at timestamptz not null default now(),
+                    completed_at timestamptz null
+                );
+
+                create table if not exists backup_tombstones(
+                    id bigserial primary key,
+                    table_name text not null,
+                    pk jsonb not null,
+                    deleted_at timestamptz not null default now(),
+                    source_txid bigint not null default txid_current()
+                );
+
+                create index if not exists idx_backup_tombstones_deleted_at
+                    on backup_tombstones(deleted_at, id);
+
+                create index if not exists idx_backup_runs_started_at
+                    on backup_runs(started_at desc);
+
+                create index if not exists idx_backup_runs_status_started_at
+                    on backup_runs(status, started_at desc);
+
                 -- Migration: add allow_bridge to existing databases
                 alter table secrets add column if not exists allow_bridge boolean not null default false;
+
+                alter table messages add column if not exists updated_at timestamptz not null default now();
+                alter table summaries add column if not exists updated_at timestamptz not null default now();
+                alter table conversation_history add column if not exists updated_at timestamptz not null default now();
+                alter table workspace_approval_events add column if not exists updated_at timestamptz not null default now();
+                alter table bridge_execution_events add column if not exists updated_at timestamptz not null default now();
+                alter table channel_sessions add column if not exists updated_at timestamptz not null default now();
+
+                create index if not exists idx_messages_updated_at_id
+                    on messages(updated_at, id);
+                create index if not exists idx_summaries_updated_at_id
+                    on summaries(updated_at, id);
+                create index if not exists idx_conversation_history_updated_at_id
+                    on conversation_history(updated_at, id);
+                create index if not exists idx_workspace_approval_events_updated_at_id
+                    on workspace_approval_events(updated_at, id);
+                create index if not exists idx_bridge_execution_events_updated_at_id
+                    on bridge_execution_events(updated_at, id);
+                create index if not exists idx_channel_sessions_updated_at_id
+                    on channel_sessions(updated_at, id);
+
+                create index if not exists idx_fragments_updated_at_id
+                    on fragments(updated_at, id);
+                create index if not exists idx_fragment_shares_updated_at_id
+                    on fragment_shares(updated_at, id);
+                create index if not exists idx_workspaces_updated_at_id
+                    on workspaces(updated_at, id);
+                create index if not exists idx_agent_workspace_assignments_updated_at_id
+                    on agent_workspace_assignments(updated_at, id);
+                create index if not exists idx_scheduled_jobs_updated_at_id
+                    on scheduled_jobs(updated_at, id);
+                create index if not exists idx_channels_updated_at_id
+                    on channels(updated_at, id);
+                create index if not exists idx_sessions_updated_at_id
+                    on sessions(updated_at, id);
+                create index if not exists idx_session_tasks_updated_at_id
+                    on session_tasks(updated_at, id);
+                create index if not exists idx_agents_updated_at_id
+                    on agents(updated_at, id);
+                create index if not exists idx_bridge_clients_updated_at_bridge_id
+                    on bridge_clients(updated_at, bridge_id);
+                create index if not exists idx_lcm_files_created_at_id
+                    on lcm_files(created_at, id);
+                create index if not exists idx_session_active_workspaces_created_at_id
+                    on session_active_workspaces(created_at, id);
+
+                insert into backup_configs (enabled, timezone, daily_time, full_every_n, strict_restore_default, storage_root)
+                select true, 'Europe/Rome', '03:00:00', 7, true, '/data/backups'
+                where not exists (select 1 from backup_configs);
+
+                create or replace function backup_capture_delete() returns trigger
+                language plpgsql
+                as $$
+                begin
+                    insert into backup_tombstones(table_name, pk, deleted_at)
+                    values (TG_TABLE_NAME, jsonb_build_object('id', OLD.id), now());
+                    return OLD;
+                end;
+                $$;
+
+                drop trigger if exists trg_backup_tombstones_fragments on fragments;
+                create trigger trg_backup_tombstones_fragments
+                    after delete on fragments
+                    for each row execute function backup_capture_delete();
+
+                drop trigger if exists trg_backup_tombstones_fragment_shares on fragment_shares;
+                create trigger trg_backup_tombstones_fragment_shares
+                    after delete on fragment_shares
+                    for each row execute function backup_capture_delete();
+
+                drop trigger if exists trg_backup_tombstones_workspaces on workspaces;
+                create trigger trg_backup_tombstones_workspaces
+                    after delete on workspaces
+                    for each row execute function backup_capture_delete();
+
+                drop trigger if exists trg_backup_tombstones_agent_workspace_assignments on agent_workspace_assignments;
+                create trigger trg_backup_tombstones_agent_workspace_assignments
+                    after delete on agent_workspace_assignments
+                    for each row execute function backup_capture_delete();
+
+                drop trigger if exists trg_backup_tombstones_session_active_workspaces on session_active_workspaces;
+                create trigger trg_backup_tombstones_session_active_workspaces
+                    after delete on session_active_workspaces
+                    for each row execute function backup_capture_delete();
+
+                drop trigger if exists trg_backup_tombstones_scheduled_jobs on scheduled_jobs;
+                create trigger trg_backup_tombstones_scheduled_jobs
+                    after delete on scheduled_jobs
+                    for each row execute function backup_capture_delete();
+
+                drop trigger if exists trg_backup_tombstones_channels on channels;
+                create trigger trg_backup_tombstones_channels
+                    after delete on channels
+                    for each row execute function backup_capture_delete();
+
+                drop trigger if exists trg_backup_tombstones_channel_sessions on channel_sessions;
+                create trigger trg_backup_tombstones_channel_sessions
+                    after delete on channel_sessions
+                    for each row execute function backup_capture_delete();
                 """);
 
             if (await connection.ExecuteScalarAsync<int>("select count(*) from agents where name = 'Main'") == 0)

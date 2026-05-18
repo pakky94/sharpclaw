@@ -268,7 +268,7 @@ public class WorkspaceRepository(IConfiguration configuration)
         var updated = await connection.ExecuteAsync(
             """
             update workspace_approval_events
-            set status = @status, resolved_at = now()
+            set status = @status, resolved_at = now(), updated_at = now()
             where approval_token = @approvalToken and status = 'pending';
             """,
             new
@@ -342,7 +342,7 @@ public class WorkspaceRepository(IConfiguration configuration)
         await connection.ExecuteAsync(
             """
             update workspace_approval_events
-            set status = 'expired', resolved_at = now()
+            set status = 'expired', resolved_at = now(), updated_at = now()
             where status = 'pending' and created_at < now() - interval '30 minutes';
             """);
     }
