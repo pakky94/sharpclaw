@@ -17,6 +17,11 @@ var debuggingEndpointsEnabled =
     builder.Configuration.GetValue<bool>("Debugging:Enabled")
     || builder.Configuration.GetValue<bool>("SHARPCLAW_DEBUGGING_ENDPOINTS_ENABLED");
 
+// TODO: remove
+Console.WriteLine("Debugging endpoints enabled: " + debuggingEndpointsEnabled);
+Console.WriteLine("pwd: " + System.Environment.CurrentDirectory);
+Console.WriteLine("EmbeddingModel: " + builder.Configuration.GetValue<string>("LmStudio:EmbeddingModel"));
+
 builder.AddServiceDefaults();
 
 builder.Services.AddTransient<DatabaseSeeder>();
