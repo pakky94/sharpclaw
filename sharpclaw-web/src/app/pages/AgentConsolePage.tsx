@@ -22,6 +22,7 @@ import {
   extractTaskChildSessionMeta,
   formatToolPayload,
   formatToolResult,
+  generateId,
   mapHistoryMessageToBubbles,
   mergeToolResultBubble,
   mergeToolResultBubbles,
@@ -278,7 +279,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
           mergedMapped.findLast((message) => message.role === 'assistant' && message.messageId === data.latestSequenceId)?.id ?? null
 
         if (!assistantMessageId) {
-          assistantMessageId = crypto.randomUUID()
+          assistantMessageId = generateId()
           mergedMapped.push({
             id: assistantMessageId,
             role: 'assistant',
@@ -397,8 +398,8 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         return next
       })
 
-      const localUserId = crypto.randomUUID()
-      const localAssistantId = crypto.randomUUID()
+      const localUserId = generateId()
+      const localAssistantId = generateId()
 
       setMessages((prev) => [
         ...prev,
@@ -587,7 +588,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         setMessages((prev) => [
           ...prev,
           {
-            id: crypto.randomUUID(),
+            id: generateId(),
             role: 'tool',
             text: '',
             messageId: payload.messageId,
@@ -610,7 +611,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
         const childMeta = extractTaskChildSessionMeta(data?.result ?? null)
 
         const resultBubble: ChatBubble = {
-          id: crypto.randomUUID(),
+          id: generateId(),
           role: 'tool',
           text: '',
           messageId: payload.messageId,
@@ -915,3 +916,4 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
     </div>
   )
 }
+
