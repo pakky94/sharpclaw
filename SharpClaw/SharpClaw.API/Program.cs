@@ -21,7 +21,7 @@ var debuggingEndpointsEnabled =
 if (File.Exists("config.json"))
 {
     Console.WriteLine(File.ReadAllText("config.json"));
-    builder.Configuration.AddJsonFile("config.json", optional: false, reloadOnChange: true);
+    builder.Configuration.AddJsonFile(Path.Combine(System.Environment.CurrentDirectory, "config.json"), optional: false, reloadOnChange: true);
 }
 
 Console.WriteLine("Debugging endpoints enabled: " + debuggingEndpointsEnabled);
