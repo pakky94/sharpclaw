@@ -437,6 +437,7 @@ export function AgentConsolePage({ onUnsavedChange }: AgentConsolePageProps) {
           setMessages((prev) => prev.map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m)))
         })
     } catch (e) {
+      console.error('error sending message', e)
       setError(asErrorMessage(e))
       setMessages((prev) => prev.map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m)))
     } finally {
