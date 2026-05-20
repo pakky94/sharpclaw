@@ -184,6 +184,8 @@ public class BackupService(
 
                 await tx.CommitAsync(ct);
             }
+
+            await ReseedOwnedSequences(connection, ct);
         }
         finally
         {
@@ -738,6 +740,71 @@ public class BackupService(
         await writer.WriteLineAsync(line);
         var bytes = Encoding.UTF8.GetBytes(line + "\n");
         hash.AppendData(bytes);
+    }
+
+    private async Task ReseedOwnedSequences(NpgsqlConnection connection, CancellationToken ct)
+    {
+        var tableNames = Tables.Select(t => t.Name).ToArray();
+
+        const string sequenceSql =
+            """
+            select
+                t.relname as table_name,
+                a.attname as column_name,
+                format('%I.%I', sn.nspname, s.relname) as sequence_name
+            from pg_class s
+            join pg_namespace sn on sn.oid = s.relnamespace
+            join pg_depend d on d.objid = s.oid
+            join pg_class t on t.oid = d.refobjid
+            join pg_namespace tn on tn.oid = t.relnamespace
+            join pg_attribute a on a.attrelid = t.oid and a.attnum = d.refobjsubid
+            where s.relkind = 'S'
+              and d.deptype = 'a'
+              and tn.nspname = 'public'
+              and t.relname = any(@table_names)
+            order by t.relname, a.attname
+            """;
+
+        var sequences = new List<(string TableName, string ColumnName, string SequenceName)>();
+        await using (var listCmd = new NpgsqlCommand(sequenceSql, connection))
+        {
+            listCmd.Parameters.AddWithValue("table_names", tableNames);
+            await using var reader = await listCmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                sequences.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+            }
+        }
+
+        foreach (var (tableName, columnName, sequenceName) in sequences)
+        {
+            var quotedTable = $"{QuoteIdentifier("public")}.{QuoteIdentifier(tableName)}";
+            var quotedColumn = QuoteIdentifier(columnName);
+
+            var maxSql = $"select max({quotedColumn})::bigint from {quotedTable}";
+            await using var maxCmd = new NpgsqlCommand(maxSql, connection);
+            var maxValueObj = await maxCmd.ExecuteScalarAsync(ct);
+
+            long setValue;
+            bool isCalled;
+            if (maxValueObj is null || maxValueObj is DBNull)
+            {
+                setValue = 1;
+                isCalled = false;
+            }
+            else
+            {
+                setValue = Convert.ToInt64(maxValueObj);
+                isCalled = true;
+            }
+
+            const string reseedSql = "select setval(@sequence_name::regclass, @value, @is_called)";
+            await using var reseedCmd = new NpgsqlCommand(reseedSql, connection);
+            reseedCmd.Parameters.AddWithValue("sequence_name", sequenceName);
+            reseedCmd.Parameters.AddWithValue("value", setValue);
+            reseedCmd.Parameters.AddWithValue("is_called", isCalled);
+            await reseedCmd.ExecuteNonQueryAsync(ct);
+        }
     }
 
     private async Task<Dictionary<string, TableMetadata>> LoadTableMetadata(NpgsqlConnection connection, CancellationToken ct)
