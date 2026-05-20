@@ -520,6 +520,7 @@ public class Agent(
             });
 
         await chatRepository.PersistMessage(sessionId, notificationMessage);
+        await chatRepository.TouchSession(sessionId);
     }
 
     private static List<AIFunction> BuildTools() => ToolCatalog.BuildTools();

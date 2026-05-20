@@ -77,6 +77,18 @@ public class ChatRepository(IConfiguration configuration)
             });
     }
 
+    public async Task TouchSession(Guid sessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.ExecuteAsync(
+            """
+            update sessions
+            set updated_at = now()
+            where id = @sessionId
+            """,
+            new { sessionId });
+    }
+
     public async Task<PersistedSession?> RenameSession(Guid sessionId, string name)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
