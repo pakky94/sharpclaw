@@ -1,5 +1,7 @@
 # SharpClaw
 
+![SharpClaw](imgs/title.png)
+
 Run the backend (`SharpClaw.API`) and frontend (`sharpclaw-web`) in one container, with PostgreSQL + pgvector in a second container.
 
 ## Requirements
