@@ -149,21 +149,18 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseCors("WebClient");
-app.UseDefaultFiles();
-app.UseStaticFiles(new StaticFileOptions
+// Don't cache HTML responses so new deployments are picked up immediately.
+// Hashed assets (index-*.js, index-*.css) are still cached by the browser.
+app.Use(async (context, next) =>
 {
-    OnPrepareResponse = ctx =>
+    await next();
+    if (context.Response.ContentType?.StartsWith("text/html") == true)
     {
-        // Don't cache index.html so new deployments are picked up immediately.
-        // Hashed assets (index-*.js, index-*.css) are still cached by the browser.
-        if (ctx.File.Name == "index.html")
-        {
-            ctx.Context.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
-            ctx.Context.Response.Headers.Pragma = "no-cache";
-            ctx.Context.Response.Headers.Expires = "0";
-        }
+        context.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
     }
 });
+app.UseDefaultFiles();
+app.UseStaticFiles();
 app.UseWebSockets();
 
 ChatEndpoints.Register(app);
