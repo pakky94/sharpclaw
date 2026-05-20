@@ -203,3 +203,41 @@ export type Secret = {
   createdAt: string
   updatedAt: string
 }
+
+export type BackupConfig = {
+  id: number
+  enabled: boolean
+  timezone: string
+  dailyTime: string
+  fullEveryN: number
+  retentionDays: number | null
+  retentionFullChains: number | null
+  strictRestoreDefault: boolean
+  storageRoot: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type BackupRun = {
+  id: number
+  backupId: string
+  backupType: 'full' | 'incremental'
+  status: 'running' | 'succeeded' | 'failed' | 'partial'
+  baseFullBackupId: string
+  previousBackupId: string | null
+  windowFromUtc: string | null
+  windowToUtc: string
+  artifactPath: string | null
+  errorMessage: string | null
+  startedAt: string
+  completedAt: string | null
+}
+
+export type BackupArtifact = {
+  backupId: string
+  backupType: 'full' | 'incremental'
+  baseFullBackupId: string
+  previousBackupId: string | null
+  createdAtUtc: string
+  artifactPath: string
+}

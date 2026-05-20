@@ -6,6 +6,7 @@ using SharpClaw.API.Agents.Channels.Discord;
 using SharpClaw.API.Agents.ScheduledJobs;
 using SharpClaw.API.Agents.Secrets;
 using SharpClaw.API.Agents.Workspace;
+using SharpClaw.API.Backups;
 using SharpClaw.API.Database;
 using SharpClaw.API.Database.Repositories;
 using SharpClaw.API.Endpoints;
@@ -15,6 +16,17 @@ var builder = WebApplication.CreateBuilder(args);
 var debuggingEndpointsEnabled =
     builder.Configuration.GetValue<bool>("Debugging:Enabled")
     || builder.Configuration.GetValue<bool>("SHARPCLAW_DEBUGGING_ENDPOINTS_ENABLED");
+
+// TODO: remove
+if (File.Exists("config.json"))
+{
+    Console.WriteLine(File.ReadAllText("config.json"));
+    builder.Configuration.AddJsonFile(Path.Combine(System.Environment.CurrentDirectory, "config.json"), optional: false, reloadOnChange: true);
+}
+
+Console.WriteLine("Debugging endpoints enabled: " + debuggingEndpointsEnabled);
+Console.WriteLine("pwd: " + System.Environment.CurrentDirectory);
+Console.WriteLine("EmbeddingModel: " + builder.Configuration.GetValue<string>("LmStudio:EmbeddingModel"));
 
 builder.AddServiceDefaults();
 
@@ -36,6 +48,9 @@ builder.Services.AddSingleton<SecretService>();
 builder.Services.AddSingleton<ChannelRouter>();
 builder.Services.AddSingleton<DiscordAdapter>();
 builder.Services.AddHostedService<CronScheduler>();
+builder.Services.AddSingleton<BackupRepository>();
+builder.Services.AddSingleton<BackupService>();
+builder.Services.AddHostedService<BackupScheduler>();
 builder.Services.Configure<LmStudioConfiguration>(builder.Configuration.GetSection("LmStudio"));
 builder.Services.Configure<SearchProviderConfiguration>(builder.Configuration.GetSection("WebSearch"));
 builder.Services.Configure<BraveSearchConfiguration>(builder.Configuration.GetSection("WebSearch:Brave"));
@@ -134,6 +149,16 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseCors("WebClient");
+// Don't cache HTML responses so new deployments are picked up immediately.
+// Hashed assets (index-*.js, index-*.css) are still cached by the browser.
+app.Use(async (context, next) =>
+{
+    await next();
+    if (context.Response.ContentType?.StartsWith("text/html") == true)
+    {
+        context.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
+    }
+});
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseWebSockets();
@@ -143,6 +168,7 @@ AgentEndpoints.Register(app);
 WorkspaceEndpoints.Register(app);
 BridgeEndpoints.Register(app);
 ScheduledJobEndpoints.Register(app);
+BackupEndpoints.Register(app);
 ChannelEndpoints.Register(app);
 SecretEndpoints.Register(app);
 if (debuggingEndpointsEnabled)

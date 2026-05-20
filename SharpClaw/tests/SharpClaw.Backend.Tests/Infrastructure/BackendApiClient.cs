@@ -23,6 +23,8 @@ public sealed class BackendApiClient(HttpClient client)
                 channel_sessions,
                 channels,
                 scheduled_jobs,
+                backup_tombstones,
+                backup_runs,
                 secrets,
                 sessions
             restart identity cascade;
@@ -398,6 +400,60 @@ public sealed class BackendApiClient(HttpClient client)
         return await ReadDocumentAsync(response, cancellationToken);
     }
 
+    public async Task<JsonDocument> GetBackupConfigAsync(CancellationToken cancellationToken = default)
+    {
+        var response = await client.GetAsync("/backups/config", cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> UpdateBackupConfigAsync(
+        bool? enabled = null,
+        string? timezone = null,
+        TimeOnly? dailyTime = null,
+        int? fullEveryN = null,
+        int? retentionDays = null,
+        int? retentionFullChains = null,
+        bool? strictRestoreDefault = null,
+        string? storageRoot = null,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await client.PutAsJsonAsync("/backups/config", new
+        {
+            enabled,
+            timezone,
+            dailyTime,
+            fullEveryN,
+            retentionDays,
+            retentionFullChains,
+            strictRestoreDefault,
+            storageRoot,
+        }, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> ListBackupRunsAsync(int? limit = null, CancellationToken cancellationToken = default)
+    {
+        var path = limit is null ? "/backups/runs" : $"/backups/runs?limit={limit.Value}";
+        var response = await client.GetAsync(path, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> RunBackupAsync(string? mode = null, CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsJsonAsync("/backups/run", new { mode }, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
+    public async Task<JsonDocument> RestoreBackupAsync(Guid backupId, bool? strict = null, CancellationToken cancellationToken = default)
+    {
+        var response = await client.PostAsJsonAsync("/backups/restore", new
+        {
+            backupId,
+            strict,
+        }, cancellationToken);
+        return await ReadDocumentAsync(response, cancellationToken);
+    }
+
     public Task<IReadOnlyList<StreamEvent>> WaitForStreamCompleted(
         Guid sessionId,
         long messageId,
@@ -454,7 +510,15 @@ public sealed class BackendApiClient(HttpClient client)
 
     private static async Task<JsonDocument> ReadDocumentAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new HttpRequestException(
+                $"Response status code does not indicate success: {(int)response.StatusCode} ({response.StatusCode}). Body: {body}",
+                null,
+                response.StatusCode);
+        }
+
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
     }

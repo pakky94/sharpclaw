@@ -77,6 +77,18 @@ public class ChatRepository(IConfiguration configuration)
             });
     }
 
+    public async Task TouchSession(Guid sessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.ExecuteAsync(
+            """
+            update sessions
+            set updated_at = now()
+            where id = @sessionId
+            """,
+            new { sessionId });
+    }
+
     public async Task<PersistedSession?> RenameSession(Guid sessionId, string name)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
@@ -347,7 +359,8 @@ public class ChatRepository(IConfiguration configuration)
             """
             update messages
             set payload = cast(@payload as jsonb),
-                search_text = @searchText
+                search_text = @searchText,
+                updated_at = now()
             where id = @id
             """,
             new
@@ -400,7 +413,8 @@ public class ChatRepository(IConfiguration configuration)
             await connection.ExecuteAsync(
                 """
                 update messages
-                set parent_summary_id = @summaryId
+                set parent_summary_id = @summaryId,
+                    updated_at = now()
                 where session_id = @sessionId
                   and id = any(@messageIds);
                 """,
@@ -413,7 +427,8 @@ public class ChatRepository(IConfiguration configuration)
             await connection.ExecuteAsync(
                 """
                 update summaries
-                set parent_summary_id = @summaryId
+                set parent_summary_id = @summaryId,
+                    updated_at = now()
                 where session_id = @sessionId
                   and id = any(@summaryIds);
                 """,
@@ -441,7 +456,8 @@ public class ChatRepository(IConfiguration configuration)
             await connection.ExecuteAsync(
                 """
                 update conversation_history
-                set is_active = false
+                set is_active = false,
+                    updated_at = now()
                 where session_id = @sessionId
                   and is_active
                   and (

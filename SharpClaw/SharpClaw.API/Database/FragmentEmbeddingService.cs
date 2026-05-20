@@ -7,7 +7,10 @@ using SharpClaw.API.Agents;
 
 namespace SharpClaw.API.Database;
 
-public sealed class FragmentEmbeddingService(IOptions<LmStudioConfiguration> options)
+public sealed class FragmentEmbeddingService(
+    IOptions<LmStudioConfiguration> options,
+    ILogger<FragmentEmbeddingService> logger
+)
 {
     private readonly LmStudioConfiguration _configuration = options.Value;
 
@@ -74,6 +77,8 @@ public sealed class FragmentEmbeddingService(IOptions<LmStudioConfiguration> opt
 
     public async Task LoadEmbeddingsModel(CancellationToken cancellationToken)
     {
+        logger.LogInformation("Loading embedding model from {Configuration}", JsonSerializer.Serialize(_configuration));
+
         if (string.IsNullOrEmpty(_configuration.EmbeddingModel))
             return;
 

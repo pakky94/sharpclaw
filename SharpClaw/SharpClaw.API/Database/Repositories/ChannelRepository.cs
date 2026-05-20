@@ -126,7 +126,8 @@ public class ChannelRepository(IConfiguration configuration)
             """
             update channel_sessions
             set session_id = @SessionId,
-                last_broadcast_sequence = @LastBroadcastSequence
+                last_broadcast_sequence = @LastBroadcastSequence,
+                updated_at = now()
             where channel_id = @ChannelId and identity_id = @IdentityId
             """,
             new { ChannelId = channelId, IdentityId = identityId, SessionId = sessionId, LastBroadcastSequence = lastBroadcastSequence });
@@ -138,7 +139,8 @@ public class ChannelRepository(IConfiguration configuration)
         await connection.ExecuteAsync(
             """
             update channel_sessions
-            set last_broadcast_sequence = @LastBroadcastSequence
+            set last_broadcast_sequence = @LastBroadcastSequence,
+                updated_at = now()
             where channel_id = @ChannelId and identity_id = @IdentityId
             """,
             new { ChannelId = channelId, IdentityId = identityId, LastBroadcastSequence = lastBroadcastSequence });
